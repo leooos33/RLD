@@ -1,7 +1,14 @@
 import React, { useState, useMemo, useEffect } from "react";
 import useSWR from "swr";
 import axios from "axios";
-import { Terminal, Power, Activity, Wallet, ExternalLink } from "lucide-react";
+import {
+  Terminal,
+  Power,
+  Activity,
+  Wallet,
+  ExternalLink,
+  RefreshCw,
+} from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 
 const fetcher = (url) => axios.get(url).then((res) => res.data);
@@ -42,6 +49,10 @@ function App() {
   const [account, setAccount] = useState(null);
   const [tradeSide, setTradeSide] = useState("LONG");
   const [collateral, setCollateral] = useState(1000);
+  const [shortCR, setShortCR] = useState(150);
+
+  // PnL Simulation State
+  const [simTargetRate, setSimTargetRate] = useState(null);
 
   // --- ACTIONS ---
   const handleApplyDate = () => {
@@ -165,11 +176,55 @@ function App() {
   const latestTwar =
     processedData.length > 0 ? processedData[processedData.length - 1].twar : 0;
 
-  // Trading Calculations
+  // --- TRADING CALCULATIONS ---
   const currentRate = latest.apy;
-  const leverage = 10;
-  const liqRate = tradeSide === "LONG" ? currentRate * 0.9 : currentRate * 1.1;
-  const notional = collateral * leverage;
+
+  let leverage, liqRate, notional;
+
+  if (tradeSide === "LONG") {
+    // Long Logic: No leverage (1:1)
+    leverage = 1;
+    notional = collateral;
+    liqRate = null; // No liquidation for fully collateralized long
+  } else {
+    // Short Logic
+    const crDecimal = shortCR / 100;
+    notional = crDecimal > 0 ? collateral / crDecimal : 0;
+    liqRate = currentRate * (shortCR / 110);
+  }
+
+  const handleShortAmountChange = (newAmount) => {
+    if (newAmount > 0) {
+      const newCR = (collateral / newAmount) * 100;
+      setShortCR(Math.min(Math.max(newCR, 110), 1500));
+    }
+  };
+
+  // For Long, Amount = Collateral exactly
+  const handleLongAmountChange = (newAmount) => {
+    setCollateral(newAmount);
+  };
+
+  // --- PNL SIMULATION ---
+  useEffect(() => {
+    if (simTargetRate === null && currentRate > 0) {
+      setSimTargetRate(currentRate);
+    }
+  }, [currentRate, simTargetRate]);
+
+  const calculateSimPnL = () => {
+    if (!simTargetRate) return { value: 0, percent: 0 };
+    let pnl = 0;
+    if (tradeSide === "LONG") {
+      pnl = ((simTargetRate - currentRate) / 100) * notional;
+    } else {
+      pnl = ((currentRate - simTargetRate) / 100) * notional;
+    }
+    const percent = collateral > 0 ? (pnl / collateral) * 100 : 0;
+    return { value: pnl, percent };
+  };
+
+  const simPnL = calculateSimPnL();
 
   // --- RENDER ---
   if (error)
@@ -209,12 +264,17 @@ function App() {
               </span>
               <span className="text-white/10">|</span>
               <span className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2">
-                CDS_(SOON)
+                CDS [SOON]
               </span>
               <span className="text-white/10">|</span>
-              <span className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2">
+              <a
+                href="https://lumisfi.notion.site/rld"
+                target="_blank"
+                rel="noreferrer"
+                className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2"
+              >
                 RESEARCH
-              </span>
+              </a>
             </div>
           </div>
 
@@ -253,7 +313,7 @@ function App() {
 
       {/* MAIN GRID LAYOUT */}
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
-        {/* ROW 1: CONTENT (Left) & TERMINAL (Right) - Equal Height */}
+        {/* ROW 1: CONTENT (Left) & TERMINAL (Right) - Equal Height via items-stretch */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
           {/* === LEFT COLUMN: DATA & CHART (Span 9) === */}
           <div className="xl:col-span-9 flex flex-col gap-4">
@@ -272,7 +332,7 @@ function App() {
                 </div>
                 <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
                   <span className="text-[10px] uppercase tracking-widest text-gray-500">
-                    Pool_Contract
+                    Pool Contract
                   </span>
                   <a
                     href="https://app.aave.com/reserve-overview/?underlyingAsset=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48&marketName=proto_mainnet_v3"
@@ -293,7 +353,7 @@ function App() {
                     <div className="flex items-center gap-2">
                       <span className="w-1.5 h-1.5 bg-green-500 animate-pulse"></span>
                       <span>
-                        LAST_UPDATE: <TimeAgo timestamp={latest.timestamp} />
+                        LAST UPDATE: <TimeAgo timestamp={latest.timestamp} />
                       </span>
                     </div>
                   }
@@ -301,7 +361,7 @@ function App() {
                 <MetricBox
                   label={formatTwarLabel(twarWindow)}
                   value={showTwar ? latestTwar.toFixed(2) : "OFF"}
-                  sub="MOVING_AVG"
+                  sub="MOVING AVG"
                   dimmed={!showTwar}
                 />
                 <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
@@ -354,7 +414,7 @@ function App() {
                   { l: "1M", d: 30 },
                   { l: "3M", d: 90 },
                   { l: "1Y", d: 365 },
-                  { l: "MAX", d: 9999 },
+                  { l: "ALL", d: 9999 },
                 ].map((btn) => (
                   <button
                     key={btn.l}
@@ -392,25 +452,23 @@ function App() {
                   </button>
                 </div>
               </ControlCell>
-              <ControlCell label="TWAR_SMOOTHING_(SEC)" className="pr-0">
-                <div className="flex items-center justify-between gap-4 h-[30px] w-full">
-                  <div className="flex-1 flex items-center h-full">
-                    <input
-                      type="number"
-                      value={tempTwarInput}
-                      onChange={(e) => setTempTwarInput(Number(e.target.value))}
-                      className="flex-1 bg-transparent border-b border-white/20 text-white font-mono text-sm h-full py-1 focus:outline-none focus:border-white text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                    <button
-                      onClick={handleApplyTwar}
-                      className="text-xs uppercase text-gray-500 hover:text-white border border-white/10 hover:border-white px-3 h-full flex items-center rounded-none transition-colors focus:outline-none"
-                    >
-                      SET
-                    </button>
-                  </div>
+              <ControlCell label="SMOOTHING (SEC)" className="pr-0">
+                <div className="flex items-center justify-between gap-2 h-[30px] w-full">
+                  <input
+                    type="number"
+                    value={tempTwarInput}
+                    onChange={(e) => setTempTwarInput(Number(e.target.value))}
+                    className="flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <button
+                    onClick={handleApplyTwar}
+                    className="text-xs uppercase text-gray-500 hover:text-white border border-white/10 hover:border-white px-3 h-full flex items-center rounded-none transition-colors focus:outline-none"
+                  >
+                    SET
+                  </button>
                   <button
                     onClick={() => setShowTwar(!showTwar)}
-                    className={`flex-1 h-full flex items-center justify-center gap-2 border text-xs uppercase font-bold tracking-wider transition-all rounded-none focus:outline-none ${
+                    className={`px-3 h-full flex items-center justify-center gap-2 border text-xs uppercase font-bold tracking-wider transition-all rounded-none focus:outline-none ${
                       showTwar
                         ? "bg-white text-black border-white"
                         : "bg-transparent text-gray-600 border-white/10 hover:border-white/40"
@@ -432,7 +490,7 @@ function App() {
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-cyan-400"></div>
                     <span className="text-[10px] uppercase tracking-widest">
-                      Spot_Rate
+                      Spot Rate
                     </span>
                   </div>
                   {showTwar && (
@@ -472,18 +530,21 @@ function App() {
             </div>
           </div>
 
-          {/* === RIGHT COLUMN: TRADING TERMINAL (Span 3) === */}
+          {/* === RIGHT COLUMN: TRADING TERMINAL + PNL (Span 3) - Unified Container === */}
           <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
+            {/* 1. Header */}
             <div className="p-4 border-b border-white/10 bg-[#0a0a0a]">
               <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
                 <Terminal size={12} className="text-gray-500" /> Synthetic Rates
               </h3>
             </div>
+
+            {/* 2. Toggle */}
             <div className="p-1 border-b border-white/10 bg-[#080808]">
               <div className="grid grid-cols-2 gap-1">
                 <button
                   onClick={() => setTradeSide("LONG")}
-                  className={`py-3 text-[10px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+                  className={`py-3 text-[13px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                     tradeSide === "LONG"
                       ? "bg-cyan-900/30 text-cyan-400"
                       : "bg-[#0f0f0f] text-gray-600 hover:text-gray-400 hover:bg-white/5"
@@ -493,7 +554,7 @@ function App() {
                 </button>
                 <button
                   onClick={() => setTradeSide("SHORT")}
-                  className={`py-3 text-[10px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+                  className={`py-3 text-[13px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                     tradeSide === "SHORT"
                       ? "bg-pink-900/30 text-pink-500"
                       : "bg-[#0f0f0f] text-gray-600 hover:text-gray-400 hover:bg-white/5"
@@ -503,9 +564,12 @@ function App() {
                 </button>
               </div>
             </div>
-            <div className="p-6 flex flex-col gap-8 flex-1">
+
+            {/* 3. Main Trading Logic (Flex Grow to push PnL down) */}
+            <div className="flex-1 flex flex-col p-6 gap-6">
+              {/* Collateral Input */}
               <div className="space-y-2">
-                <div className="flex justify-between text-[10px] text-gray-500 uppercase tracking-widest font-bold">
+                <div className="flex justify-between text-[11px] uppercase tracking-widest font-bold text-gray-500">
                   <span>Collateral</span>
                   <span>Balance: {account ? "2,450.00" : "--"} USDC</span>
                 </div>
@@ -514,7 +578,7 @@ function App() {
                     type="number"
                     value={collateral}
                     onChange={(e) => setCollateral(Number(e.target.value))}
-                    className="w-full bg-transparent border-b border-white/20 py-2 text-xl font-mono text-white focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
+                    className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                     placeholder="0.00"
                   />
                   <span className="absolute right-0 top-2 text-xs text-gray-600">
@@ -522,40 +586,111 @@ function App() {
                   </span>
                 </div>
               </div>
-              <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
-                <div className="flex justify-between items-center text-[10px]">
-                  <span className="text-gray-500 uppercase tracking-widest">
-                    Entry Rate
-                  </span>
+
+              {/* LONG: Amount (No Leverage Slider) */}
+              {tradeSide === "LONG" && (
+                <div className="space-y-2">
+                  <div className="text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                    Amount (Notional)
+                  </div>
+                  <div className="relative group">
+                    <input
+                      type="number"
+                      value={
+                        notional > 0 ? parseFloat(notional.toFixed(2)) : ""
+                      }
+                      onChange={(e) =>
+                        handleLongAmountChange(Number(e.target.value))
+                      }
+                      className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
+                      placeholder="0.00"
+                    />
+                    <span className="absolute right-0 top-2 text-xs text-gray-500">
+                      USDC
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* SHORT: Amount & CR */}
+              {tradeSide === "SHORT" && (
+                <>
+                  <div className="space-y-2">
+                    <div className="text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                      Amount (Notional)
+                    </div>
+                    <div className="relative group">
+                      <input
+                        type="number"
+                        value={
+                          notional > 0 ? parseFloat(notional.toFixed(2)) : ""
+                        }
+                        onChange={(e) =>
+                          handleShortAmountChange(Number(e.target.value))
+                        }
+                        className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
+                        placeholder="0.00"
+                      />
+                      <span className="absolute right-0 top-2 text-xs text-gray-500">
+                        USDC
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                      <span>Collateral Ratio</span>
+                      <span className="text-white">{shortCR.toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="110"
+                      max="1500"
+                      step="10"
+                      value={shortCR}
+                      onChange={(e) => setShortCR(Number(e.target.value))}
+                      className="w-full h-0.5 bg-white/10 text-xs rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 font-mono">
+                      <span>110%</span>
+                      <span>1500%</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Stats Box */}
+              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[11px]">
+                <div className="flex justify-between items-center ">
+                  <span className="text-gray-500 uppercase">Entry Rate</span>
                   <span className="font-mono text-white">
                     {currentRate.toFixed(2)}%
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-[10px]">
-                  <span className="text-gray-500 uppercase tracking-widest">
-                    Liq. Rate
-                  </span>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 uppercase ">Liq. Rate</span>
                   <span className="font-mono text-orange-500">
-                    {liqRate.toFixed(2)}%
+                    {liqRate ? `${liqRate.toFixed(2)}%` : "None"}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-[10px]">
-                  <span className="text-gray-500 uppercase tracking-widest">
-                    Notional
-                  </span>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 uppercase">Notional</span>
                   <span className="font-mono text-white">
-                    ${notional.toLocaleString()}
+                    $
+                    {notional.toLocaleString(undefined, {
+                      maximumFractionDigits: 0,
+                    })}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-[10px]">
-                  <span className="text-gray-500 uppercase tracking-widest">
-                    Est. Fee
-                  </span>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 uppercase">Est. Fee</span>
                   <span className="font-mono text-gray-400">
                     {(notional * 0.001).toFixed(2)} USDC
                   </span>
                 </div>
               </div>
+
+              {/* Action Button */}
               <div className="mt-auto">
                 {account ? (
                   <button
@@ -575,6 +710,76 @@ function App() {
                     Connect to Trade
                   </button>
                 )}
+              </div>
+            </div>
+
+            {/* 4. PnL Simulator (Bottom Section) */}
+            <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
+              <div className="flex justify-between items-center">
+                <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
+                  PnL Simulator
+                </span>
+                <RefreshCw
+                  size={15}
+                  className="text-gray-600 cursor-pointer hover:text-white transition-colors"
+                  onClick={() => setSimTargetRate(currentRate)}
+                />
+              </div>
+
+              <div className="space-y-2 text-[13px]">
+                <div className="flex justify-between text-gray-500 font-mono">
+                  <span>Rate Scenario</span>
+                  <span>
+                    {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="30"
+                  step="0.1"
+                  value={simTargetRate || currentRate}
+                  onChange={(e) => setSimTargetRate(Number(e.target.value))}
+                  className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                />
+                <div className="flex justify-between gap-1">
+                  {[-50, -10, 10, 50].map((pct) => (
+                    <button
+                      key={pct}
+                      onClick={() =>
+                        setSimTargetRate(currentRate * (1 + pct / 100))
+                      }
+                      className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-[12px] font-mono text-gray-400 focus:outline-none"
+                    >
+                      {pct > 0 ? "+" : ""}
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className=" border-white/10">
+                <div className="flex justify-between items-end">
+                  <span className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                    Est. PnL (1Y)
+                  </span>
+                  <div
+                    className={`text-right ${
+                      simPnL.value >= 0 ? "text-green-500" : "text-red-500"
+                    }`}
+                  >
+                    <div className="text-xl font-mono leading-none">
+                      {simPnL.value >= 0 ? "+" : ""}
+                      {simPnL.value.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}{" "}
+                      USDC
+                    </div>
+                    <div className="text-[12px] font-mono mt-1">
+                      {simPnL.percent.toFixed(2)}% ROI
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
