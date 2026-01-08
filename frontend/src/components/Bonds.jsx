@@ -110,7 +110,7 @@ const CustomWealthTooltip = ({ active, payload }) => {
             </div>
             <span className="text-white font-bold">
               $
-              {entry.value.toLocaleString(undefined, {
+              {entry.value.toLocaleString("en-US", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
@@ -220,7 +220,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
               tickLine={false}
               axisLine={false}
               tickFormatter={(val) =>
-                `$${val.toLocaleString(undefined, {
+                `$${val.toLocaleString("en-US", {
                   maximumFractionDigits: 0,
                 })}`
               }
@@ -750,7 +750,16 @@ const InputGroup = ({ label, subLabel, value, onChange, suffix }) => (
     </div>
   </div>
 );
-const ProductCard = ({ theme = "pink", title, desc, badge, Icon, onClick }) => {
+
+const ProductCard = ({
+  theme = "pink",
+  title,
+  desc,
+  badge,
+  Icon,
+  onClick,
+  isActive,
+}) => {
   const themes = {
     pink: {
       text: "text-pink-500",
@@ -767,7 +776,9 @@ const ProductCard = ({ theme = "pink", title, desc, badge, Icon, onClick }) => {
   return (
     <div
       onClick={onClick}
-      className="border border-white/10 bg-[#080808]  p-6 hover:bg-white/5 transition-colors cursor-pointer group min-h-[180px] h-full flex flex-col justify-between"
+      className={`border border-white/10 p-6 hover:bg-white/5 transition-colors cursor-pointer group min-h-[180px] h-full flex flex-col justify-between ${
+        isActive ? "bg-white/5" : "bg-[#080808]"
+      }`}
     >
       <div>
         <div className="flex justify-between items-center mb-6">
@@ -856,6 +867,7 @@ export default function BondsPage() {
                   onClick={() =>
                     tradeLogic.actions.setActiveProduct("FIXED_YIELD")
                   }
+                  isActive={tradeLogic.state.activeProduct === "FIXED_YIELD"}
                 />
               </div>
               <div className="lg:col-span-8 h-full">
@@ -875,6 +887,7 @@ export default function BondsPage() {
                   onClick={() =>
                     tradeLogic.actions.setActiveProduct("FIXED_BORROW")
                   }
+                  isActive={tradeLogic.state.activeProduct === "FIXED_BORROW"}
                 />
               </div>
               <div className="lg:col-span-8 h-[500px]">

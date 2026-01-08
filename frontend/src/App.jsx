@@ -584,7 +584,7 @@ function App() {
           {/* === RIGHT COLUMN: TRADING TERMINAL + PNL (Span 3) === */}
           <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
             {/* 1. Header */}
-            <div className="p-4 border border-white/10 bg-[#0a0a0a]">
+            <div className="p-4 border-b border-white/10 bg-[#0a0a0a]">
               <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
                 <Terminal size={15} className="text-gray-500" /> Synthetic_Rates
               </h3>
