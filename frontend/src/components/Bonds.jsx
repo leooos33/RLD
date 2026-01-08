@@ -139,7 +139,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
-            Value at Maturity
+            Value_at_Maturity
           </div>
           <div className="text-3xl font-light text-white font-mono tracking-tight">
             ${formatNum(valueAtMaturity, 2)}
@@ -147,7 +147,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
         </div>
         <div className="text-right">
           <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
-            {theme === "pink" ? "Projected Hedge" : "Calculated Wealth"}
+            {theme === "pink" ? "Projected_Hedge" : "Calculated_Wealth"}
           </div>
           <div
             className={`text-xl ${
@@ -161,7 +161,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
 
       <div className="flex justify-between items-center mb-4">
         <div className="text-[10px] text-gray-600 uppercase tracking-widest">
-          Simulated Path
+          Simulated_Path
         </div>
         <div className="flex gap-4">
           <div
@@ -513,7 +513,7 @@ const TradingTerminal = ({
         <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
           <Terminal size={15} className="text-gray-500" /> {activeProduct}
         </h3>
-        <span className="text-[10px] text-gray-600 uppercase tracking-widest">
+        <span className="text-[12px] text-gray-600 uppercase tracking-widest">
           {activeProduct === "FIXED_YIELD" ? "SHORT RLP" : "LONG RLP"}
         </span>
       </div>
@@ -541,7 +541,7 @@ const TradingTerminal = ({
         {activeTab === "OPEN" && (
           <>
             <InputGroup
-              label="Notional Amount"
+              label="Notional_Amount"
               subLabel={`Bal: ${account ? "2,450" : "--"} USDC`}
               value={notional}
               onChange={(v) => setNotional(Number(v))}
@@ -550,11 +550,11 @@ const TradingTerminal = ({
 
             <div className="space-y-3">
               <div className="flex justify-between items-end">
-                <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
-                  Maturity Date
+                <span className="text-[12px] text-gray-500 uppercase tracking-widest font-bold">
+                  Maturity_Date
                 </span>
                 <span
-                  className={`text-[11px] font-mono ${
+                  className={`text-[12px] font-mono font-bold ${
                     activeProduct === "FIXED_BORROW"
                       ? "text-pink-500"
                       : "text-cyan-400"
@@ -579,35 +579,35 @@ const TradingTerminal = ({
               <div className="pt-2">
                 <input
                   type="range"
-                  min="7"
+                  min="1"
                   max="365"
                   step="1"
                   value={maturityDays}
                   onChange={(e) => handleDaysChange(Number(e.target.value))}
                   className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none hover:[&::-webkit-slider-thumb]:scale-125 transition-all"
                 />
-                <div className="flex justify-between text-[9px] text-gray-600 font-mono mt-1">
-                  <span>1W</span>
+                <div className="flex justify-between text-[12px] text-gray-400 font-bold font-mono mt-1">
+                  <span>1D</span>
                   <span>1Y</span>
                 </div>
               </div>
             </div>
 
-            <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
+            <div className="border font-bold border-white/10 p-4 space-y-3 bg-white/[0.02] text-[11px] tracking-widest">
               <SummaryRow
-                label="Entry Rate"
+                label="Entry_Rate"
                 value={`${formatNum(currentRate)}%`}
               />
               <div className="flex justify-between items-center pt-2">
-                <div className="flex items-center gap-1.5 text-[11px] text-gray-500 uppercase tracking-widest">
-                  <Settings size={12} /> Slippage
+                <div className="flex items-center gap-1.5 text-[12px] text-gray-500 uppercase tracking-widest">
+                  MAX_Slippage
                 </div>
                 <div className="flex gap-1">
                   {[0.1, 0.5, 1.0].map((s) => (
                     <button
                       key={s}
                       onClick={() => setSlippage(s)}
-                      className={`text-[10px] px-2 py-0.5 font-mono border transition-colors ${
+                      className={`text-[12px] px-3 py-1 font-mono font-bold border transition-colors rounded-none outline-none focus:outline-none${
                         slippage === s
                           ? "border-white text-white"
                           : "border-white/10 text-gray-500 hover:border-white/30"
@@ -626,7 +626,7 @@ const TradingTerminal = ({
         {activeTab === "CLOSE" && (
           <>
             <InputGroup
-              label="Amount to Close"
+              label="Amount_to_Close"
               subLabel={`Max: ${formatNum(notional)} USDC`}
               value={notional}
               onChange={(v) => setNotional(Number(v))}
@@ -637,8 +637,8 @@ const TradingTerminal = ({
               <div className="flex justify-between items-center">
                 <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
                   {activeProduct === "FIXED_BORROW"
-                    ? "Accrued Hedge"
-                    : "Accrued Yield"}
+                    ? "Accrued_Hedge"
+                    : "Accrued_Yield"}
                 </span>
                 <span
                   className={`text-xl font-mono tracking-tight ${
@@ -653,7 +653,7 @@ const TradingTerminal = ({
               </div>
               <div className="flex justify-between items-center border-t border-white/5 pt-4">
                 <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
-                  Time to Maturity
+                  Time_to_Maturity
                 </span>
                 <span className="font-mono text-white text-sm">
                   {maturityDays - 30 > 0 ? maturityDays - 30 : 0} Days
@@ -668,12 +668,12 @@ const TradingTerminal = ({
                 className="text-yellow-600 shrink-0 mt-0.5"
               />
               <div>
-                <div className="text-[10px] text-yellow-500 font-bold uppercase tracking-widest mb-1">
+                <div className="text-[11px] text-yellow-500 font-bold uppercase tracking-widest mb-2">
                   Early Exit Notice
                 </div>
-                <p className="text-[10px] text-gray-400 leading-relaxed font-mono">
-                  You can exit your position at any time. However, early exits
-                  are subject to slippage based on TWAMM liquidity availability.
+                <p className="text-[11px] text-gray-400 leading-relaxed font-mono">
+                  You can exit position at any time. However, early exits are
+                  subject to slippage based on liquidity availability.
                 </p>
               </div>
             </div>
@@ -850,7 +850,7 @@ export default function BondsPage() {
                   theme="cyan"
                   title="FIXED_YIELD"
                   badge="Synthetic Bond"
-                  Icon={Percent}
+                  Icon={Shield}
                   desc="Transform volatile rates into a fixed-income product. Short RLP + TWAMM."
                   onClick={() =>
                     tradeLogic.actions.setActiveProduct("FIXED_YIELD")
@@ -869,7 +869,7 @@ export default function BondsPage() {
                   theme="pink"
                   title="FIXED_BORROW"
                   badge="Fixed-Term Debt"
-                  Icon={Shield}
+                  Icon={Percent}
                   desc="Immunize your debt against Aave rate spikes. Long RLP (Hedge)."
                   onClick={() =>
                     tradeLogic.actions.setActiveProduct("FIXED_BORROW")

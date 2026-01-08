@@ -245,14 +245,14 @@ function App() {
   // --- RENDER ---
   if (error)
     return (
-      <div className="h-screen flex items-center justify-center text-red-600 bg-black font-mono text-xs">
+      <div className="h-screen w-screen flex items-center justify-center text-red-600 bg-black font-mono text-xs">
         ERR: API_DISCONNECTED
       </div>
     );
   if (!rates)
     return (
-      <div className="h-screen flex items-center justify-center text-gray-500 bg-black font-mono text-xs animate-pulse">
-        SYSTEM_INITIALIZING...
+      <div className="h-screen w-screen flex items-center justify-center text-gray-500 bg-black font-mono text-xs animate-pulse">
+        SYNCING...
       </div>
     );
 
@@ -352,7 +352,7 @@ function App() {
                 </div>
                 <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
                   <span className="text-[10px] uppercase tracking-widest text-gray-500">
-                    Pool Contract
+                    Pool_Contract
                   </span>
                   <a
                     href="https://app.aave.com/reserve-overview/?underlyingAsset=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48&marketName=proto_mainnet_v3"
@@ -495,7 +495,7 @@ function App() {
                   </button>
                 </div>
               </ControlCell>
-              <ControlCell label="SMOOTHING (SEC)" className="pr-0">
+              <ControlCell label="TWAR_SMOOTHING_[SEC]" className="pr-0">
                 <div className="flex items-center justify-between gap-2 h-[30px] w-full">
                   <input
                     type="number"
@@ -533,7 +533,7 @@ function App() {
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-cyan-400"></div>
                     <span className="text-[11px] uppercase tracking-widest">
-                      Spot Rate
+                      Spot_Rate
                     </span>
                   </div>
                   {showTwar && (
@@ -584,31 +584,31 @@ function App() {
           {/* === RIGHT COLUMN: TRADING TERMINAL + PNL (Span 3) === */}
           <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
             {/* 1. Header */}
-            <div className="p-4 border-b border-white/10 bg-[#0a0a0a]">
+            <div className="p-4 border border-white/10 bg-[#0a0a0a]">
               <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
                 <Terminal size={15} className="text-gray-500" /> Synthetic_Rates
               </h3>
             </div>
 
             {/* 2. Toggle */}
-            <div className="p-1 border-b border-white/10 bg-[#080808]">
-              <div className="grid grid-cols-2 gap-1">
+            <div className=" bg-[#050505]">
+              <div className="grid grid-cols-2 border-b border-white/10">
                 <button
                   onClick={() => setTradeSide("LONG")}
-                  className={`py-3 text-[13px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+                  className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                     tradeSide === "LONG"
-                      ? "bg-cyan-900/30 text-cyan-400"
-                      : "bg-[#0f0f0f] text-gray-600 hover:text-gray-400 hover:bg-white/5"
+                      ? "bg-[cyan-900/30] text-cyan-400"
+                      : "bg-[#050505] text-gray-600 hover:text-gray-400 hover:bg-white/5"
                   }`}
                 >
                   Long
                 </button>
                 <button
                   onClick={() => setTradeSide("SHORT")}
-                  className={`py-3 text-[13px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+                  className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                     tradeSide === "SHORT"
                       ? "bg-pink-900/30 text-pink-500"
-                      : "bg-[#0f0f0f] text-gray-600 hover:text-gray-400 hover:bg-white/5"
+                      : "bg-[#050505] text-gray-600 hover:text-gray-400 hover:bg-white/5"
                   }`}
                 >
                   Short
@@ -632,7 +632,7 @@ function App() {
                     className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                     placeholder="0.00"
                   />
-                  <span className="absolute right-0 top-2 text-sm text-gray-600">
+                  <span className="absolute right-0 top-2 text-sm text-gray-600 ">
                     USDC
                   </span>
                 </div>
@@ -642,7 +642,7 @@ function App() {
               {tradeSide === "LONG" && (
                 <div className="space-y-2">
                   <div className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
-                    Amount (Notional)
+                    Amount_Notional
                   </div>
                   <div className="relative group">
                     <input
@@ -668,7 +668,7 @@ function App() {
                 <>
                   <div className="space-y-2">
                     <div className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
-                      Amount (Notional)
+                      Amount_Notional
                     </div>
                     <div className="relative group">
                       <input
@@ -682,7 +682,7 @@ function App() {
                         className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                         placeholder="0.00"
                       />
-                      <span className="absolute right-0 top-2 text-[12px] text-gray-600">
+                      <span className="absolute right-0 top-2 text-sm text-gray-600">
                         USDC
                       </span>
                     </div>
@@ -690,7 +690,7 @@ function App() {
 
                   <div className="space-y-2">
                     <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
-                      <span>Collateral Ratio</span>
+                      <span>Collateral_Ratio</span>
                       <span className="text-white">{shortCR.toFixed(0)}%</span>
                     </div>
                     <input
@@ -713,7 +713,7 @@ function App() {
               {/* Stats Box - TEXT-XS */}
               <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02]">
                 <div className="flex justify-between items-center text-[12px]">
-                  <span className="text-gray-500 uppercase">Entry Rate</span>
+                  <span className="text-gray-500 uppercase">Entry_Rate</span>
                   <span className="font-mono text-white">
                     {currentRate.toFixed(2)}%
                   </span>
@@ -772,7 +772,7 @@ function App() {
             <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
               <div className="flex justify-between items-center">
                 <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
-                  PnL Simulator
+                  PnL_Simulator
                 </span>
                 <RefreshCw
                   size={15}
