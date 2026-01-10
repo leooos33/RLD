@@ -12,6 +12,7 @@ if not RPC_URL:
     RPC_URL = "https://eth.llamarpc.com"
 
 POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+UNI_POOL_ADDRESS = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640" # USDC/ETH 0.05%
 # --- ASSETS CONFIGURATION ---
 # Symbol -> Underlying Address
 ASSETS = {
@@ -45,6 +46,15 @@ for symbol, data in ASSETS.items():
             apy REAL
         )
     ''')
+
+# Price Table
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS eth_prices (
+        timestamp INTEGER PRIMARY KEY, 
+        price REAL,
+        block_number INTEGER
+    )
+''')
 conn.commit()
 
 # FULL ABI (Exact Aave V3 ReserveData Structure)
@@ -90,7 +100,26 @@ POOL_ABI = [
     }
 ]
 
+UNI_ABI = [
+    {
+        "inputs": [],
+        "name": "slot0",
+        "outputs": [
+            {"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"},
+            {"internalType": "int24", "name": "tick", "type": "int24"},
+            {"internalType": "uint16", "name": "observationIndex", "type": "uint16"},
+            {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"},
+            {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"},
+            {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"},
+            {"internalType": "bool", "name": "unlocked", "type": "bool"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
 pool_contract = w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
+uni_contract = w3.eth.contract(address=UNI_POOL_ADDRESS, abi=UNI_ABI)
 
 # --- FUNCTIONS ---
 def get_aave_rate(asset_address, block_identifier='latest'):
@@ -106,6 +135,28 @@ def get_aave_rate(asset_address, block_identifier='latest'):
         return apy
     except Exception as e:
         print(f"Error fetching data for {asset_address}: {e}")
+        return None
+
+def get_eth_price(block_identifier='latest'):
+    try:
+        # slot0 returns (sqrtPriceX96, tick, observationIndex, ...)
+        slot0 = uni_contract.functions.slot0().call(block_identifier=block_identifier)
+        sqrtPriceX96 = slot0[0]
+        
+        # Calculate Price
+        # Address 0xA0b8... (USDC) is Token0
+        # Address 0xC02a... (WETH) is Token1
+        # Price = Token1/Token0 (WETH per USDC)
+        # We want USDC per ETH = 1 / Price
+        
+        # P_raw = (sqrtPriceX96 / 2^96) ^ 2
+        # Price_USD = 10^12 / P_raw = 10^12 / ((sqrtPriceX96 / 2^96) ^ 2)
+        
+        price_raw = (sqrtPriceX96 / (2**96)) ** 2
+        eth_price = (10**12) / price_raw
+        return eth_price
+    except Exception as e:
+        print(f"Error fetching ETH Price: {e}")
         return None
 
 # --- MAIN EXECUTION ---
@@ -134,6 +185,22 @@ if __name__ == "__main__":
                         cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
                         conn.commit()
                         print(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
+                
+                # Fetch & Store ETH Price
+                eth_price = get_eth_price(block_number)
+                if eth_price:
+                    # Use INSERT OR REPLACE to handle potential primary key collision on timestamp
+                    # though block timestamps are usually unique per block, multiple blocks can share second-level TS in edge cases?
+                    # SQLite INTEGER per table definition is RowID alias if Primary Key?
+                    # The definition is timestamp INTEGER PRIMARY KEY.
+                    # This might conflict if blocks are fast.
+                    # But Python time.time() is float. Block timestamp is seconds.
+                    # We might race if two blocks have same timestamp.
+                    # Let's hope block times > 1s.
+                    cursor.execute("INSERT OR REPLACE INTO eth_prices (timestamp, price, block_number) VALUES (?, ?, ?)", 
+                                  (block_timestamp, eth_price, block_number))
+                    conn.commit()
+                    print(f"[{timestamp_str}] Block {block_number} | ETH Price: ${eth_price:,.2f}")
             
             except Exception as loop_err:
                 print(f"Error in loop: {loop_err}")
