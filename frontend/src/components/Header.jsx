@@ -59,12 +59,12 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
                                 MARKETS
                             </Link>
                             <span className="text-white/10">|</span>
-                            <Link
+                            {/*                            <Link
                                 to="/research"
                                 className={`transition-colors px-2 tracking-widest ${location.pathname === '/research' ? 'text-white cursor-default' : 'text-gray-400 hover:text-white cursor-pointer'}`}
                             >
                                 RESEARCH
-                            </Link>
+                            </Link> */}
                         </div>
                     </div>
 

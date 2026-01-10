@@ -84,18 +84,66 @@ def get_aave_rate_at_block(asset_address, block_num):
         print(f"Error fetching data for {asset_address} at block {block_num}: {e}")
         return None
 
+def get_min_block():
+    try:
+        # Check both tables for the absolute minimum block to ensure continuity
+        cursor.execute("SELECT MIN(block_number) FROM rates_dai")
+        row_dai = cursor.fetchone()
+        min_dai = row_dai[0] if row_dai else None
+        
+        cursor.execute("SELECT MIN(block_number) FROM rates_usdt")
+        row_usdt = cursor.fetchone()
+        min_usdt = row_usdt[0] if row_usdt else None
+        
+        # Filter out None values (if table is empty)
+        blocks = [b for b in [min_dai, min_usdt] if b is not None]
+        
+        if not blocks:
+            return None
+        return min(blocks)
+    except Exception as e:
+        print(f"Error fetching min block: {e}")
+        return None
+
 def run_backfill():
     if not w3.is_connected():
         print("CRITICAL: Could not connect to Ethereum node.")
         return
 
-    latest_block = w3.eth.get_block('latest')['number']
-    print(f"Starting Backfill from Block {latest_block} backwards for {HOURS_TO_BACKFILL} hours...")
+    # Determine Start Block
+    min_db_block = get_min_block()
+    
+    if min_db_block:
+        latest_block = min_db_block
+        print(f"📉 Found existing data. Continuing backfill from Oldest Block: {latest_block}")
+    else:
+        latest_block = w3.eth.get_block('latest')['number']
+        print(f"🆕 No data found. Starting backfill from Chain Head: {latest_block}")
 
-    for i in range(HOURS_TO_BACKFILL + 1):
+    print(f"Target: Backfilling {HOURS_TO_BACKFILL} hours relative to start block...")
+
+    # Start loop from 1 since we assume start_block is already filled (or we want to start immediately before it)
+    for i in range(1, HOURS_TO_BACKFILL + 1):
         target_block = latest_block - (i * BLOCKS_PER_HOUR)
         
+        # Safety check for negative blocks (pre-genesis)
+        if target_block < 0:
+            print("Reached genesis block. Stopping.")
+            break
+        
         try:
+            # Check for existing data first to avoid duplicates/waste
+            exists = False
+            for symbol, data in ASSETS.items():
+                cursor.execute(f"SELECT 1 FROM {data['table']} WHERE block_number = ?", (target_block,))
+                if cursor.fetchone():
+                    exists = True
+                    break
+            
+            if exists:
+                print(f"  Skipping Block {target_block} (Exists)")
+                continue
+
             # Get timestamp for accuracy
             block_data = w3.eth.get_block(target_block)
             timestamp = block_data['timestamp']
@@ -104,15 +152,9 @@ def run_backfill():
             print(f"[{i}/{HOURS_TO_BACKFILL}] Processing Block {target_block} ({time_str})")
 
             for symbol, data in ASSETS.items():
-                # Check for existing data first to avoid duplicates (optional, but good practice)
-                cursor.execute(f"SELECT 1 FROM {data['table']} WHERE block_number = ?", (target_block,))
-                if cursor.fetchone():
-                    # print(f"  Skipping {symbol}: Data exists.")
-                    continue
-
                 rate = get_aave_rate_at_block(data['address'], target_block)
                 if rate is not None:
-                    cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (target_block, timestamp, rate))
+                    cursor.execute(f"INSERT OR IGNORE INTO {data['table']} VALUES (?, ?, ?)", (target_block, timestamp, rate))
                     conn.commit()
                     print(f"  Saved {symbol}: {rate:.2f}%")
                     
