@@ -32,32 +32,22 @@ def get_db_connection():
 
 # 3. Simple In-Memory Cache (TTL: 20s)
 # Reduces DB load for identical frequent requests
+# 3. Simple In-Memory Cache (TTL: 20s)
+# Reduces DB load for identical frequent requests
 CACHE_STORE = {}
 CACHE_TTL = 20 
 
-def ttl_cache(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Create unique key from kwargs (FastAPI passes params as kwargs)
-        # We sort keys to ensure consistency
-        key = f"{func.__name__}:{sorted(kwargs.items())}"
-        now = time.time()
-        
-        # Cleanup old cache (naive) - every 100 requests? 
-        # For simplicity, we just check access.
-        
-        if key in CACHE_STORE:
-            val, timestamp = CACHE_STORE[key]
-            if now - timestamp < CACHE_TTL:
-                return val
-            
-        result = func(*args, **kwargs)
-        CACHE_STORE[key] = (result, now)
-        return result
-    return wrapper
+def get_from_cache(key):
+    if key in CACHE_STORE:
+        val, timestamp = CACHE_STORE[key]
+        if time.time() - timestamp < CACHE_TTL:
+            return val
+    return None
+
+def set_cache(key, val):
+    CACHE_STORE[key] = (val, time.time())
 
 @app.get("/rates")
-@ttl_cache
 def get_rates(
     limit: int = 50000, 
     start_date: str = Query(None),
@@ -66,6 +56,12 @@ def get_rates(
     symbol: str = Query("USDC", description="USDC, DAI, USDT")
 ):
     try:
+        # Cache Check
+        cache_key = f"rates:{symbol}:{resolution}:{limit}:{start_date}:{end_date}"
+        cached = get_from_cache(cache_key)
+        if cached:
+            return cached
+
         conn = get_db_connection()
         
         # Determine Base Table based on Symbol
@@ -177,19 +173,26 @@ def get_rates(
             for k, v in row.items():
                 if isinstance(v, float) and v != v: # check for NaN
                     row[k] = None
+        
+        set_cache(cache_key, data)
         return data
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/eth-prices")
-@ttl_cache
 def get_eth_prices(
     start_date: str = Query(None),
     end_date: str = Query(None),
     resolution: str = Query("1H", description="1H, 4H, 1D")
 ):
     try:
+        # Cache Check
+        cache_key = f"eth_prices:{resolution}:{start_date}:{end_date}"
+        cached = get_from_cache(cache_key)
+        if cached:
+            return cached
+
         conn = get_db_connection()
         
         # Aggregation Logic
@@ -231,6 +234,8 @@ def get_eth_prices(
             for k, v in row.items():
                 if isinstance(v, float) and v != v: # check for NaN
                     row[k] = None
+        
+        set_cache(cache_key, data)
         return data
         
     except Exception as e:
