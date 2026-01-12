@@ -15,7 +15,9 @@ export default function Layout() {
             try {
                 // Lightweight fetch for status only
                 const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
-                const res = await axios.get(`${API_BASE}/rates?resolution=RAW&limit=1`);
+                const API_KEY = import.meta.env.VITE_API_KEY;
+                const headers = API_KEY ? { "X-API-Key": API_KEY } : {};
+                const res = await axios.get(`${API_BASE}/rates?resolution=RAW&limit=1`, { headers });
                 const data = res.data;
                 
                 if (data && data.length > 0) {
