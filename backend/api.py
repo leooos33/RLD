@@ -64,9 +64,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://rate-dashboard.netlify.app",
-        "https://rate-dashboard.onrender.com"
+        "https://rate-dashboard.onrender.com",
+        "https://www.rate-dashboard.onrender.com"
     ],
-    allow_methods=["GET"], # Restrict to GET only
+    allow_methods=["*"], # Allow all methods (specifically OPTIONS for preflight)
     allow_headers=["*"],
 )
 
