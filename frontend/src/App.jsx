@@ -92,6 +92,7 @@ function App() {
 
   // --- VISIBILITY STATE ---
   const [hiddenSeries, setHiddenSeries] = useState([]);
+  const [visibleChartData, setVisibleChartData] = useState([]); // Zoomed data from chart
 
   const toggleSeries = (key) => {
     setHiddenSeries(prev => 
@@ -648,14 +649,16 @@ function App() {
                     {/* Correlation Display */}
                     {processedData.length > 0 && (
                          <span className={(() => {
-                            const apys = processedData.map(d => d.apy || 0);
-                            const prices = processedData.map(d => d.ethPrice || 0);
+                            const source = visibleChartData.length > 0 ? visibleChartData : processedData;
+                            const apys = source.map(d => d.apy || 0);
+                            const prices = source.map(d => d.ethPrice || 0);
                             const corr = calculateCorrelation(apys, prices);
                             return corr > 0 ? "text-green-500" : "text-red-500";
                          })()}>
                             CORRELATION: {(() => {
-                                const apys = processedData.map(d => d.apy || 0);
-                                const prices = processedData.map(d => d.ethPrice || 0);
+                                const source = visibleChartData.length > 0 ? visibleChartData : processedData;
+                                const apys = source.map(d => d.apy || 0);
+                                const prices = source.map(d => d.ethPrice || 0);
                                 return calculateCorrelation(apys, prices).toFixed(2);
                             })()}
                          </span>
@@ -684,6 +687,7 @@ function App() {
                 ) : (
                   <RLDPerformanceChart
                     data={chartData}
+                    onDataChange={setVisibleChartData}
                     areas={[
                       { key: "apy", name: "Spot", color: "#22d3ee" },
                       { key: "ethPrice", name: "ETH Price", color: "#a1a1aa", yAxisId: "right" },

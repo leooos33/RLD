@@ -52,7 +52,7 @@ const CustomTooltip = ({ active, payload, label, resolution }) => {
   return null;
 };
 
-const RLDPerformanceChart = ({ data, areas = [], referenceLines = [], resolution = "1H" }) => {
+const RLDPerformanceChart = ({ data, areas = [], referenceLines = [], resolution = "1H", onDataChange }) => {
   // State & Refs
   const containerRef = useRef(null);
   const [yDomain, setYDomain] = useState(['auto', 'auto']);
@@ -126,6 +126,13 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [], resolution
     }
     return sampled;
   }, [data, zoomState]);
+
+  // Notify parent of visible data change
+  useEffect(() => {
+      if (onDataChange) {
+          onDataChange(visibleData);
+      }
+  }, [visibleData, onDataChange]);
 
   // Auto-Scaling Logic (Triggered when visibleData changes)
   useEffect(() => {
