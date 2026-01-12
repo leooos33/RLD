@@ -212,7 +212,7 @@ export default function Markets() {
     useEffect(() => {
         const fetchAllData = async () => {
             try {
-                const provider = new JsonRpcProvider(import.meta.env.VITE_INFURA_RPC_URL);
+                const provider = new JsonRpcProvider(import.meta.env.VITE_MAINNET_RPC_URL);
                 const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
                 const promises = ASSETS.map(async (asset) => {
