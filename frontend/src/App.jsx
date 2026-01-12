@@ -114,7 +114,7 @@ function App() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days);
-    if (days <= 3) setResolution("RAW"); // 24H - 3D -> RAW
+    if (days <= 3) setResolution("1H"); // 24H - 3D -> 1H
     else if (days <= 14) setResolution("1H"); // 1W - 2W -> 1H (High Res)
     else if (days <= 90) setResolution("4H"); // 1M - 3M -> 4H (Medium Res)
     else setResolution("1D"); // 1Y - ALL -> 1D (Low Res)
@@ -242,7 +242,7 @@ function App() {
     // Determine bucket size for matching
     // If RAW, we match to the nearest hour (3600)
     // If others, we match to that resolution
-    const bucketSize = resolution === "RAW" ? 3600 : 
+    const bucketSize = resolution === "1W" ? 604800 :
                        resolution === "4H" ? 14400 : 
                        resolution === "1D" ? 86400 : 3600;
 
@@ -281,16 +281,12 @@ function App() {
         let price = current.eth_price;
 
         if (price === undefined || price === null) {
-            // 2. Fallback: Client-side Map Lookup (RAW Mode)
+            // 2. Fallback: Client-side Map Lookup
             price = priceMap.get(current.timestamp);
             
             if (price === undefined) {
                  const bucketTs = Math.floor(current.timestamp / bucketSize) * bucketSize;
                  price = priceMap.get(bucketTs);
-            }
-            if (price === undefined && resolution === "RAW") {
-                 const hourTs = Math.floor(current.timestamp / 3600) * 3600;
-                 price = priceMap.get(hourTs);
             }
         }
 
@@ -348,7 +344,7 @@ function App() {
      return processedData.filter((_, i) => i % step === 0);
   }, [processedData]);
 
-  const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
+  // const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
   const latest =
     rates && rates.length > 0
       ? rates[rates.length - 1]
@@ -542,7 +538,7 @@ function App() {
                 ))}
               </ControlCell>
               <ControlCell label="RESOLUTION">
-                {["RAW", "1H", "4H", "1D"].map((res) => (
+                {["1H", "4H", "1D", "1W"].map((res) => (
                   <SettingsButton
                     key={res}
                     onClick={() => setResolution(res)}

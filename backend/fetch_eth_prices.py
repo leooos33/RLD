@@ -222,9 +222,10 @@ def main():
         save_prices(new_prices)
         
         # 4. Trigger Aggregation
-        print("🔄 Triggering Data Aggregation...")
+        print("🔄 Triggering Data Sync (Raw -> Clean)...")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        subprocess.run(["python3", "aggregate_data.py"], cwd=script_dir)
+        sync_script_path = os.path.join(script_dir, "scripts", "sync_clean_db.py")
+        subprocess.run(["python3", sync_script_path], cwd=script_dir)
     else:
         print("🎉 Database is up to date.")
 

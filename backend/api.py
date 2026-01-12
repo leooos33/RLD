@@ -165,7 +165,7 @@ def get_eth_prices(
 
         conn = get_db_connection()
         
-        buckets = {"1H": 3600, "4H": 14400, "1D": 86400}
+        buckets = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
         seconds = buckets.get(resolution, 3600)
         
         if resolution == "1H":
