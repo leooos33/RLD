@@ -193,7 +193,7 @@ export default function Markets() {
         const start = new Date();
         start.setDate(end.getDate() - days);
         
-        if (days <= 3) setResolution("RAW");
+        if (days <= 3) setResolution("1H");
         else if (days <= 14) setResolution("1H");
         else if (days <= 90) setResolution("4H");
         else setResolution("1D");
@@ -219,7 +219,7 @@ export default function Markets() {
                     let apy = 0;
                     try {
                         const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
-                        const apiRes = await fetch(`${API_BASE}/rates?resolution=RAW&limit=1&symbol=${asset.symbol}`);
+                        const apiRes = await fetch(`${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`);
                         const apiData = await apiRes.json();
                         if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy || 0;
                     } catch (e) {
@@ -419,6 +419,7 @@ export default function Markets() {
                 <div className="border-y border-white/10 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0">
                   <ControlCell label="TIMEFRAME" className="pl-0">
                     {[
+                      { l: "1D", d: 1 },
                       { l: "1W", d: 7 },
                       { l: "1M", d: 30 },
                       { l: "3M", d: 90 },
@@ -435,7 +436,7 @@ export default function Markets() {
                     ))}
                   </ControlCell>
                   <ControlCell label="RESOLUTION">
-                    {["RAW", "1H", "4H", "1D"].map((res) => (
+                    {["1H", "4H", "1D", "1W"].map((res) => (
                       <SettingsButton
                         key={res}
                         onClick={() => setResolution(res)}

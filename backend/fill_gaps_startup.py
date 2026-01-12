@@ -4,6 +4,7 @@ import requests
 import time
 import os
 import sys
+import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -299,6 +300,13 @@ def run_repair_job():
                 print(f"   ✅ {symbol} is complete.")
 
     conn.close()
+    
+    # Trigger Sync
+    print("🔄 Triggering Data Sync (Raw -> Clean)...")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sync_script = os.path.join(script_dir, "scripts", "sync_clean_db.py")
+    subprocess.run(["python3", sync_script])
+    
     print("✨ Repair Complete.")
 
 if __name__ == "__main__":
