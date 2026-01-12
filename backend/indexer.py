@@ -6,7 +6,13 @@ import sqlite3
 import os
 from web3 import Web3
 from dotenv import load_dotenv
+import logging
 
+# --- Logging Config ---
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 # --- CONFIGURATION ---
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 RPC_URL = os.getenv("MAINNET_RPC_URL")
@@ -16,7 +22,7 @@ RPC_URLS = [url for url in [RPC_URL, RESERVE_RPC, "https://eth.llamarpc.com"] if
 current_rpc_index = 0
 
 if not RPC_URLS:
-    print("CRITICAL: No RPC URLs found.")
+    logging.critical("CRITICAL: No RPC URLs found.")
     exit(1)
 
 # Import Centralized Config
@@ -32,7 +38,7 @@ def switch_rpc():
     global current_rpc_index, w3
     current_rpc_index = (current_rpc_index + 1) % len(RPC_URLS)
     new_url = RPC_URLS[current_rpc_index]
-    print(f"⚠️ Switching RPC to: {new_url}")
+    logging.warning(f"⚠️ Switching RPC to: {new_url}")
     w3.provider = Web3.HTTPProvider(new_url)
 
 # Database Setup
@@ -75,7 +81,7 @@ def poll_sofr_data():
     Background thread to fetch SOFR rates from NY Fed API.
     Runs every hour, but only inserts if data is new.
     """
-    print("📈 Starting SOFR Indexer Thread...")
+    logging.info("📈 Starting SOFR Indexer Thread...")
     
     while True:
         try:
@@ -108,7 +114,7 @@ def poll_sofr_data():
             conn_sofr.close()
             
         except Exception as e:
-            print(f"   ⚠️ [SOFR] Error: {e}")
+            logging.error(f"   ⚠️ [SOFR] Error: {e}")
         
         # Sleep 1 hour
         time.sleep(3600)
@@ -191,7 +197,7 @@ def get_aave_rate(asset_address, block_identifier='latest'):
         apy = raw_rate / 10**27 * 100
         return apy
     except Exception as e:
-        print(f"Error fetching data for {asset_address}: {e}")
+        logging.error(f"Error fetching data for {asset_address}: {e}")
         return None
 
 def get_eth_price(block_identifier='latest'):
@@ -213,18 +219,18 @@ def get_eth_price(block_identifier='latest'):
         eth_price = (10**12) / price_raw
         return eth_price
     except Exception as e:
-        print(f"Error fetching ETH Price: {e}")
+        logging.error(f"Error fetching ETH Price: {e}")
         return None
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     if not w3.is_connected():
-        print("CRITICAL: Could not connect to Ethereum node.")
+        logging.critical("CRITICAL: Could not connect to Ethereum node.")
         exit()
         
-    print(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
-    print(f"Connected to: {RPC_URL}")
-    print("-" * 40)
+    logging.info(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
+    logging.info(f"Connected to: {RPC_URL}")
+    logging.info("-" * 40)
     
     # Start SOFR Thread
     t = threading.Thread(target=poll_sofr_data, daemon=True)
@@ -260,7 +266,7 @@ if __name__ == "__main__":
                         # Existing DB
                         cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
                         conn.commit()
-                        print(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
+                        logging.info(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
                         
                         # Clean DB Update
                         col_map = {
@@ -280,7 +286,7 @@ if __name__ == "__main__":
                     cursor.execute("INSERT OR REPLACE INTO eth_prices (timestamp, price, block_number) VALUES (?, ?, ?)", 
                                   (block_timestamp, eth_price, block_number))
                     conn.commit()
-                    print(f"[{timestamp_str}] Block {block_number} | ETH Price: ${eth_price:,.2f}")
+                    logging.info(f"[{timestamp_str}] Block {block_number} | ETH Price: ${eth_price:,.2f}")
                     
                     # Clean DB Update
                     cursor_clean.execute("UPDATE hourly_stats SET eth_price = ? WHERE timestamp = ?", (eth_price, period_ts))
@@ -289,10 +295,10 @@ if __name__ == "__main__":
                 conn_clean.close()
             
             except Exception as loop_err:
-                print(f"Error in loop: {loop_err}")
+                logging.error(f"Error in loop: {loop_err}")
                 switch_rpc()
 
             time.sleep(12)
             
     except KeyboardInterrupt:
-        print("\nStopping script.")
+        logging.info("\nStopping script.")

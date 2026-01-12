@@ -10,6 +10,13 @@ from datetime import datetime
 import time
 import os
 from collections import defaultdict
+import logging
+
+# --- Logging Config ---
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # --- Security: API Key ---
 API_KEY_NAME = "X-API-Key"
@@ -194,7 +201,7 @@ def get_rates(
         return data
         
     except Exception as e:
-        print(f"ERROR in get_rates: {e}")
+        logging.error(f"ERROR in get_rates: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/eth-prices")
@@ -259,5 +266,5 @@ def get_eth_prices(
     except Exception as e:
         if "no such table" in str(e):
             return []
-        print(f"ERROR in get_eth_prices: {e}")
+        logging.error(f"ERROR in get_eth_prices: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
