@@ -9,6 +9,18 @@ if [ -n "$DB_DIR" ] && [ -d "$DB_DIR" ]; then
         TARGET="$DB_DIR/$FILE"
         SOURCE="./$FILE"
         
+        # Auto-Repair: Overwrite if target is tiny (<500KB)
+        if [ -f "$TARGET" ]; then
+            TSIZE=$(wc -c < "$TARGET")
+            # 500KB = 512000 bytes. 24KB is 24576. 1.2MB is ~1200000.
+            if [ "$TSIZE" -lt 512000 ]; then
+                echo "   ⚠️ Target $FILE is tiny ($TSIZE bytes). Overwriting with seed..."
+                rm "$TARGET"
+            else
+                echo "   ✅ $FILE exists in storage ($TSIZE bytes). Keeping it."
+            fi
+        fi
+
         if [ ! -f "$TARGET" ]; then
             if [ -f "$SOURCE" ]; then
                 echo "   👉 Seeding $FILE from image to persistent disk..."
@@ -16,8 +28,6 @@ if [ -n "$DB_DIR" ] && [ -d "$DB_DIR" ]; then
             else
                 echo "   ⚠️ $SOURCE not found in image. Skipping seed."
             fi
-        else
-            echo "   ✅ $FILE exists in storage."
         fi
     done
 fi
