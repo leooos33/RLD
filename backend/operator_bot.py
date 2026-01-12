@@ -11,22 +11,38 @@ from dotenv import load_dotenv
 load_dotenv("../.env")
 
 # Network & Wallet Config
-# CRITICAL: Operator must connect to the LOCAL ANVIL CHAIN (which forks Mainnet)
-# because the Symbiotic contracts only exist locally.
-RPC_URL = os.getenv("LOCAL_RPC_URL", "http://127.0.0.1:8545")
+import logging
+
+# --- Logging Config ---
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Network & Wallet Config
+# Use explicit Env Var. Fail if missing to prevent silent localhost connection attempts.
+RPC_URL = os.getenv("MAINNET_RPC_URL")
+if not RPC_URL:
+    logging.critical("❌ MAINNET_RPC_URL not set in .env")
+    exit(1)
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 if not PRIVATE_KEY:
     raise ValueError("❌ PRIVATE_KEY not set in environment or .env file!")
 
 # Contract Addresses (Update ORACLE_ADDRESS after deployment!)
 # Load Contract Addresses from Shared JSON
-try:
     with open("../shared/addresses.json", "r") as f:
         import json
         addresses = json.load(f)
         ORACLE_ADDRESS = addresses.get("SymbioticRateOracle")
+
+    if not ORACLE_ADDRESS:
+        logging.warning("⚠️ SymbioticRateOracle address not found in shared/addresses.json. Bot will sleep.")
+        # Proceed with Dummy address to allow import, but script logic should handle it
+        ORACLE_ADDRESS = "0x0000000000000000000000000000000000000000"
+
 except Exception as e:
-    print(f"⚠️ Warning: Could not load shared/addresses.json: {e}")
+    logging.warning(f"⚠️ Warning: Could not load shared/addresses.json: {e}")
     ORACLE_ADDRESS = os.getenv("ORACLE_ADDRESS", "0x0000000000000000000000000000000000000000")
 
 # Aave V3 Mainnet Addresses
@@ -44,8 +60,8 @@ if not w3.is_connected():
     raise Exception(f"❌ Failed to connect to RPC: {RPC_URL}")
 
 account = Account.from_key(PRIVATE_KEY)
-print(f"🚀 Operator Active: {account.address}")
-print(f"📡 Oracle Contract: {ORACLE_ADDRESS}")
+logging.info(f"🚀 Operator Active: {account.address}")
+logging.info(f"📡 Oracle Contract: {ORACLE_ADDRESS}")
 
 # Minimal ABIs
 POOL_ABI = '[{"inputs":[{"internalType":"address","name":"asset","type":"address"}],"name":"getReserveData","outputs":[{"internalType":"uint256","name":"configuration","type":"uint256"},{"internalType":"uint128","name":"liquidityIndex","type":"uint128"},{"internalType":"uint128","name":"currentLiquidityRate","type":"uint128"},{"internalType":"uint128","name":"variableBorrowIndex","type":"uint128"},{"internalType":"uint128","name":"currentVariableBorrowRate","type":"uint128"},{"internalType":"uint128","name":"currentStableBorrowRate","type":"uint128"},{"internalType":"uint40","name":"lastUpdateTimestamp","type":"uint40"},{"internalType":"uint16","name":"id","type":"uint16"},{"internalType":"address","name":"aTokenAddress","type":"address"},{"internalType":"address","name":"stableDebtTokenAddress","type":"address"},{"internalType":"address","name":"variableDebtTokenAddress","type":"address"},{"internalType":"address","name":"interestRateStrategyAddress","type":"address"},{"internalType":"uint128","name":"accruedToTreasury","type":"uint128"},{"internalType":"uint128","name":"unbacked","type":"uint128"},{"internalType":"uint128","name":"isolationModeTotalDebt","type":"uint128"}],"stateMutability":"view","type":"function"}]'
@@ -69,7 +85,7 @@ def get_aave_price_wad():
     return price_wad
 
 def run_oracle():
-    print(f"⏳ collecting {TWAR_WINDOW_BLOCKS} data points before first push...")
+    logging.info(f"⏳ collecting {TWAR_WINDOW_BLOCKS} data points before first push...")
     
     while True:
         try:
@@ -85,11 +101,11 @@ def run_oracle():
             spot_fmt = spot_wad / 10**18
             twar_fmt = twar_wad / 10**18
             
-            print(f"[{len(rate_history)}/{TWAR_WINDOW_BLOCKS}] Spot: ${spot_fmt:.4f} | TWAR: ${twar_fmt:.4f}")
+            logging.info(f"[{len(rate_history)}/{TWAR_WINDOW_BLOCKS}] Spot: ${spot_fmt:.4f} | TWAR: ${twar_fmt:.4f}")
 
             # 3. If window is full, Push to Chain
             if len(rate_history) >= TWAR_WINDOW_BLOCKS:
-                print(">> Pushing Update...")
+                logging.info(">> Pushing Update...")
                 
                 # Create Hash: keccak256(twar, timestamp, chainId, oracleAddr)
                 # This MUST match the solidity structure exactly
@@ -128,12 +144,12 @@ def run_oracle():
                     raw_tx = signed_tx[0] 
                 
                 tx_hash = w3.eth.send_raw_transaction(raw_tx)
-                print(f"✅ Tx Sent: {tx_hash.hex()}")
+                logging.info(f"✅ Tx Sent: {tx_hash.hex()}")
 
             time.sleep(POLL_INTERVAL)
 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            logging.error(f"❌ Error: {e}")
             # Don't crash the loop, just retry
             time.sleep(5)
 

@@ -127,7 +127,7 @@ export default function BondsPage() {
             ]}
             actionButton={{
                 label: `${activeTab} POSITION`,
-                onClick: () => console.log("Action Triggered"), // Placeholder
+                onClick: () => {}, // Placeholder
                 variant: activeProduct === "FIXED_BORROW" ? "pink" : "cyan",
             }}
           >
