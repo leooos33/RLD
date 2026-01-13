@@ -123,9 +123,12 @@ def get_db_connection():
 # 3. Secure In-Memory Cache (TTL: 20s, Max: 1000 items)
 CACHE_STORE = TTLCache(maxsize=1000, ttl=20)
 
+
 def get_from_cache(key):
     return CACHE_STORE.get(key)
 
+def set_cache(key, val):
+    CACHE_STORE[key] = val
 
 # 4. WebSocket Manager
 class ConnectionManager:
