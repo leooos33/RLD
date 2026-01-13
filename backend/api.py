@@ -92,7 +92,19 @@ app.add_middleware(
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "message": "Rate Dashboard API is running"}
+    last_block = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM sync_state WHERE key='last_block_number'")
+        row = cursor.fetchone()
+        if row:
+            last_block = int(row['value'])
+        conn.close()
+    except Exception as e:
+        logging.error(f"Health check db error: {e}")
+        
+    return {"status": "ok", "message": "Rate Dashboard API is running", "last_indexed_block": last_block}
 
 # Switch to Clean DB
 DB_NAME = "clean_rates.db"
@@ -223,13 +235,14 @@ def get_rates(
 
 @app.get("/eth-prices")
 def get_eth_prices(
+    limit: int = 50000,
     start_date: str = Query(None),
     end_date: str = Query(None),
     resolution: str = Query("1H", description="1H, 4H, 1D")
 ):
     try:
         # Cache Check
-        cache_key = f"eth_prices:{resolution}:{start_date}:{end_date}"
+        cache_key = f"eth_prices:{resolution}:{limit}:{start_date}:{end_date}"
         cached = get_from_cache(cache_key)
         if cached:
             return cached
@@ -263,7 +276,16 @@ def get_eth_prices(
             query += " AND timestamp <= ?"
             params.append(int(dt.timestamp()) + 86399)
 
-        query += f" {group_clause} ORDER BY timestamp ASC"
+        # ETH Prices usually displayed ASC for charts, but we apply limit to the LATEST
+        # So effective query needed is: Get latest N, then sort ASC.
+        # But simpler: Order DESC, Limit, then Sort Python side or Subquery.
+        # Given existing logic, let's just apply LIMIT to the query string which uses ASC?
+        # NO. ASC LIMIT N gets Oldest N. 
+        # We need: SELECT * FROM (...) ORDER BY timestamp ASC.
+        # For chart endpoint, preserving ASC default is good. 
+        # But if LIMIT is small (e.g. 48), user usually implies "Latest 48".
+        # Let's change ORDER to DESC for the query fetch, then sort ASC in Pandas if needed.
+        query += f" {group_clause} ORDER BY timestamp DESC LIMIT {limit}"
         
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()

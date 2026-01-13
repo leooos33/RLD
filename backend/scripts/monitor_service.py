@@ -22,6 +22,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("API_KEY") 
 PORT = os.getenv("PORT", "10000")
 API_URL = f"http://localhost:{PORT}"
+RPC_URL = os.getenv("MAINNET_RPC_URL")
 
 # Refresh Interval for Background Checks
 INTERVAL = 60
@@ -74,11 +75,25 @@ def check_api_health():
         res = requests.get(f"{API_URL}/", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
-            return True, f"{int(latency)}ms"
+            data = res.json()
+            last_indexed = data.get("last_indexed_block")
+            return True, f"{int(latency)}ms", last_indexed
         else:
-            return False, f"Status Code: {res.status_code}"
+            return False, f"Status Code: {res.status_code}", None
     except Exception as e:
-        return False, str(e)
+        return False, str(e), None
+
+def get_latest_block():
+    try:
+        if not RPC_URL:
+            return None
+        payload = {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}
+        res = requests.post(RPC_URL, json=payload, timeout=5)
+        data = res.json()
+        return int(data['result'], 16)
+    except Exception as e:
+        logger.error(f"RPC Error: {e}")
+        return None
 
 def get_asset_stats(symbol, endpoint="/rates"):
     try:
@@ -93,6 +108,9 @@ def get_asset_stats(symbol, endpoint="/rates"):
         data = res.json()
         if not data:
             return None, None
+
+        # Sort DESC (Newest First) to ensure data[0] is current
+        data.sort(key=lambda x: x['timestamp'], reverse=True)
 
         current = data[0]
         target_ts = current['timestamp'] - 86400
@@ -111,16 +129,26 @@ def get_asset_stats(symbol, endpoint="/rates"):
         return None, None
 
 def generate_report():
-    is_healthy, latency = check_api_health()
+    is_healthy, latency, last_indexed = check_api_health()
     now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     status_emoji = "🟢" if is_healthy else "🔴"
     status_text = "Online" if is_healthy else "Offline"
     
     report = f"📊 **System Dashboard**\n🕒 `{now_str}`\n\n"
     report += f"**{status_emoji} API Status**: {status_text}\n"
-    report += f"**⏱️ Response Time**: {latency}\n\n"
+    report += f"**⏱️ Response Time**: {latency}\n"
     
+    # Block Lag
     if is_healthy:
+        latest_block = get_latest_block()
+        if latest_block and last_indexed:
+            lag = latest_block - last_indexed
+            # If lag is huge, show warning
+            lag_emoji = "✅" if lag < 50 else ("⚠️" if lag < 300 else "🚨")
+            report += f"**📦 Block Lag**: {lag_emoji} {lag:,} blocks\n\n"
+        else:
+             report += f"**📦 Block Lag**: N/A\n\n"
+
         report += "**📉 Market Rates (24h Trend)**\n"
         for symbol in ["USDC", "DAI", "USDT"]:
             curr, past = get_asset_stats(symbol)
@@ -181,7 +209,7 @@ def monitor_loop():
         # A. Background Health Check & Alerts (Every 60s)
         if time.time() - last_check_time > INTERVAL:
             last_check_time = time.time()
-            is_healthy, reason = check_api_health()
+            is_healthy, reason, _ = check_api_health()
             
             if status_ok and not is_healthy:
                 status_ok = False
