@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import useSWR from "swr";
 import { API_URL, fetcher, getPastDate, getToday } from "../utils/helpers";
 
