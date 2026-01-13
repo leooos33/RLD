@@ -292,6 +292,10 @@ if __name__ == "__main__":
                     cursor_clean.execute("UPDATE hourly_stats SET eth_price = ? WHERE timestamp = ?", (eth_price, period_ts))
                     conn_clean.commit()
 
+                # Update Sync State (Latest Block)
+                cursor_clean.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)", ("last_block_number", str(block_number)))
+                conn_clean.commit()
+                
                 conn_clean.close()
             
             except Exception as loop_err:
