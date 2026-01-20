@@ -94,75 +94,46 @@ contract RLDMarketFactory is IRLDMarketFactory {
         
         oracle = AAVE_RATE_ORACLE;
         spotOracle = CHAINLINK_SPOT_ORACLE; 
+        defaultOracle = DEFAULT_ORACLE;
         
         address module = liquidationModule == address(0) ? STATIC_LIQ_MODULE : liquidationModule;
         
-        // Deploy wRLP
+        // 1. Deploy wRLP
         address wRLPAddr = Clones.clone(WRAPPED_RLP_IMPL);
         string memory colSymbol = ERC20(collateralToken).symbol();
         WrappedRLP(wRLPAddr).initialize(underlyingToken, colSymbol);
 
-        // 3. Create Market Params (Using passed MarketType)
+        // 2. Create Market Configs
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
             collateralToken: collateralToken,
             underlyingToken: underlyingToken,
             underlyingPool: underlyingPool,
             rateOracle: AAVE_RATE_ORACLE,
             spotOracle: CHAINLINK_SPOT_ORACLE,
-            markOracle: address(0), // No V4 Singleton for legacy/manual deploy
+            markOracle: address(0), // No V4 Singleton for legacy
             fundingModel: STD_FUNDING_MODEL,
             curator: address(0), 
             hook: CDS_HOOK,
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: module,
-            positionToken: wRLPAddr // Set deployed token
+            positionToken: wRLPAddr
         });
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
             marketType: marketType,
             minColRatio: minColRatio,
             maintenanceMargin: maintenanceMargin,
-            liquidationParams: liquidationParams
+            liquidationParams: liquidationParams,
+            brokerVerifier: address(0)
         });
         
-        // 4. Register & Validate Constraints
-        bytes32 canonicalKey = getCanonicalId(underlyingPool, underlyingToken, marketType);
-        
-        if (MarketId.unwrap(canonicalMarkets[canonicalKey]) != bytes32(0)) {
-            revert MarketAlreadyExists();
-        }
+        // 3. Deploy Core
+        marketId = _deployCore(addresses, config, wRLPAddr);
 
-        marketId = CORE.createMarket(addresses, config);
-        canonicalMarkets[canonicalKey] = marketId;
-        
-        // Link wRLP
-        WrappedRLP(wRLPAddr).setMarketId(marketId);
-        WrappedRLP(wRLPAddr).transferOwnership(address(CORE));
-
-        // 5. Initialize Uniswap Pool (Empty for Classic Market)
+        // 4. Initialize Uniswap Pool (Empty)
         poolId = bytes32(0); 
     }
 
-    /// @notice Deploys a new RLD Market compatible with Uniswap V4.
-    /// @dev This function orchestrates the entire setup: wRLP clone, V4 Pool init, Price calculation, Registry, and Core market creation.
-    /// @param underlyingPool Address of the lending protocol pool (e.g., Aave Pool) to query rates from.
-    /// @param underlyingToken Address of the asset being lent/borrowed (e.g., USDC).
-    /// @param collateralToken Address of the collateral asset (e.g., aUSDC). Used for wRLP naming and Core config.
-    /// @param marketType The type of market (e.g., RLP, BOND). Should usually be RLP for this Factory.
-    /// @param minColRatio Minimum Collateral Ratio (18 decimals, e.g., 1.2e18 suitable for stablecoins).
-    /// @param maintenanceMargin Maintenance Margin required (18 decimals, e.g., 1.1e18).
-    /// @param liquidationModule Address of the module handling liquidations (must be non-zero).
-    /// @param liquidationParams Config params bytes for the liquidation module (optional).
-    /// @param spotOracle Address of the Spot Oracle (e.g., Chainlink) for the Collateral Token.
-    /// @param rateOracle Address of the Rate Oracle (e.g., RLDAaveOracle) to fetch the Index Price.
-    /// @param oraclePeriod The TWAP period in seconds for the Singleton Oracle (e.g., 3600 for 1h).
-    /// @param poolFee The Uniswap V4 Pool Fee (e.g., 3000 for 0.3%).
-    /// @param tickSpacing The Uniswap V4 Tick Spacing (e.g., 60).
-    /// @return marketId The unique ID of the created market in RLDCore.
-    /// @return oracle The Rate Oracle address used.
-    /// @return _spotOracle The Spot Oracle address used.
-    /// @return defaultOracle The Default Oracle address used.
-    /// @return poolId The ID of the initialized Uniswap V4 Pool.
     function deployMarketV4(
         address underlyingPool,
         address underlyingToken,
@@ -182,31 +153,19 @@ contract RLDMarketFactory is IRLDMarketFactory {
 
         // 1. Deploy wRLP (Clone)
         address wRLPAddr = Clones.clone(WRAPPED_RLP_IMPL);
-        // Assuming collateralToken is ERC20 compatible
         string memory colSymbol = ERC20(collateralToken).symbol();
         WrappedRLP(wRLPAddr).initialize(underlyingToken, colSymbol);
         
-        // Note: wRLP is the tokenized debt/position, NOT the collateral.
-        // collateralToken is passed as argument.
-
         // 2. Setup V4 Pool params
         Currency currency0 = Currency.wrap(wRLPAddr);
         Currency currency1 = Currency.wrap(underlyingToken);
         if (currency0 > currency1) (currency0, currency1) = (currency1, currency0);
 
-        // Calculate Init Sqrt Price from Rate Oracle (Index Price)
-        // wRLP tracks Index Price. 1 wRLP = IndexPrice * Underlying.
-        // If wRLP is token0, Price = Amount1/Amount0 = IndexPrice.
-        // If wRLP is token1, Price = Amount0/Amount1 = 1/IndexPrice.
-        
         uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(underlyingPool, underlyingToken);
-        
-        // Invert if wRLP is token1 (currency1)
         if (Currency.wrap(wRLPAddr) == currency1) {
              indexPrice = 1e36 / indexPrice;
         }
 
-        // sqrtPriceX96 = (sqrt(price) * 2^96) / 1e9
         uint160 initSqrtPrice = uint160( (FixedPointMathLib.sqrt(indexPrice) * (1 << 96)) / 1e9 );
 
         PoolKey memory key = PoolKey({
@@ -217,7 +176,6 @@ contract RLDMarketFactory is IRLDMarketFactory {
             hooks: IHooks(address(twamm))
         });
         
-        // Initialize Pool
         poolManager.initialize(key, initSqrtPrice);
         poolId = PoolId.unwrap(key.toId());
 
@@ -231,16 +189,15 @@ contract RLDMarketFactory is IRLDMarketFactory {
 
         oracle = rateOracle;
         _spotOracle = spotOracle; 
+        defaultOracle = DEFAULT_ORACLE;
         
-        address marketOracle = SINGLETON_V4_ORACLE;
-        
-        // 4. Create Market Params
+        // 4. Create Market Configs
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
             collateralToken: collateralToken,
             underlyingToken: underlyingToken,
             underlyingPool: underlyingPool,
             rateOracle: rateOracle,
-            spotOracle: spotOracle, // Collateral Oracle
+            spotOracle: spotOracle, 
             markOracle: SINGLETON_V4_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
             curator: address(0),
@@ -250,29 +207,38 @@ contract RLDMarketFactory is IRLDMarketFactory {
             positionToken: wRLPAddr
         });
 
-
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
             marketType: marketType,
             minColRatio: minColRatio,
             maintenanceMargin: maintenanceMargin,
-            liquidationParams: liquidationParams
+            liquidationParams: liquidationParams,
+            brokerVerifier: address(0)
         });
 
-        bytes32 canonicalKey = getCanonicalId(underlyingPool, underlyingToken, marketType);
+        // 5. Deploy Core
+        marketId = _deployCore(addresses, config, wRLPAddr);
+    }
+    
+    function _deployCore(
+        IRLDCore.MarketAddresses memory addresses,
+        IRLDCore.MarketConfig memory config,
+        address wRLPAddr
+    ) internal returns (MarketId marketId) {
+        // Register & Validate Constraints
+        bytes32 canonicalKey = getCanonicalId(addresses.underlyingPool, addresses.underlyingToken, config.marketType);
+        
         if (MarketId.unwrap(canonicalMarkets[canonicalKey]) != bytes32(0)) {
             revert MarketAlreadyExists();
         }
 
         marketId = CORE.createMarket(addresses, config);
         canonicalMarkets[canonicalKey] = marketId;
-
-        // 5. Link wRLP
+        
+        // Link wRLP
         WrappedRLP(wRLPAddr).setMarketId(marketId);
         WrappedRLP(wRLPAddr).transferOwnership(address(CORE));
         
-        defaultOracle = DEFAULT_ORACLE;
-        
-        emit MarketDeployed(marketId, underlyingPool, underlyingToken, marketType);
+        emit MarketDeployed(marketId, addresses.underlyingPool, addresses.underlyingToken, config.marketType);
     }
 
     function deployBondVault(MarketId /*marketId*/) external override returns (address vault) {

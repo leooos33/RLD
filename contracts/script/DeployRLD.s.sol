@@ -39,7 +39,7 @@ contract DeployRLD is Script {
         revert("Active Network Not Found");
     }
 
-    function run() external {
+    function run() external returns (RLDCore core, RLDMarketFactory factory, PoolManager poolManager) {
         // Load Network Config
         NetworkConfig memory config = getNetworkConfig();
         // address targetAsset = config.usdc;
@@ -106,5 +106,6 @@ PoolManager poolManager = new PoolManager(deployer);
         
         string memory path = "../shared/addresses.json";
         vm.writeFile(path, addressesJson);
+        return (core, factory, poolManager);
     }
 }
