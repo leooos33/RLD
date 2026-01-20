@@ -120,6 +120,14 @@ stateDiagram-v2
         - SellRate removed from global sellRateCurrent
     end note
 
+    Active --> Cancelled : cancelOrder()
+    note right of Cancelled
+        - Removes rate from current & future
+        - Immediate refund of unspent tokens
+    end note
+
+    Cancelled --> Claiming : auto-claim on cancel
+
     Active --> Claiming : sync() / claim()
     Expired --> Claiming : sync() / claim()
 
@@ -140,7 +148,20 @@ stateDiagram-v2
     - If `block.timestamp` crosses an expiration boundary, the execution is split.
     - At the boundary, expired sell rates are subtracted from `sellRateCurrent`.
 
-3.  **Sync/Claim**:
+3.  **Cancel**:
+    Users can cancel their order at any time before expiration.
+    - **Action**: `cancelOrder(key, orderKey)`
+    - **Effect**:
+      - Calls `sync()` to ensure all past intervals are processed.
+      - Removes the order's `sellRate` from global state (current and future).
+      - Refunds the remaining `sellTokens` proportional to the unexpired time.
+      - Transfers all accrued earnings to the user.
+    - **View Function**: `getCancelOrderState(key, orderKey)`
+      - Returns `(buyTokensOwed, sellTokensRefund)`.
+      - Allows users to preview the refund amount before cancelling.
+      - _Note_: `buyTokensOwed` returned by this view is a minimum value (historical earnings). Actual cancellation may trigger a fresh execution for the current interval, potentially yielding slightly higher earnings.
+
+4.  **Sync/Claim**:
     - User calls `sync(orderKey)`.
     - System calculates earnings based on the difference in `earningsFactor` since the last sync.
     - Updates `tokensOwed[token][user]`.
