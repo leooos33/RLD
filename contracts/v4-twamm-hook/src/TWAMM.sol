@@ -317,6 +317,123 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
 
         return (orderId, orderKey);
     }
+    
+    /// @inheritdoc ITWAMM
+    function cancelOrder(PoolKey calldata key, OrderKey calldata orderKey)
+        external
+        returns (uint256 buyTokensOut, uint256 sellTokensRefund)
+    {
+        if (msg.sender != orderKey.owner) {
+            revert Unauthorized();
+        }
+
+        // 1. Sync the order to update earnings and tokensOwed up to the last executed interval
+        (buyTokensOut, ) = sync(SyncParams(key, orderKey));
+
+        // 2. Load State
+        PoolId poolId = key.toId();
+        TWAMMState storage twamm = twammStates[poolId];
+        bytes32 orderId = _orderId(orderKey);
+        Order storage order = twamm.orders[orderId];
+
+        uint256 sellRate = order.sellRate;
+        if (sellRate == 0) {
+            revert OrderDoesNotExist(orderKey);
+        }
+
+        // 3. Ensure not already expired (though sync handles expiration, we want to prevent refunding fully expired orders)
+        if (twamm.lastVirtualOrderTimestamp >= orderKey.expiration) {
+            revert OrderAlreadyExpired(orderKey);
+        }
+
+        // 4. Update OrderPool State (CRITICAL: Remove from current AND future expiration)
+        OrderPool.State storage orderPool = orderKey.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
+        
+        orderPool.sellRateCurrent -= sellRate;
+        orderPool.sellRateEndingAtInterval[orderKey.expiration] -= sellRate;
+        
+        // 5. Calculate Refund
+        // Refund is for the time remaining from the last processed interval until expiration
+        uint256 remainingSeconds = orderKey.expiration - twamm.lastVirtualOrderTimestamp;
+        sellTokensRefund = (sellRate * remainingSeconds) / RATE_SCALER;
+
+        // 6. Delete Order
+        delete twamm.orders[orderId];
+
+        // 7. Transfer Refund (Sell Token) to User
+        Currency sellToken = orderKey.zeroForOne ? key.currency0 : key.currency1;
+        sellToken.transfer(msg.sender, sellTokensRefund);
+
+        // 8. Claim Owed Tokens (Buy Token + any previously owed Sell Token)
+        // Note: sync() updated tokensOwed. We use claimTokensByPoolKey to flush everything.
+        (uint256 c0, uint256 c1) = claimTokensByPoolKey(key);
+        
+        // Return total buy tokens claimed (one of c0 or c1 will be the buy token)
+        buyTokensOut = orderKey.zeroForOne ? c1 : c0;
+
+        emit CancelOrder(poolId, orderId, msg.sender, sellTokensRefund);
+    }
+
+    /// @inheritdoc ITWAMM
+    function getCancelOrderState(PoolKey calldata key, OrderKey calldata orderKey)
+        external
+        view
+        returns (uint256 buyTokensOwed, uint256 sellTokensRefund)
+    {
+        PoolId poolId = key.toId();
+        TWAMMState storage twamm = twammStates[poolId];
+        bytes32 orderId = _orderId(orderKey);
+        Order storage order = _getOrder(twamm, orderId);
+
+        if (order.sellRate == 0) {
+            // Return 0s if order doesn't exist
+            return (0, 0);
+        }
+
+        // Calculate Refund
+        // We simulate the time that WOULD be used if synced now.
+        // sync() -> executeTWAMMOrders() -> uses _getIntervalTime(block.timestamp)
+        uint256 currentTimestampAtInterval = _getIntervalTime(block.timestamp);
+        
+        // The lastVirtualOrderTimestamp is where the system IS.
+        // The effective processing time for refund calculation is the max of the two.
+        // If lastVirtual is AHEAD of current interval (unlikely unless future manip), use that.
+        // If current interval is AHEAD of lastVirtual (likely), use current interval.
+        uint256 lastProcessedTime = twamm.lastVirtualOrderTimestamp;
+        // If intervals have passed, they will be executed upon cancel.
+        // So the refund starts from the END of the current executing interval.
+        uint256 effectiveStartTime = currentTimestampAtInterval > lastProcessedTime ? currentTimestampAtInterval : lastProcessedTime;
+
+        if (effectiveStartTime >= orderKey.expiration) {
+            sellTokensRefund = 0;
+        } else {
+            uint256 remainingSeconds = orderKey.expiration - effectiveStartTime;
+            sellTokensRefund = (order.sellRate * remainingSeconds) / RATE_SCALER;
+        }
+
+        // Calculate Pending Earnings
+        // 1. Already owed in tokensOwed (historical)
+        Currency buyToken = orderKey.zeroForOne ? key.currency1 : key.currency0;
+        buyTokensOwed = tokensOwed[buyToken][orderKey.owner];
+
+        // 2. Pending from the last sync until "now" (simulated)
+        // We can only simulate earnings if the system has ALREADY processed up to the simulated time, OR if we accept that we return "accrued so far".
+        // BUT `OrderPool` stores `earningsFactorCurrent`. This factor increases as `advanceToInterval` is called.
+        // A view function CANNOT simulate `executeTWAMMOrders` (swaps).
+        // So we can only return earnings based on `earningsFactorCurrent` stored in state.
+        // This means `buyTokensOwed` will be UNDER-estimated if `lastVirtual` is old.
+        // However, this is the best we can do in a view function without simulating swaps.
+        
+        OrderPool.State storage orderPool = orderKey.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
+        bool isOrderExpired = orderKey.expiration <= lastProcessedTime;
+        
+        uint256 earningsFactorLast = isOrderExpired ? orderPool.earningsFactorAtInterval[orderKey.expiration] : orderPool.earningsFactorCurrent;
+        
+        if (earningsFactorLast > order.earningsFactorLast) {
+             buyTokensOwed += (Math.mulDiv(earningsFactorLast - order.earningsFactorLast, order.sellRate, RATE_SCALER))
+                >> FixedPoint96.RESOLUTION;
+        }
+    }
 
     /// @inheritdoc ITWAMM
     function claimTokensByPoolKey(PoolKey calldata key)
@@ -361,7 +478,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
     }
 
     /// @inheritdoc ITWAMM
-    function sync(SyncParams calldata params) public returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta) {
+    function sync(SyncParams memory params) public returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta) {
         if (params.orderKey.owner != msg.sender) {
             revert Unauthorized();
         }

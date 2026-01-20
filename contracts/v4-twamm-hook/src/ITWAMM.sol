@@ -144,6 +144,35 @@ interface ITWAMM {
         uint256 earningsFactorLast
     );
 
+    /// @notice Emitted when an order is cancelled
+    /// @param poolId The id of the corresponding pool
+    /// @param orderId The unique identifier of the order
+    /// @param owner The owner of the order
+    /// @param sellTokensRefund The amount of sell tokens refunded to the owner
+    event CancelOrder(
+        PoolId indexed poolId,
+        bytes32 indexed orderId,
+        address indexed owner,
+        uint256 sellTokensRefund
+    );
+
+    /// @notice Thrown when trying to cancel an order that has already expired
+    error OrderAlreadyExpired(OrderKey orderKey);
+
+    /// @notice Cancels a long term order
+    /// @param key The PoolKey determining the pool
+    /// @param orderKey The OrderKey identifying the order to cancel
+    /// @return buyTokensOut The amount of buy tokens earned before cancellation
+    /// @return sellTokensRefund The amount of sell tokens refunded
+    function cancelOrder(PoolKey calldata key, OrderKey calldata orderKey)
+        external
+        returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+
+    function getCancelOrderState(PoolKey calldata key, OrderKey calldata orderKey)
+        external
+        view
+        returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
+
     /// @notice Emitted when an order is fulfilled within a specific pool.
     /// @dev This event provides detailed information about the state of the pool and the rates before
     //       and after the swap is completed.
@@ -227,7 +256,7 @@ interface ITWAMM {
     /// @param params An SyncParams
     /// @return tokens0OwedDelta Change to token0 after syncing
     /// @return tokens1OwedDelta Change to token1 after syncing
-    function sync(SyncParams calldata params) external returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta);
+    function sync(SyncParams memory params) external returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta);
 
     /// @notice Claim tokens owed from TWAMM contract
     /// @param key The PoolKey for which to identify the AMM pool of the order
