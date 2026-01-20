@@ -31,7 +31,8 @@ contract LiquidationModulesTest is Test {
 
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18, // 110%
-            liquidationParams: bytes32(0) 
+            liquidationParams: bytes32(0),
+            brokerVerifier: address(0)
         });
 
         priceData = ILiquidationModule.PriceData({

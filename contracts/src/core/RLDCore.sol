@@ -15,6 +15,8 @@ import {IRLDHook} from "../interfaces/IRLDHook.sol";
 import {ILiquidationModule} from "../interfaces/ILiquidationModule.sol";
 import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
 import {WrappedRLP} from "../tokens/WrappedRLP.sol";
+import {IBrokerVerifier} from "../interfaces/IBrokerVerifier.sol";
+import {IPrimeBroker} from "../interfaces/IPrimeBroker.sol";
 
 /// @title RLD Core Singleton
 /// @dev The Hyperstructure managing all RLD Markets.
@@ -22,12 +24,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     using FixedPointMath for uint256;
     using SafeTransferLib for ERC20;
 
-    // Actually IRLDCore defines them. RLDCore implements IRLDCore.
-    // If we want them in ABI, declaring them here is fine.
-    // But `MarketParams` error was in `RLDStorage`.
-    // Let's keep events but REMOVE storage mappings.
-    
-    // --- Events ---
+
 
 
     /* ============================================================================================ */
@@ -168,17 +165,8 @@ contract RLDCore is IRLDCore, RLDStorage {
              pos.debtPrincipal = uint128(newDebt);
         }
 
-        // 3. Check Hook (CDS Lock)
-        // Note: CDSHook logic needs to run *before* transfers technically? 
-        // Hook signature: beforeModifyPosition(id, sender, deltaCol, deltaDebt)
         if (addresses.hook != address(0)) {
             // IHook(params.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
-            // I need to confirm interface linkage. 
-            // CDSHook.sol has `beforeModifyPosition`.
-            // Casting to an interface needed.
-            // Let's rely on low-level call or define IHook interface.
-            // For MVP, if hook set, we try to call it?
-            // Better: Define IHook in IRLDCore/IHook.
         }
 
         // 3.5 Tokenize Debt (WrappedRLP)
@@ -199,11 +187,6 @@ contract RLDCore is IRLDCore, RLDStorage {
             IRLDHook(addresses.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
         }
 
-        // 4. Mark for Solvency Check
-        // Track Action Type: If Minting (debt > 0), mark as MINT (Type 2). Else maintain current type (default 1).
-        // 0: Unset (should imply 1), 1: Standard (110%), 2: Mint (150%)
-        // We use a mapping in TStore? Or encode in touched list?
-        // Simpler: Just TStore[keccak(user, id)] = max(current, newType)
         bytes32 actionKey = keccak256(abi.encode(id, msg.sender, "ACTION"));
         uint256 currentType = TransientStorage.tload(actionKey);
         uint256 newType = deltaDebt > 0 ? 2 : 1; 
@@ -253,9 +236,29 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         MarketAddresses storage addresses = marketAddresses[id];
         MarketState memory state = marketStates[id];
+        MarketConfig memory config = marketConfigs[id];
 
          // True Debt = Principal * NormalizationFactor
         uint256 trueDebt = uint256(pos.debtPrincipal).mulWad(state.normalizationFactor);
+        
+        // --- Broker Mode ---
+        if (config.brokerVerifier != address(0)) {
+            if (IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
+                // Trust the Broker's reported value (Code is verified)
+                uint256 totalValue = IPrimeBroker(user).getNetAccountValue();
+                
+                // Get Debt Value
+                uint256 brokerIndexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+                    addresses.underlyingPool, 
+                    addresses.underlyingToken
+                );
+                uint256 brokerDebtValue = trueDebt.mulWad(brokerIndexPrice);
+                
+                return totalValue >= brokerDebtValue.mulWad(minRatio);
+            }
+        }
+        
+        // --- Standard Mode ---
         
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
@@ -347,8 +350,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         // 1.5 Liquidation Cap (50% Close Factor)
         if (debtToCover > uint256(pos.debtPrincipal) / 2) revert("Close Factor Exceeded");
         
-        // 2. Calculate Values
-        
+
         // A. Convert Underlying Amount -> Principal Amount
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
@@ -357,8 +359,31 @@ contract RLDCore is IRLDCore, RLDStorage {
         
         // Decrement Debt
         pos.debtPrincipal -= uint128(debtToCover);
-        
-        // B. Calculate Cost + Reward via Module
+
+        // --- Broker Branch ---
+        if (config.brokerVerifier != address(0)) {
+             if (IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
+                // 1. Calculation
+                uint256 brokerCost = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
+                
+                // 2. Burn Liquidator wRLP
+                if (addresses.positionToken != address(0)) {
+                     WrappedRLP(addresses.positionToken).burn(msg.sender, debtToCover);
+                } else {
+                     ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
+                }
+
+                // 3. Seize from Broker
+                uint256 seizeValue = brokerCost * 105 / 100; 
+
+                IPrimeBroker(user).seize(seizeValue, msg.sender);
+                
+                emit PositionModified(id, user, 0, -int256(debtToCover));
+                return;
+             }
+        }
+
+        // --- Standard Mode (Legacy) ---
         uint256 spotPrice = ISpotOracle(addresses.spotOracle).getSpotPrice(
             addresses.collateralToken, 
             addresses.underlyingToken
@@ -373,35 +398,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         ( , uint256 totalSeized) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
             debtToCover,
             uint256(pos.collateral),
-            uint256(pos.debtPrincipal), // Passed current debt (after decrement? No, logic usually uses debt before? 
-                                        // Wait, the module asks for userDebt. Usually HS uses total Debt.
-                                        // But here we decremented pos.debtPrincipal already.
-                                        // Let's pass (debt + debtToCover) to match original state? 
-                                        // Or just pass current state? 
-                                        // Module likely needs TOTAL DEBT for HS calculation. 
-                                        // So I should pass (pos.debtPrincipal + debtToCover).
-            priceData,
-            config,
-            config.liquidationParams
-        );
-        
-        // Wait, I decremented pos.debtPrincipal at line 400.
-        // So `pos.debtPrincipal` is now the remaining debt.
-        // For HS check in module, it *might* need original debt, or remaining.
-        // Actually, HS check inside module is for Bonus calculation. 
-        // HS is usually calculated on the current state. 
-        // If I pass the *new* debt, HS is better (higher). 
-        // A "Dutch Auction" usually implies the state *at the moment of liquidation availability*.
-        // But let's pass (pos.debtPrincipal + debtToCover) as `userDebt` to reflect the state BEFORE this liquidation action 
-        // (which determines the depth of insolvency).
-        
-        uint256 userDebtOriginal = uint256(pos.debtPrincipal) + debtToCover;
-
-        // Re-call with correct debt
-         ( , totalSeized) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
-            debtToCover,
-            uint256(pos.collateral),
-            userDebtOriginal,
+            uint256(pos.debtPrincipal) + debtToCover, // userDebtOriginal
             priceData,
             config,
             config.liquidationParams

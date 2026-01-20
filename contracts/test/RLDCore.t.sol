@@ -140,7 +140,8 @@ contract RLDCoreTest is Test {
 
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18,
-            liquidationParams: bytes32(uint256(1.05e18))
+            liquidationParams: bytes32(uint256(1.05e18)),
+            brokerVerifier: address(0)
         });
 
         marketId = core.createMarket(addresses, config);

@@ -32,6 +32,7 @@ interface IRLDCore {
         uint64 minColRatio;
         uint64 maintenanceMargin;
         bytes32 liquidationParams; // Packed params for the module
+        address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
 
     struct MarketState {
