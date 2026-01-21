@@ -10,6 +10,7 @@ import "../src/modules/oracles/RLDAaveOracle.sol";
 import "../src/modules/oracles/ChainlinkSpotOracle.sol";
 import "../src/modules/oracles/DefaultOracle.sol";
 import "../src/modules/funding/StandardFundingModel.sol";
+import "../src/modules/liquidation/StaticLiquidationModule.sol";
 import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";

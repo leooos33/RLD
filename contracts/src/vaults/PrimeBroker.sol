@@ -7,8 +7,9 @@ import {IBrokerModule} from "../interfaces/IBrokerModule.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
-/// @title Prime Broker V1
+/// @title Prime Broker V1 (Thin Version)
 /// @notice "Smart Margin Account" protecting RLD Protocol.
+/// @dev Optimized for cloning and Core-based data fetching.
 contract PrimeBroker is IPrimeBroker {
     using SafeTransferLib for ERC20;
 
@@ -20,24 +21,22 @@ contract PrimeBroker is IPrimeBroker {
     address public immutable CORE;
     address public immutable V4_MODULE;
     address public immutable TWAMM_MODULE;
+    address public immutable POSM; // Universal V4 Position Manager
 
     /* ============================================================================================ */
     /*                                            STORAGE                                           */
     /* ============================================================================================ */
 
-    // Market Config (Specific per Instance)
+    // Market Identity
     address public owner;
-    address public COLLATERAL;
-    address public UNDERLYING;
-    address public ORACLE;
-    address public POSM;
-    address public HOOK;
+    MarketId public marketId;
     
-    bool private initialized;
-
     // Active Assets (V1 Limit: One of each)
     uint256 public activeTokenId; // V4 Position
     uint256 public activeOrderId; // TWAMM Order
+    
+    // Init check
+    bool private initialized;
 
     /* ============================================================================================ */
     /*                                          MODIFIERS                                           */
@@ -57,27 +56,20 @@ contract PrimeBroker is IPrimeBroker {
     /*                                         CONSTRUCTOR                                          */
     /* ============================================================================================ */
 
-    constructor(address _core, address _v4Module, address _twammModule) {
+    constructor(address _core, address _v4Module, address _twammModule, address _posm) {
         CORE = _core;
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
+        POSM = _posm;
     }
 
     function initialize(
         address _owner,
-        address _collateral,
-        address _underlying,
-        address _oracle,
-        address _posm,
-        address _hook
+        MarketId _marketId
     ) external {
         require(!initialized, "Initialized");
         owner = _owner;
-        COLLATERAL = _collateral;
-        UNDERLYING = _underlying;
-        ORACLE = _oracle;
-        POSM = _posm;
-        HOOK = _hook;
+        marketId = _marketId;
         initialized = true;
     }
 
@@ -86,17 +78,19 @@ contract PrimeBroker is IPrimeBroker {
     /* ============================================================================================ */
 
     function getNetAccountValue() external view override returns (uint256 totalValue) {
-        // 1. Cash Balance (aUSDC)
-        totalValue += ERC20(COLLATERAL).balanceOf(address(this));
+        IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(marketId);
+
+        // 1. Cash Balance (Collateral)
+        totalValue += ERC20(vars.collateralToken).balanceOf(address(this));
 
         // 2. TWAMM Value
         if (activeOrderId != 0) {
             bytes memory data = abi.encode(
                 activeOrderId,
-                HOOK,
-                ORACLE,
-                COLLATERAL, // Input (Sell Collateral)
-                UNDERLYING  // Output (Buy Debt)
+                vars.hook,
+                vars.rateOracle,
+                vars.collateralToken, // Input (Sell Collateral)
+                vars.underlyingToken  // Output (Buy Debt)
             );
             totalValue += IBrokerModule(TWAMM_MODULE).getValue(data);
         }
@@ -106,9 +100,9 @@ contract PrimeBroker is IPrimeBroker {
             bytes memory data = abi.encode(
                 activeTokenId,
                 POSM,
-                ORACLE,
-                COLLATERAL,
-                UNDERLYING
+                vars.rateOracle,
+                vars.collateralToken,
+                vars.underlyingToken
             );
             totalValue += IBrokerModule(V4_MODULE).getValue(data);
         }
@@ -119,13 +113,16 @@ contract PrimeBroker is IPrimeBroker {
     /* ============================================================================================ */
 
     function seize(uint256 value, address recipient) external override onlyCore {
+        IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(marketId);
         uint256 remaining = value;
+        
+        address collateral = vars.collateralToken; // Gas saving
 
         // 1. Priority: Cash
-        uint256 cash = ERC20(COLLATERAL).balanceOf(address(this));
+        uint256 cash = ERC20(collateral).balanceOf(address(this));
         if (cash > 0) {
             uint256 take = cash >= remaining ? remaining : cash;
-            ERC20(COLLATERAL).safeTransfer(recipient, take);
+            ERC20(collateral).safeTransfer(recipient, take);
             remaining -= take;
         }
         
@@ -135,10 +132,10 @@ contract PrimeBroker is IPrimeBroker {
         if (activeOrderId != 0) {
             bytes memory data = abi.encode(
                 activeOrderId,
-                HOOK,
-                ORACLE,
-                COLLATERAL,
-                UNDERLYING
+                vars.hook,
+                vars.rateOracle,
+                collateral,
+                vars.underlyingToken
             );
             uint256 seized = IBrokerModule(TWAMM_MODULE).seize(remaining, recipient, data);
             
@@ -152,9 +149,9 @@ contract PrimeBroker is IPrimeBroker {
             bytes memory data = abi.encode(
                 activeTokenId,
                 POSM,
-                ORACLE,
-                COLLATERAL,
-                UNDERLYING
+                vars.rateOracle,
+                collateral,
+                vars.underlyingToken
             );
             IBrokerModule(V4_MODULE).seize(remaining, recipient, data);
         }
@@ -174,6 +171,7 @@ contract PrimeBroker is IPrimeBroker {
     // Generic execute for Core interaction
     function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyOwner {
         MarketId id = MarketId.wrap(rawMarketId);
+        require(MarketId.unwrap(id) == MarketId.unwrap(marketId), "Wrong Market");
         
         // Encode action for callback
         bytes memory data = abi.encode(id, deltaCollateral, deltaDebt);
@@ -187,13 +185,16 @@ contract PrimeBroker is IPrimeBroker {
         require(msg.sender == CORE, "Not Core");
         
         (MarketId id, int256 deltaCollateral, int256 deltaDebt) = abi.decode(data, (MarketId, int256, int256));
+        require(MarketId.unwrap(id) == MarketId.unwrap(marketId), "Wrong Market");
         
         // Execute Modification
         IRLDCore(CORE).modifyPosition(id, deltaCollateral, deltaDebt);
         
         // Collateral: Core: `ERC20.safeTransferFrom(msg.sender, address(this), amount)`.
         if (deltaCollateral > 0) {
-            ERC20(COLLATERAL).approve(CORE, uint256(deltaCollateral));
+            // Need to fetch collateral token address to approve
+            address collateral = IRLDCore(CORE).getMarketAddresses(marketId).collateralToken;
+            ERC20(collateral).approve(CORE, uint256(deltaCollateral));
         }
         
         return "";

@@ -3,21 +3,16 @@ pragma solidity ^0.8.26;
 
 import {Clones} from "openzeppelin-v5/contracts/proxy/Clones.sol";
 import {PrimeBroker} from "./PrimeBroker.sol";
+import {MarketId} from "../interfaces/IRLDCore.sol";
 
 /// @title Prime Broker Factory
 /// @notice Deploys and tracks verified PrimeBroker instances.
-/// @dev Binded to a specific Market/Oracle configuration.
+/// @dev Binded to a specific MarketId to enable Thin Broker pattern.
 contract PrimeBrokerFactory {
     using Clones for address;
 
     address public immutable IMPLEMENTATION;
-    
-    // Market Constants (Baked into every Broker)
-    address public immutable COLLATERAL;
-    address public immutable UNDERLYING;
-    address public immutable ORACLE;
-    address public immutable POSM; // Position Manager
-    address public immutable HOOK; // TWAMM Hook
+    MarketId public immutable MARKET_ID;
 
     mapping(address => bool) public isBroker;
 
@@ -25,31 +20,19 @@ contract PrimeBrokerFactory {
 
     constructor(
         address implementation,
-        address collateral,
-        address underlying,
-        address oracle,
-        address posm,
-        address hook
+        MarketId marketId
     ) {
         IMPLEMENTATION = implementation;
-        COLLATERAL = collateral;
-        UNDERLYING = underlying;
-        ORACLE = oracle;
-        POSM = posm;
-        HOOK = hook;
+        MARKET_ID = marketId;
     }
 
     function createBroker() external returns (address broker) {
         broker = IMPLEMENTATION.clone();
         
-        // Initialize with Market Constants + Owner
+        // Initialize with Market ID + Owner
         PrimeBroker(payable(broker)).initialize(
             msg.sender,
-            COLLATERAL,
-            UNDERLYING,
-            ORACLE,
-            POSM,
-            HOOK
+            MARKET_ID
         );
         
         isBroker[broker] = true;
