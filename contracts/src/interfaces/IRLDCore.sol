@@ -51,12 +51,24 @@ interface IRLDCore {
     /* ============================================================================================ */
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
-    
-    event MarketCreated(MarketId indexed id, address indexed collateral, address indexed underlying, MarketType marketType);
+    // --- Events ---
+    event MarketCreated(MarketId indexed id, address indexed collateral, address indexed underlying, address pool, MarketType marketType); // Indexed pool
+    event MarketSettled(MarketId indexed id, uint256 timestamp, uint256 price);
     event PositionModified(MarketId indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt);
-    event MarketSettled(MarketId indexed id, uint256 finalPrice, uint256 finalNormFactor);
-    event LockAcquired(MarketId indexed id, address indexed user);
-    event SecurityUpdate(MarketId indexed id, bytes32 indexed updateType, address indexed actor);
+    event SecurityUpdate(MarketId indexed id, string indexed action, address indexed operator);
+    
+    // --- Errors ---
+    error Unauthorized();
+    error InvalidMarket();
+    error InvalidParam(string param);
+    error MarketAlreadyExists();
+    error MarketSettledError();
+    error NotLocked();
+    error Insolvent(address user);
+    error UserSolvent(address user);
+    error InvalidBroker(address user);
+    error SlippageExceeded();
+    error CloseFactorExceeded();
 
     /* ============================================================================================ */
     /*                                          FUNCTIONS                                           */

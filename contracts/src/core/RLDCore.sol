@@ -24,6 +24,18 @@ contract RLDCore is IRLDCore, RLDStorage {
     using FixedPointMath for uint256;
     using SafeTransferLib for ERC20;
 
+    /// @notice The trusted factory allowed to create markets.
+    /// @dev Can be set once.
+    address public factory;
+
+    /// @notice Sets the factory address. Can only be called once.
+    function setFactory(address _factory) external {
+        if (factory != address(0)) revert Unauthorized();
+        if (_factory == address(0)) revert InvalidParam("Factory");
+        factory = _factory;
+        emit SecurityUpdate(MarketId.wrap(bytes32(0)), "SetFactory", msg.sender);
+    }
+
 
 
 
@@ -31,15 +43,16 @@ contract RLDCore is IRLDCore, RLDStorage {
     /*                                        MARKET LOGIC                                          */
     /* ============================================================================================ */
 
-    function createMarket(MarketAddresses calldata addresses, MarketConfig calldata config) external override returns (MarketId) {
+    function createMarket(MarketAddresses calldata addresses, MarketConfig calldata config) external override onlyFactory returns (MarketId) {
+
         // Validate
-        if (addresses.collateralToken == address(0)) revert("Invalid Collateral");
-        if (addresses.underlyingToken == address(0)) revert("Invalid Underlying");
-        if (addresses.rateOracle == address(0)) revert("Invalid Rate Oracle");
-        if (addresses.spotOracle == address(0)) revert("Invalid Spot Oracle");
+        if (addresses.collateralToken == address(0)) revert InvalidParam("Collateral");
+        if (addresses.underlyingToken == address(0)) revert InvalidParam("Underlying");
+        if (addresses.rateOracle == address(0)) revert InvalidParam("Rate Oracle");
+        if (addresses.spotOracle == address(0)) revert InvalidParam("Spot Oracle");
         // markOracle check removed
-        if (addresses.fundingModel == address(0)) revert("Invalid Funding Model");
-        if (addresses.positionToken == address(0)) revert("Invalid Position Token");
+        if (addresses.fundingModel == address(0)) revert InvalidParam("Funding");
+        if (addresses.positionToken == address(0)) revert InvalidParam("Position Token");
         
         // Use addresses to generate ID to ensure uniqueness per config
         MarketId id = MarketId.wrap(keccak256(abi.encode(
@@ -49,7 +62,7 @@ contract RLDCore is IRLDCore, RLDStorage {
             config.marketType
         )));
 
-        if (marketAddresses[id].collateralToken != address(0)) revert("Market Already Exists");
+        if (marketAddresses[id].collateralToken != address(0)) revert MarketAlreadyExists();
 
         marketAddresses[id] = addresses;
         marketConfigs[id] = config;
@@ -59,7 +72,7 @@ contract RLDCore is IRLDCore, RLDStorage {
             isSettled: false
         });
 
-        emit MarketCreated(id, addresses.collateralToken, addresses.underlyingToken, config.marketType);
+        emit MarketCreated(id, addresses.collateralToken, addresses.underlyingToken, addresses.underlyingPool, config.marketType);
         return id;
     }
 
@@ -88,7 +101,22 @@ contract RLDCore is IRLDCore, RLDStorage {
     /* ============================================================================================ */
 
     modifier onlyLock() {
-        if (!_isLocked()) revert("Not Locked");
+        if (!_isLocked()) revert NotLocked();
+        _;
+    }
+
+    modifier onlyLockHolder() {
+        if (msg.sender != _getLockHolder()) revert Unauthorized();
+        _;
+    }
+
+    modifier onlyFactory() {
+        if (msg.sender != factory) revert Unauthorized();
+        _;
+    }
+
+    modifier onlyCurator(MarketId id) {
+        if (msg.sender != marketAddresses[id].curator) revert Unauthorized();
         _;
     }
 
@@ -129,13 +157,12 @@ contract RLDCore is IRLDCore, RLDStorage {
     /*                                     POSITION MANAGEMENT                                      */
     /* ============================================================================================ */
 
-    function modifyPosition(MarketId id, int256 deltaCollateral, int256 deltaDebt) external onlyLock {
+    function modifyPosition(MarketId id, int256 deltaCollateral, int256 deltaDebt) external onlyLock onlyLockHolder {
         // Only the lock holder (vault/user) can modify their own position
         // Or specific authorized operators (TODO: Add operator logic later)
-        if (msg.sender != _getLockHolder()) revert("Unauthorized Access");
         
         MarketState storage state = marketStates[id];
-        if (state.isSettled) revert("Market Settled");
+        if (state.isSettled) revert MarketSettledError();
 
         // 1. Update Funding (Lazy)
         _applyFunding(id);
@@ -187,7 +214,7 @@ contract RLDCore is IRLDCore, RLDStorage {
             IRLDHook(addresses.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
         }
 
-        bytes32 actionKey = keccak256(abi.encode(id, msg.sender, "ACTION"));
+        bytes32 actionKey = keccak256(abi.encode(id, msg.sender, ACTION_SALT));
         uint256 currentType = TransientStorage.tload(actionKey);
         uint256 newType = deltaDebt > 0 ? 2 : 1; 
         
@@ -213,7 +240,7 @@ contract RLDCore is IRLDCore, RLDStorage {
             MarketConfig storage config = marketConfigs[id];
             
             // Retrieve Action Type
-            bytes32 actionKey = keccak256(abi.encode(id, user, "ACTION"));
+            bytes32 actionKey = keccak256(abi.encode(id, user, ACTION_SALT));
             uint256 actionType = TransientStorage.tload(actionKey); // 0 (default) -> Treat as 1, 2 -> Mint
             
             // Use params for ratios
@@ -226,7 +253,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @notice Checks if a specific user is solvent with a custom ratio.
     function _checkSolvency(MarketId id, address user, uint256 minRatio) internal view {
         if (!_isSolvent(id, user, minRatio)) {
-            revert("Insolvent");
+            revert Insolvent(user);
         }
     }
 
@@ -282,7 +309,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
     function _applyDelta(uint128 start, int256 delta) internal pure returns (uint256) {
         int256 result = int256(uint256(start)) + delta;
-        if (result < 0) revert("Underflow");
+        if (result < 0) revert("Underflow"); // Keep generic or add Custom Error? Keeping generic for now or standard error.
         return uint256(result);
     }
 
@@ -293,7 +320,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @notice Triggers Global Settlement if the Market is Defaulted.
     function settleMarket(MarketId id) external override {
         MarketState storage state = marketStates[id];
-        if (state.isSettled) revert("Already Settled");
+        if (state.isSettled) revert MarketSettledError();
         
         MarketAddresses storage addresses = marketAddresses[id];
         
@@ -303,10 +330,10 @@ contract RLDCore is IRLDCore, RLDStorage {
                 addresses.underlyingPool, 
                 addresses.underlyingToken
             );
-            if (!isDefaulted) revert("Not Defaulted");
+            if (!isDefaulted) revert InvalidParam("Not Defaulted");
         } else {
             // If no default oracle, settlement is manual or disabled (revert for safety)
-            revert("No Default Oracle");
+            revert InvalidParam("No Default Oracle");
         }
 
         // Trigger Settlement
@@ -321,23 +348,23 @@ contract RLDCore is IRLDCore, RLDStorage {
         _applyFunding(id);
 
         MarketState storage state = marketStates[id];
-        if (state.isSettled) revert("Market Settled");
+        if (state.isSettled) revert MarketSettledError();
         
         MarketAddresses storage addresses = marketAddresses[id];
         MarketConfig storage config = marketConfigs[id];
         
         // 1. Verify Insolvency (Maintenance Margin)
-        if (_isSolvent(id, user, uint256(config.maintenanceMargin))) revert("User Solvent");
+        if (_isSolvent(id, user, uint256(config.maintenanceMargin))) revert UserSolvent(user);
         
         // 2. Verify Broker Status (Strict)
         if (config.brokerVerifier == address(0) || !IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
-             revert("Invalid Broker");
+             revert InvalidBroker(user);
         }
 
         Position storage pos = positions[id][user];
         
         // 3. Liquidation Cap (Configurable Close Factor)
-        if (debtToCover > uint256(pos.debtPrincipal).mulWad(uint256(config.liquidationCloseFactor))) revert("Close Factor Exceeded");
+        if (debtToCover > uint256(pos.debtPrincipal).mulWad(uint256(config.liquidationCloseFactor))) revert CloseFactorExceeded();
         
         // 4. Calculate Cost (Debt Value)
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
@@ -397,15 +424,14 @@ contract RLDCore is IRLDCore, RLDStorage {
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
 
-    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external override {
+    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external override onlyCurator(id) {
         MarketAddresses storage addresses = marketAddresses[id];
-        if (addresses.collateralToken == address(0)) revert("Invalid Market");
-        if (msg.sender != addresses.curator) revert("Unauthorized"); // Only Curator
+        if (addresses.collateralToken == address(0)) revert InvalidMarket();
         
         // Input Validation (Basic sanity checks)
-        if (maintenanceMargin < 1e18) revert("Unsafe Margin"); // < 100%
-        if (minColRatio < maintenanceMargin) revert("Invalid Ratios"); 
-        if (liquidationCloseFactor > 1e18) revert("Invalid Close Factor"); // Max 100%
+        if (maintenanceMargin < 1e18) revert InvalidParam("Unsafe Margin"); // < 100%
+        if (minColRatio < maintenanceMargin) revert InvalidParam("Invalid Ratios"); 
+        if (liquidationCloseFactor > 1e18) revert InvalidParam("Invalid Close Factor"); // Max 100%
         
         MarketConfig storage config = marketConfigs[id];
         config.minColRatio = minColRatio;
@@ -417,18 +443,16 @@ contract RLDCore is IRLDCore, RLDStorage {
         emit SecurityUpdate(id, "RiskParams", msg.sender);
     }
 
-    function setCurator(MarketId id, address newCurator) external override {
+    function setCurator(MarketId id, address newCurator) external override onlyCurator(id) {
         MarketAddresses storage addresses = marketAddresses[id];
-        if (msg.sender != addresses.curator) revert("Unauthorized");
-        if (newCurator == address(0)) revert("Invalid Curator");
+        if (newCurator == address(0)) revert InvalidParam("Invalid Curator");
         
         addresses.curator = newCurator;
         emit SecurityUpdate(id, "Curator", newCurator);
     }
 
-    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external override {
+    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external override onlyCurator(id) {
         MarketAddresses storage addresses = marketAddresses[id];
-        if (msg.sender != addresses.curator) revert("Unauthorized");
         
         // Prevent setting to 0 if provided
         if (rateOracle != address(0)) addresses.rateOracle = rateOracle;
