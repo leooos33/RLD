@@ -106,9 +106,13 @@ contract AtomicDeploymentTest is Test {
             address(funding),
             address(0), 
             address(defaultOracle),
-            address(twamm)
+            address(0) // No hook for atomic test to avoid mining
         );
+        
+        // --- Register Factory ---
+        core.setFactory(address(marketFactory));
 
+        // Create Mock Tokens
         underlyingToken = address(new MockERC20("USDC", "USDC", 6));
         collateralToken = address(new MockERC20("aUSDC", "aUSDC", 6));
     }

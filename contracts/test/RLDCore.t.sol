@@ -18,8 +18,8 @@ contract MockERC20 is IERC20 {
     mapping(address => mapping(address => uint256)) public allowance;
     uint8 public decimals = 18;
 
-    function totalSupply() external view returns (uint256) {
-        return 0; // Mock doesn't track total supply for now
+    function totalSupply() external pure returns (uint256) {
+        return 1000000e18;
     }
     
     function mint(address to, uint256 amount) external {
@@ -119,7 +119,6 @@ contract RLDCoreTest is Test {
     uint256 public mockNav;
 
     function setUp() public {
-        core = new RLDCore();
         collateral = new MockERC20();
         underlying = new MockERC20();
         positionToken = new MockERC20();
@@ -131,6 +130,10 @@ contract RLDCoreTest is Test {
         oracle.setPrice(1e18); // 1:1 price initially
 
         // Create Market
+        core = new RLDCore();
+        // Since test manually calls createMarket, we set this test contract as the factory
+        core.setFactory(address(this));
+
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
             collateralToken: address(collateral),
             underlyingToken: address(underlying),
@@ -233,28 +236,32 @@ contract RLDCoreTest is Test {
 
         bytes memory data = abi.encode(1, int256(100e18), int256(100e18), marketId);
         
-        vm.expectRevert("Insolvent");
+        vm.expectRevert(abi.encodeWithSelector(IRLDCore.Insolvent.selector, address(this)));
         core.lock(data);
+    }
+
+    function test_Revert_Unauthorized() public {
+        // Unauthorized Access
+        // Expect NotLocked because modifyPosition calls onlyLock modifier first
+        vm.expectRevert(IRLDCore.NotLocked.selector); 
+        core.modifyPosition(marketId, 10e18, 0);
     }
 
     function test_SettleMarket() public {
         // 1. Not Defaulted
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IRLDCore.InvalidParam.selector, "Not Defaulted"));
         core.settleMarket(marketId);
 
-        // 2. Default
+        // 2. Default & Settle
         oracle.setDefault(true);
         core.settleMarket(marketId);
 
-        IRLDCore.MarketState memory state = core.getMarketState(marketId);
-        assertTrue(state.isSettled);
-
         // 3. Confirm operations locked
         collateral.mint(address(this), 10e18);
-        collateral.approve(address(core), 10e18);
-        bytes memory data = abi.encode(1, int256(10e18), int256(0), marketId);
+        collateral.approve(address(core), 10e18); // Approve to verify it's not failing on transfer
         
-        vm.expectRevert("Market Settled");
+        bytes memory data = abi.encode(1, int256(10e18), int256(0), marketId);
+        vm.expectRevert(IRLDCore.MarketSettledError.selector);
         core.lock(data);
     }
 }

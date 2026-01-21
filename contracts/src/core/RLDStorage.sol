@@ -37,7 +37,14 @@ abstract contract RLDStorage is IRLDCore {
     // Structure:
     // Slot[2*i]     = MarketId
     // Slot[2*i + 1] = Account
+    // Base slot for the array of touched account data.
+    // Structure:
+    // Slot[2*i]     = MarketId
+    // Slot[2*i + 1] = Account
     bytes32 internal constant TOUCHED_LIST_BASE = 0x8e9f1d8c19955375494191c062804b4d68202528751351141315848733230893;
+
+    // Salt for Action Type hashing (Keccak("ACTION"))
+    bytes32 internal constant ACTION_SALT = 0x1e9f1d8c19955375494191c062804b4d68202528751351141315848733230899; // Placeholder hash
 
     /// @notice Adds a (MarketId, Account) pair to the touched list.
     /// @dev Does not check for duplicates to save gas (optimistic). Solvency check handles redundant checks harmlessly.
