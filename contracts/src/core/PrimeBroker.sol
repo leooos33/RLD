@@ -23,22 +23,13 @@ interface IERC721 {
 contract PrimeBroker is IPrimeBroker {
     using SafeTransferLib for ERC20;
 
-    /* ============================================================================================ */
-    /*                                          IMMUTABLES                                          */
-    /* ============================================================================================ */
-
     // System Config (Universal)
     address public immutable CORE;
     address public immutable V4_MODULE;
     address public immutable TWAMM_MODULE;
     address public immutable POSM; // Universal V4 Position Manager
 
-    /* ============================================================================================ */
-    /*                                            STORAGE                                           */
-    /* ============================================================================================ */
-
     // Market Identity
-    // address public owner; // Replaced by NFT Ownership
     address public factory;
     BondMetadata public bondMetadata;
     MarketId public marketId;
@@ -48,18 +39,12 @@ contract PrimeBroker is IPrimeBroker {
     address public underlyingToken;
     address public rateOracle;
 
-    
     // Active Assets (V1 Limit: One of each)
     uint256 public activeTokenId; // V4 Position
-    // uint256 public activeOrderId; // DEPRECATED
     TwammOrderInfo public activeTwammOrder; // TWAMM Order
     
     // Init check
     bool private initialized;
-
-    /* ============================================================================================ */
-    /*                                          MODIFIERS                                           */
-    /* ============================================================================================ */
 
     modifier onlyCore() {
         require(msg.sender == CORE, "Not Core");
@@ -71,10 +56,6 @@ contract PrimeBroker is IPrimeBroker {
         require(IERC721(factory).ownerOf(uint256(uint160(address(this)))) == msg.sender, "Not Owner");
         _;
     }
-
-    /* ============================================================================================ */
-    /*                                         CONSTRUCTOR                                          */
-    /* ============================================================================================ */
 
     constructor(address _core, address _v4Module, address _twammModule, address _posm) {
         CORE = _core;
@@ -104,13 +85,8 @@ contract PrimeBroker is IPrimeBroker {
         underlyingToken = vars.underlyingToken;
         rateOracle = vars.rateOracle;
 
-        
         initialized = true;
     }
-
-    /* ============================================================================================ */
-    /*                                       VALUATION LOGIC                                        */
-    /* ============================================================================================ */
 
     function getNetAccountValue() external view override returns (uint256 totalValue) {
         // 1. Cash Balance (Collateral)
@@ -129,10 +105,6 @@ contract PrimeBroker is IPrimeBroker {
             totalValue += IBrokerModule(V4_MODULE).getValue(data);
         }
     }
-
-    /* ============================================================================================ */
-    /*                                      LIQUIDATION LOGIC                                       */
-    /* ============================================================================================ */
 
     function seize(uint256 value, address recipient) external override onlyCore {
         uint256 remaining = value;
@@ -166,14 +138,6 @@ contract PrimeBroker is IPrimeBroker {
             // c. Clear State
             delete activeTwammOrder;
             
-            // d. Seize Logic (Swap/Transfer to Liquidator)
-            // Simplified: We assume liquidator wants value. We transfer the tokens 
-            // and count their value towards the debt.
-            
-            // NOTE: Ideally we would swap these to underlying, but that's complex during liquidation.
-            // We transfer the tokens to the liquidator and let them handle it.
-            // We must value what we are sending to know if we satisfied the debt.
-            
             // Value Refund
             if (sellTokensRefund > 0) {
                  uint256 price = _getOraclePrice(sellToken, underlyingToken);
@@ -181,12 +145,6 @@ contract PrimeBroker is IPrimeBroker {
                  
                  uint256 takeAmt = sellTokensRefund;
                  uint256 takeVal = val;
-                 
-                 // If we have more than needed, we *could* keep some, but sticking to simple "take all" for now
-                 // or exact logic if strictly required. 
-                 // Given the complexity of splitting a "cancelled order refund", 
-                 // we just give the liquidator the tokens and count the value.
-                 // Optimization: If val > remaining, we could keep some.
                  
                  if (val > remaining) {
                      takeAmt = FixedPointMathLib.mulDivUp(sellTokensRefund, remaining, val);
@@ -276,10 +234,6 @@ contract PrimeBroker is IPrimeBroker {
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Action causes Insolvency");
     }
     
-    /* ============================================================================================ */
-    /*                                        CORE INTERACTION                                      */
-    /* ============================================================================================ */
-
     // Generic execute for Core interaction
     function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyOwner {
         MarketId id = MarketId.wrap(rawMarketId);
@@ -310,10 +264,6 @@ contract PrimeBroker is IPrimeBroker {
         return "";
     }
 
-    /* ============================================================================================ */
-    /*                                         INTERNAL HELPERS                                     */
-    /* ============================================================================================ */
-
     function _encodeModuleData(uint256 id, address inputToken, address outputToken) internal view returns (bytes memory) {
          // Optimization: Use cached values to avoid calling Core.
          return abi.encode(id, TWAMM_MODULE, rateOracle, inputToken, outputToken);
@@ -325,19 +275,6 @@ contract PrimeBroker is IPrimeBroker {
             TWAMM_MODULE,
             info.key,
             info.orderKey,
-            // Oracle used for valuation (we use the rateOracle or spotOracle from Core? 
-            // Core's rateOracle is usually an interest rate model, NOT a price oracle.
-            // We need a PRICE Oracle.
-            // Assumption: Broker stores 'rateOracle' but that might be a naming confusion in V1.
-            // In RLDCore.sol, 'rateOracle' is usually the Interest Rate Strategy.
-            // We need the 'SpotOracle' or 'Oracle' from the Market.
-            // Checking Core... getMarketAddresses returns (collateral, underlying, rateOracle, hook).
-            // It seems we lack a direct reference to the "Price Oracle" in PrimeBroker's cache?
-            // Wait, TwammBrokerModule needs a Price Oracle.
-            // Let's assume for now there is a global oracle or we fetch it from Core if needed.
-            // Actually, RLD generally uses an Oracle Module.
-            // Let's fix this in the next steps if needed. For now, we pass 'rateOracle' 
-            // assuming it MIGHT be the price oracle, but likely we need to fetch the real one.
             rateOracle, 
             collateralToken,
             underlyingToken
@@ -347,10 +284,6 @@ contract PrimeBroker is IPrimeBroker {
     function _getOraclePrice(address quote, address base) internal view returns (uint256) {
         return ISpotOracle(rateOracle).getSpotPrice(quote, base);
     }
-
-    /* ============================================================================================ */
-    /*                                        METADATA LOGIC                                        */
-    /* ============================================================================================ */
 
     function getBondMetadata() external view override returns (BondMetadata memory) {
         return bondMetadata;

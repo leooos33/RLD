@@ -131,12 +131,5 @@ interface IRLDCore {
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
     function liquidate(MarketId id, address user, uint256 debtToCover) external;
 
-    /// @notice Updates risk parameters (Curator only).
-    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external;
 
-    /// @notice Updates the Market Curator (Governance Handover).
-    function setCurator(MarketId id, address newCurator) external;
-
-    /// @notice Updates Oracle Sources (Emergency Switch).
-    function updateOracles(MarketId id, address rateOracle, address spotOracle) external;
 }

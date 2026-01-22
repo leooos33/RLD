@@ -35,9 +35,6 @@ contract RLDCore is IRLDCore, RLDStorage {
         emit SecurityUpdate(MarketId.wrap(bytes32(0)), "SetFactory", msg.sender);
     }
 
-
-
-
     /* ============================================================================================ */
     /*                                        MARKET LOGIC                                          */
     /* ============================================================================================ */
@@ -166,7 +163,6 @@ contract RLDCore is IRLDCore, RLDStorage {
         Position storage pos = positions[id][msg.sender];
         MarketAddresses storage addresses = marketAddresses[id];
 
-
         // 2. Apply Changes & Transfers
         if (deltaCollateral != 0) {
             uint256 newCollateral = _applyDelta(pos.collateral, deltaCollateral);
@@ -188,22 +184,14 @@ contract RLDCore is IRLDCore, RLDStorage {
              pos.debtPrincipal = uint128(newDebt);
         }
 
-
-
         // 3.5 Tokenize Debt (WrappedRLP)
-        if (addresses.positionToken != address(0)) {
-            if (deltaDebt > 0) {
+        if (deltaDebt > 0) {
                 // Mint (Short Position)
                 PositionToken(addresses.positionToken).mint(msg.sender, uint256(deltaDebt));
             } else if (deltaDebt < 0) {
                 // Burn (Repay Position)
                 PositionToken(addresses.positionToken).burn(msg.sender, uint256(-deltaDebt));
             }
-        }
-
-
-
-
 
         bytes32 actionKey = keccak256(abi.encode(id, msg.sender, ACTION_SALT));
         uint256 currentType = TransientStorage.tload(actionKey);
@@ -218,10 +206,6 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         emit PositionModified(id, msg.sender, deltaCollateral, deltaDebt);
     }
-
-    /* ============================================================================================ */
-    /*                                        SOLVENCY LOGIC                                        */
-    /* ============================================================================================ */
 
     /// @notice Iterates through all touched (Market, Account) pairs and verifies solvency.
     function _checkSolvencyOfTouched() internal view {
@@ -300,15 +284,9 @@ contract RLDCore is IRLDCore, RLDStorage {
 
     function _applyDelta(uint128 start, int256 delta) internal pure returns (uint256) {
         int256 result = int256(uint256(start)) + delta;
-        if (result < 0) revert("Underflow"); // Keep generic or add Custom Error? Keeping generic for now or standard error.
+        if (result < 0) revert("Underflow");
         return uint256(result);
     }
-
-    /* ============================================================================================ */
-    /*                                      SETTLEMENT / LIQ                                        */
-    /* ============================================================================================ */
-
-
 
     /// @notice Liquidates an insolvent position (Broker-Only).
     function liquidate(MarketId id, address user, uint256 debtToCover) external override {
@@ -352,13 +330,6 @@ contract RLDCore is IRLDCore, RLDStorage {
                 ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
         }
 
-        // 6. Settle Cost (Liquidator pays)
-        // Liquidator must pay: debtToCover * price (in underlying) -> This logic is implicit,
-        // Assuming Liquidator calls this function, they must have approved wRLP or Underlying to be burned/transferred?
-        // Wait, the current logic is:
-        // uint256 brokerCost = debtToCover * norm * index
-        // This 'brokerCost' IS the value (in terms of underlying/collateral) that is being repaid.
-
         // 7. Calculate Seize Amount via Module
         ILiquidationModule.PriceData memory priceData = ILiquidationModule.PriceData({
             indexPrice: indexPrice,
@@ -384,46 +355,8 @@ contract RLDCore is IRLDCore, RLDStorage {
         emit PositionModified(id, user, 0, -int256(debtToCover));
     }
 
-
     function isSolvent(MarketId id, address user) external view override returns (bool) {
         MarketConfig storage config = marketConfigs[id];
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
-    }
-
-    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external override onlyCurator(id) {
-        MarketAddresses storage addresses = marketAddresses[id];
-        if (addresses.collateralToken == address(0)) revert InvalidMarket();
-        
-        // Input Validation (Basic sanity checks)
-        if (maintenanceMargin < 1e18) revert InvalidParam("Unsafe Margin"); // < 100%
-        if (minColRatio < maintenanceMargin) revert InvalidParam("Invalid Ratios"); 
-        if (liquidationCloseFactor > 1e18) revert InvalidParam("Invalid Close Factor"); // Max 100%
-        
-        MarketConfig storage config = marketConfigs[id];
-        config.minColRatio = minColRatio;
-        config.maintenanceMargin = maintenanceMargin;
-        config.liquidationCloseFactor = liquidationCloseFactor;
-        config.liquidationParams = liquidationParams;
-        addresses.liquidationModule = liquidationModule;
-        
-        emit SecurityUpdate(id, "RiskParams", msg.sender);
-    }
-
-    function setCurator(MarketId id, address newCurator) external override onlyCurator(id) {
-        MarketAddresses storage addresses = marketAddresses[id];
-        if (newCurator == address(0)) revert InvalidParam("Invalid Curator");
-        
-        addresses.curator = newCurator;
-        emit SecurityUpdate(id, "Curator", newCurator);
-    }
-
-    function updateOracles(MarketId id, address rateOracle, address spotOracle) external override onlyCurator(id) {
-        MarketAddresses storage addresses = marketAddresses[id];
-        
-        // Prevent setting to 0 if provided
-        if (rateOracle != address(0)) addresses.rateOracle = rateOracle;
-        if (spotOracle != address(0)) addresses.spotOracle = spotOracle;
-        
-        emit SecurityUpdate(id, "Oracles", msg.sender);
     }
 }
