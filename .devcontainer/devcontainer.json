@@ -1,0 +1,22 @@
+{
+  "name": "RLD Protocol DevBox",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/foundry-rs/foundry/foundry:latest": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.eol": "\n",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "JuanBlanco.solidity",
+        "esbenp.prettier-vscode",
+        "ms-python.python",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+  "postCreateCommand": "forge install && npm install"
+}
