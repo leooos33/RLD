@@ -1,0 +1,3196 @@
+{
+  "scenarios": [
+    {
+      "name": "Scenario #0",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 0,
+          "rate": 3279,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 0,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 7,
+          "rate": 1188,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 11448,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 7438,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 60076,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 77451,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 7,
+          "expectedClaim": 30388,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 118586,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 148975,
+      "totalClaimed": 148974
+    },
+    {
+      "name": "Scenario #1",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 1,
+          "rate": 856,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 2,
+          "rate": 5439,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 53146,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 69537,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 5,
+          "rate": 8699,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 6,
+          "rate": 4996,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 92546,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 79927,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 3648,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 3907,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 50480,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 60363,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 5,
+          "expectedClaim": 117283,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 10939,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 82235,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 2938,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 1833,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 95245,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 2,
+          "expectedClaim": 249668,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 58136,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 31513,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 8608,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 50975,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 92696,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 94322,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 147255,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 6,
+          "expectedClaim": 244774,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 113134,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 1,
+          "expectedClaim": 58621,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 930738,
+      "totalClaimed": 930735
+    },
+    {
+      "name": "Scenario #2",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 6,
+          "rate": 1781,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 7,
+          "rate": 8459,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 82213,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 6,
+          "expectedClaim": 14298,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 7,
+          "expectedClaim": 67914,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 82213,
+      "totalClaimed": 82212
+    },
+    {
+      "name": "Scenario #3",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 5430,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 13,
+          "rate": 4932,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 98854,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 13,
+          "expectedClaim": 98854,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 98854,
+      "totalClaimed": 98854
+    },
+    {
+      "name": "Scenario #4",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 5,
+          "rate": 2859,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 13592,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 21188,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 8,
+          "rate": 8597,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 8,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 10,
+          "rate": 6758,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 1151,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 40009,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 73266,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 7812,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 22074,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 10,
+          "expectedClaim": 88967,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 40222,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 48120,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 41733,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 33147,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 95884,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 85485,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 58693,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 24,
+          "rate": 5788,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 5,
+          "expectedClaim": 180467,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 69922,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 345293,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 28,
+          "rate": 8033,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 95675,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 19313,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 28,
+          "expectedClaim": 66832,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 24728,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 99770,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 52032,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 24,
+          "expectedClaim": 254443,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 936004,
+      "totalClaimed": 936002
+    },
+    {
+      "name": "Scenario #5",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 3,
+          "rate": 546,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 67365,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 96766,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 72666,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 61363,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 3,
+          "expectedClaim": 298160,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 12,
+          "rate": 3411,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 13,
+          "rate": 7885,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 26486,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 15,
+          "rate": 9733,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30617,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 17,
+          "rate": 2146,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 77117,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 83008,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 34194,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 88338,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 19271,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 57093,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 12,
+          "expectedClaim": 65806,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 13,
+          "expectedClaim": 152120,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 15,
+          "expectedClaim": 164951,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 17,
+          "expectedClaim": 33245,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 714284,
+      "totalClaimed": 714282
+    },
+    {
+      "name": "Scenario #6",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 2,
+          "rate": 7053,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 67730,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 97804,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 37018,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 2,
+          "expectedClaim": 202552,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 10,
+          "rate": 6233,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 90140,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 9312,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 13,
+          "rate": 3429,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 9795,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 46846,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 16,
+          "rate": 6418,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 85077,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 7180,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 58507,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 20,
+          "rate": 2903,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 21,
+          "rate": 4415,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 4567,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 10,
+          "expectedClaim": 136682,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 40657,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 25,
+          "rate": 9079,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 13,
+          "expectedClaim": 26897,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 16,
+          "expectedClaim": 34890,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 20,
+          "expectedClaim": 5431,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 21,
+          "expectedClaim": 8259,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 8544,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 25,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 481764,
+      "totalClaimed": 481762
+    },
+    {
+      "name": "Scenario #7",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 12,
+          "rate": 7957,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 22260,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66076,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 26925,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 58126,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 29956,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 12,
+          "expectedClaim": 203343,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 25,
+          "rate": 2839,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 50455,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 57808,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 25,
+          "expectedClaim": 108263,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 30,
+          "rate": 9540,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 7161,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 30,
+          "expectedClaim": 7161,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 33,
+          "rate": 8281,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 50481,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 33,
+          "expectedClaim": 50480,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 38,
+          "rate": 3500,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 39,
+          "rate": 3076,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 37360,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 41,
+          "rate": 8892,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 5483,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 41,
+          "expectedClaim": 3151,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 39,
+          "expectedClaim": 18565,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 38,
+          "expectedClaim": 21125,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 412091,
+      "totalClaimed": 412088
+    },
+    {
+      "name": "Scenario #8",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 2,
+          "rate": 1111,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 70552,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 29871,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 25497,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 97510,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 23903,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 28349,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 6524,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 2,
+          "expectedClaim": 275682,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 11,
+          "rate": 3743,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 11,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 13,
+          "rate": 3621,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 29312,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 91552,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 16,
+          "rate": 4453,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 17,
+          "rate": 8490,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 16,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 96643,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66637,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 21,
+          "rate": 5201,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76974,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 36196,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 13,
+          "expectedClaim": 92058,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 16547,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 29740,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76140,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 85900,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76511,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 98473,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 90437,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 3097,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30403,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76265,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76721,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 36,
+          "rate": 9127,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 37,
+          "rate": 5349,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 38,
+          "rate": 4201,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 25243,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 20871,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 7497,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 7365,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 60919,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 44,
+          "rate": 725,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 399388,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 17,
+          "expectedClaim": 418596,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 21,
+          "expectedClaim": 210862,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 36,
+          "expectedClaim": 28605,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 37,
+          "expectedClaim": 16764,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 38,
+          "expectedClaim": 13166,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 44,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 1455125,
+      "totalClaimed": 1455121
+    },
+    {
+      "name": "Scenario #9",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 0,
+          "rate": 4750,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 1,
+          "rate": 1881,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 55327,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 1,
+          "expectedClaim": 15694,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 4,
+          "rate": 1911,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 67176,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 90874,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 36965,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30005,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 74578,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 0,
+          "expectedClaim": 253277,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 70402,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 71812,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 1625,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 4,
+          "expectedClaim": 229791,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 17,
+          "rate": 2429,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 33507,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 17,
+          "expectedClaim": 33507,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 532271,
+      "totalClaimed": 532269
+    },
+    {
+      "name": "Scenario #10",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 5,
+          "rate": 3549,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 20625,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 74593,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 4045,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76853,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 10,
+          "rate": 7685,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 67538,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66739,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 22438,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 9618,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 15871,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 10,
+          "expectedClaim": 113055,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 8574,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 5,
+          "expectedClaim": 230637,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 13583,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 25,
+          "rate": 8157,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 25,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 28,
+          "rate": 7109,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 94352,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 28,
+          "expectedClaim": 94352,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 451628,
+      "totalClaimed": 451627
+    },
+    {
+      "name": "Scenario #11",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 4,
+          "rate": 975,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 4,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 6,
+          "rate": 1967,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 96759,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 15712,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 22716,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 6,
+          "expectedClaim": 135187,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 16,
+          "rate": 9224,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76825,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 18,
+          "rate": 6737,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 38701,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 22674,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 21,
+          "rate": 2238,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 4180,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 65897,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 86694,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 16,
+          "expectedClaim": 175187,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 18,
+          "expectedClaim": 71842,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 21,
+          "expectedClaim": 15259,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 28501,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 425978,
+      "totalClaimed": 425976
+    },
+    {
+      "name": "Scenario #12",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 1888,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 60580,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 60580,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 8663,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 15,
+          "rate": 837,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 73942,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 26037,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 32158,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 70964,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 15,
+          "expectedClaim": 203101,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 31,
+          "rate": 4021,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 71839,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 60194,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 80075,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66793,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 31,
+          "expectedClaim": 278901,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 542582,
+      "totalClaimed": 542582
+    },
+    {
+      "name": "Scenario #13",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 6,
+          "rate": 6733,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 6,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 8,
+          "rate": 6241,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 6775,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 43040,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 87686,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 44626,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 8,
+          "expectedClaim": 84078,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 971,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 7812,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 16,
+          "rate": 7872,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 43290,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 18,
+          "rate": 5566,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 19,
+          "rate": 7549,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 79906,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 64397,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 6368,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 16,
+          "expectedClaim": 61354,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 24,
+          "rate": 1294,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 24,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 32694,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 17004,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 75870,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 59950,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 84216,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 29625,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 18,
+          "expectedClaim": 89146,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 62801,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 36945,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 44949,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 54545,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 287706,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 96423,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 92026,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66572,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 41,
+          "rate": 4037,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 19,
+          "expectedClaim": 319646,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 69158,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 91519,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 44078,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 46,
+          "rate": 2738,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 6564,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 16671,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 77966,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 69224,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 397934,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 41,
+          "expectedClaim": 101607,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 46,
+          "expectedClaim": 19632,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 1430333,
+      "totalClaimed": 1430327
+    },
+    {
+      "name": "Scenario #14",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 0,
+          "rate": 4884,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 0,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 10,
+          "rate": 3655,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66021,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 10,
+          "expectedClaim": 66020,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 66021,
+      "totalClaimed": 66020
+    },
+    {
+      "name": "Scenario #15",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 10,
+          "rate": 619,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 76350,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 10,
+          "expectedClaim": 76350,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 76350,
+      "totalClaimed": 76350
+    },
+    {
+      "name": "Scenario #16",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 8,
+          "rate": 9855,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 8,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 12,
+          "rate": 6650,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 77757,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 39266,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 25666,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 96236,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 42252,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 97757,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 19,
+          "rate": 9433,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 20,
+          "rate": 5441,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 46411,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 93881,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 20,
+          "expectedClaim": 35464,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 21089,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 18813,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 26,
+          "rate": 6512,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 47954,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 28,
+          "rate": 8678,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 29,
+          "rate": 6760,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 30,
+          "rate": 4636,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 31,
+          "rate": 8299,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 94552,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 55014,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 34,
+          "rate": 8519,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 29,
+          "expectedClaim": 19837,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 12,
+          "expectedClaim": 472404,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 19,
+          "expectedClaim": 132588,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 26,
+          "expectedClaim": 32930,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 28,
+          "expectedClaim": 25465,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 30,
+          "expectedClaim": 13604,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 31,
+          "expectedClaim": 24353,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 34,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 756648,
+      "totalClaimed": 756645
+    },
+    {
+      "name": "Scenario #17",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 1,
+          "rate": 1548,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 2,
+          "rate": 4177,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 66587,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 73674,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 2,
+          "expectedClaim": 102335,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 72669,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 1,
+          "expectedClaim": 110594,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 12,
+          "rate": 661,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 12,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 3978,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 8392,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 23,
+          "rate": 7485,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 24,
+          "rate": 2810,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 51316,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 5278,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30874,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 39280,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 23,
+          "expectedClaim": 35034,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 24,
+          "expectedClaim": 13152,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 300398,
+      "totalClaimed": 300395
+    },
+    {
+      "name": "Scenario #18",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 0,
+          "rate": 2060,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 1,
+          "rate": 7491,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 5290,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 56800,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 34134,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 5,
+          "rate": 6618,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30489,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 32006,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 28624,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 59886,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 90416,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 89642,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 64263,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 3606,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 5,
+          "expectedClaim": 163283,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 70454,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 87361,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 1,
+          "expectedClaim": 384069,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 92969,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 53580,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 1850,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 41555,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 0,
+          "expectedClaim": 295571,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 842925,
+      "totalClaimed": 842923
+    },
+    {
+      "name": "Scenario #19",
+      "steps": [
+        {
+          "type_": "ADD",
+          "id": 9,
+          "rate": 7697,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 52539,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 11,
+          "rate": 498,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 11,
+          "expectedClaim": 0,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 13,
+          "rate": 3431,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 14,
+          "rate": 7499,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 23236,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 68630,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 30029,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 31169,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 19,
+          "rate": 8615,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 93391,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 19,
+          "expectedClaim": 29533,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 22,
+          "rate": 9532,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 13,
+          "expectedClaim": 39955,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 99953,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 46985,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 31357,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 98028,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "ADD",
+          "id": 28,
+          "rate": 4230,
+          "amount": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 58799,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "DIST",
+          "amount": 20929,
+          "id": 0,
+          "rate": 0,
+          "expectedClaim": 0
+        },
+        {
+          "type_": "REM",
+          "id": 9,
+          "expectedClaim": 249376,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 14,
+          "expectedClaim": 191773,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 22,
+          "expectedClaim": 132759,
+          "rate": 0,
+          "amount": 0
+        },
+        {
+          "type_": "REM",
+          "id": 28,
+          "expectedClaim": 11646,
+          "rate": 0,
+          "amount": 0
+        }
+      ],
+      "totalDistributed": 655045,
+      "totalClaimed": 655042
+    }
+  ]
+}

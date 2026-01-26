@@ -2,13 +2,13 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
-import {RLDCore} from "../src/rld/core/RLDCore.sol";
-import {RLDMarketFactory} from "../src/rld/core/RLDMarketFactory.sol";
-import {BrokerVerifier} from "../src/rld/modules/verifier/BrokerVerifier.sol";
-import {PrimeBrokerFactory} from "../src/rld/core/PrimeBrokerFactory.sol";
-import {PrimeBroker} from "../src/rld/broker/PrimeBroker.sol";
-import {IRLDCore, MarketId} from "../src/shared/interfaces/IRLDCore.sol";
-import {IBrokerVerifier} from "../src/shared/interfaces/IBrokerVerifier.sol";
+import {RLDCore} from "../../src/rld/core/RLDCore.sol";
+import {RLDMarketFactory} from "../../src/rld/core/RLDMarketFactory.sol";
+import {BrokerVerifier} from "../../src/rld/modules/verifier/BrokerVerifier.sol";
+import {PrimeBrokerFactory} from "../../src/rld/core/PrimeBrokerFactory.sol";
+import {PrimeBroker} from "../../src/rld/broker/PrimeBroker.sol";
+import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
+import {IBrokerVerifier} from "../../src/shared/interfaces/IBrokerVerifier.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -19,14 +19,14 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
-import {ISpotOracle} from "../src/shared/interfaces/ISpotOracle.sol";
-import {IRLDOracle} from "../src/shared/interfaces/IRLDOracle.sol";
-import {PositionToken} from "../src/rld/tokens/PositionToken.sol";
-import {IFundingModel} from "../src/shared/interfaces/IFundingModel.sol";
+import {ISpotOracle} from "../../src/shared/interfaces/ISpotOracle.sol";
+import {IRLDOracle} from "../../src/shared/interfaces/IRLDOracle.sol";
+import {PositionToken} from "../../src/rld/tokens/PositionToken.sol";
+import {IFundingModel} from "../../src/shared/interfaces/IFundingModel.sol";
 
-import {UniswapV4SingletonOracle} from "../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
+import {UniswapV4SingletonOracle} from "../../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
 
-import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
+import {BondMetadataRenderer} from "../../src/utils/BondMetadataRenderer.sol";
 
 // --- Mocks ---
 
@@ -154,7 +154,7 @@ contract GenericExecutionTest is Test {
         // 2. Create Broker
         address user = address(0xCAFE);
         vm.prank(user);
-        address brokerAddr = pbf.createBroker();
+        address brokerAddr = pbf.createBroker(bytes32(0));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
 
         // 3. Fund Broker with Collateral and Other Token
@@ -215,7 +215,7 @@ contract GenericExecutionTest is Test {
         PrimeBrokerFactory pbf = PrimeBrokerFactory(brokerFactoryAddr);
         address user = address(0xCAFE);
         vm.prank(user);
-        address brokerAddr = pbf.createBroker();
+        address brokerAddr = pbf.createBroker(bytes32(0));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
 
         // 2. Fund Broker with Collateral

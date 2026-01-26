@@ -34,8 +34,8 @@ contract PrimeBrokerFactory is ERC721 {
         RENDERER = renderer;
     }
 
-    function createBroker() external returns (address broker) {
-        broker = IMPLEMENTATION.clone();
+    function createBroker(bytes32 salt) external returns (address broker) {
+        broker = IMPLEMENTATION.cloneDeterministic(salt);
         
         // Initialize with Market ID + Factory Address
         PrimeBroker(payable(broker)).initialize(
