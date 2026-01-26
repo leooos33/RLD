@@ -2,10 +2,10 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
-import {StandardFundingModel} from "../../src/rld/modules/funding/StandardFundingModel.sol";
-import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
-import {IRLDOracle} from "../../src/shared/interfaces/IRLDOracle.sol";
-import {ISpotOracle} from "../../src/shared/interfaces/ISpotOracle.sol";
+import {StandardFundingModel} from "../../../src/rld/modules/funding/StandardFundingModel.sol";
+import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
+import {IRLDOracle} from "../../../src/shared/interfaces/IRLDOracle.sol";
+import {ISpotOracle} from "../../../src/shared/interfaces/ISpotOracle.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol"; // Use solmate for check
 
 contract FundingMathTest is Test {
@@ -347,7 +347,7 @@ contract FundingMathTest is Test {
 
     function test_VerificationFromJSON() public {
         string memory root = vm.projectRoot();
-        string memory path = string.concat(root, "/test/verification/reference_outputs.json");
+        string memory path = string.concat(root, "/test/differential/data/funding.json");
         string memory json = vm.readFile(path);
         
         // 1. Verify Static Scenarios

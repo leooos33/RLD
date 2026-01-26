@@ -2,11 +2,11 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
-import {PrimeBroker} from "../src/rld/broker/PrimeBroker.sol";
-import {PrimeBrokerFactory} from "../src/rld/core/PrimeBrokerFactory.sol";
-import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
-import {IPrimeBroker} from "../src/shared/interfaces/IPrimeBroker.sol";
-import {RLDCore, MarketId} from "../src/rld/core/RLDCore.sol";
+import {PrimeBroker} from "../../src/rld/broker/PrimeBroker.sol";
+import {PrimeBrokerFactory} from "../../src/rld/core/PrimeBrokerFactory.sol";
+import {BondMetadataRenderer} from "../../src/utils/BondMetadataRenderer.sol";
+import {IPrimeBroker} from "../../src/shared/interfaces/IPrimeBroker.sol";
+import {RLDCore, MarketId} from "../../src/rld/core/RLDCore.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {LibString} from "solmate/src/utils/LibString.sol";
 
@@ -35,7 +35,7 @@ contract BondNFTTest is Test {
     
     function test_MintAndMetadata() public {
         vm.prank(user);
-        address brokerAddr = factory.createBroker();
+        address brokerAddr = factory.createBroker(bytes32(0));
         uint256 tokenId = uint256(uint160(brokerAddr));
         
         // Check Ownership
@@ -83,7 +83,7 @@ contract BondNFTTest is Test {
     
     function test_TransferOwnership() public {
         vm.prank(user);
-        address brokerAddr = factory.createBroker();
+        address brokerAddr = factory.createBroker(bytes32(0));
         uint256 tokenId = uint256(uint160(brokerAddr));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
 
@@ -111,7 +111,7 @@ contract BondNFTTest is Test {
     
     function test_DebtHedgeMetadata() public {
         vm.prank(user);
-        address brokerAddr = factory.createBroker();
+        address brokerAddr = factory.createBroker(bytes32(0));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
         uint256 tokenId = uint256(uint160(brokerAddr));
 

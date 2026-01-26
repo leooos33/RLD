@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import "../AtomicDeployment.t.sol"; // Base setup
+import "../core/AtomicDeployment.t.sol"; // Base setup
 import {TwammBrokerModule} from "../../src/rld/modules/broker/TwammBrokerModule.sol";
 
 contract LiquidationWaterfallTest is AtomicDeploymentTest {
@@ -49,7 +49,7 @@ contract LiquidationWaterfallTest is AtomicDeploymentTest {
         // [Step 2] Create User Broker & Fund it
         address user = address(0x111);
         vm.prank(user);
-        address brokerAddr = PrimeBrokerFactory(brokerFactory).createBroker();
+        address brokerAddr = PrimeBrokerFactory(brokerFactory).createBroker(bytes32(0));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
 
         // Fund Broker with 1000 aUSDC

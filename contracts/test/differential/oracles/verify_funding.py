@@ -189,7 +189,7 @@ def generate_fuzz_vectors(count=1000):
 
 def process_scenarios():
     # 1. Process Static Scenarios
-    input_path = os.path.join(os.path.dirname(__file__), 'funding_scenarios.json')
+    input_path = os.path.join(os.path.dirname(__file__), '../scenarios/funding.json')
     with open(input_path, 'r') as f:
         data = json.load(f)
     
@@ -220,7 +220,7 @@ def process_scenarios():
     }
 
     # Write Outputs
-    output_path = os.path.join(os.path.dirname(__file__), 'reference_outputs.json')
+    output_path = os.path.join(os.path.dirname(__file__), '../data/funding.json')
     with open(output_path, 'w') as f:
         json.dump(full_output, f, indent=2)
         
