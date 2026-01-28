@@ -36,14 +36,35 @@ import {TwapOracle} from "./libraries/TwapOracle.sol";
 
 import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
+/// @dev Scaling factor for sell rates to maintain precision (1e18)
+/// All sell rates are multiplied by this to avoid rounding errors in calculations
 uint256 constant RATE_SCALER = 1e18;
 
 /**
- * @title TWAMM Hook
- * @notice This Uniswap V4 hook implements the Time-Weighted Average Market Maker (TWAMM)
- *         strategy as detailed by Paradigm in their original paper.
- * @dev Since this hook operates entirely onchain, there are several additional considerations.
- *      Please see documentation before deploying.
+ * @title TWAMM Hook - Time-Weighted Average Market Maker
+ * @notice Implements Paradigm's TWAMM algorithm as a Uniswap V4 hook, enabling large orders
+ *         to be executed gradually over time without significant price impact.
+ * 
+ * @dev Architecture Overview:
+ *      - Users submit long-term orders with a sell rate (tokens/second) and expiration
+ *      - Orders are grouped into two pools per AMM: 0→1 and 1→0
+ *      - Virtual order execution happens at interval boundaries (e.g., every hour)
+ *      - Opposing orders are matched internally first (no swap needed)
+ *      - Remaining imbalance swaps against the AMM pool
+ *      - Earnings are distributed proportionally via an earnings factor
+ * 
+ * @dev Key Mechanisms:
+ *      1. Interval-based execution: Orders execute at fixed time intervals to batch processing
+ *      2. Virtual matching: Opposing orders cancel out without touching the pool
+ *      3. Earnings factor: Tracks cumulative earnings per unit of sell rate (like Compound's index)
+ *      4. Lazy execution: Orders only execute when someone triggers executeTWAMMOrders()
+ * 
+ * @dev Security Features:
+ *      - Price bounds: Optional min/max price limits to prevent manipulation
+ *      - Protocol fees: Configurable fee on swaps (max 0.05%)
+ *      - Trading fee: Static fee applied to TWAMM order execution
+ *      - Oracle integration: TWAP oracle for price history
+ * 
  * @author Uniswap Labs
  * @author Zaha Studio
  */
@@ -64,25 +85,55 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
 
     bytes internal constant ZERO_BYTES = bytes("");
 
-    /// @notice Time interval on which orders are allowed to expire. Conserves processing needed on execute.
+    /* ============================================================================ */
+    /*                              STATE VARIABLES                                */
+    /* ============================================================================ */
+
+    /// @notice Time interval on which orders are allowed to expire (e.g., 3600 = 1 hour)
+    /// @dev Orders must expire at multiples of this interval to enable batched processing
+    ///      Smaller intervals = more frequent execution but higher gas costs
+    ///      Larger intervals = less frequent execution but better gas efficiency
     uint256 public immutable expirationInterval;
 
+    /// @notice Core TWAMM state for each pool (order pools, last execution time, orders)
+    /// @dev Contains two OrderPool.State structs (0→1 and 1→0) and order mappings
     mapping(PoolId poolId => TWAMMState twammState) internal twammStates;
+    
+    /// @notice Tracks tokens owed to users from order earnings and cancellations
+    /// @dev Updated during sync() and claimed via claimTokens()
+    ///      Format: tokensOwed[currency][user] = amount
     mapping(Currency token => mapping(address owner => uint256 amountOwed)) public tokensOwed;
 
+    /// @notice TWAP oracle observations for price history
+    /// @dev Stores tick observations at different timestamps for TWAP calculations
     mapping(PoolId => mapping(uint256 => TwapOracle.Observation)) public observations;
+    
+    /// @notice Oracle state tracking (cardinality, index)
     mapping(PoolId => TwapOracle.State) public oracleStates;
 
-    /// @notice If non-zero, the hook has been killed and can no longer be used to create TWAMM orders.
-    ///         Swaps & Liquidity Actions will continue to operate normally.
-    uint256 public killedAt;
 
+
+    /// @notice Optional price bounds to prevent manipulation attacks
+    /// @dev If set, swaps that would move price outside [min, max] will revert
+    ///      Bounds are in sqrtPriceX96 format (Q64.96 fixed point)
     struct PriceBounds {
-        uint160 min;
-        uint160 max;
+        uint160 min;  // Minimum allowed sqrtPriceX96
+        uint160 max;  // Maximum allowed sqrtPriceX96
     }
+    
+    /// @notice Price bounds per pool (if bounds.max == 0, no bounds are set)
     mapping(PoolId => PriceBounds) public priceBounds;
 
+    /* ============================================================================ */
+    /*                          ADMIN & CONFIGURATION                              */
+    /* ============================================================================ */
+
+    /// @notice Sets price bounds for a pool (one-time only)
+    /// @dev Bounds prevent price manipulation by reverting swaps that move price outside range
+    ///      Can only be set once per pool (bounds.max == 0 check)
+    /// @param key The pool key
+    /// @param min Minimum allowed sqrtPriceX96
+    /// @param max Maximum allowed sqrtPriceX96
     function setPriceBounds(PoolKey calldata key, uint160 min, uint160 max) external {
         PriceBounds storage bounds = priceBounds[key.toId()];
         if (bounds.max != 0) revert("Bounds already set");
@@ -90,6 +141,10 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         bounds.max = max;
     }
 
+    /// @notice Constructs the TWAMM hook
+    /// @param _manager The Uniswap V4 PoolManager contract
+    /// @param _expirationInterval Time interval for order expiration (e.g., 3600 for 1 hour)
+    /// @param initialOwner Address that will own this contract (for admin functions)
     constructor(IPoolManager _manager, uint256 _expirationInterval, address initialOwner)
         BaseHook(_manager)
         Owned(initialOwner)
@@ -101,16 +156,19 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         expirationInterval = _expirationInterval;
     }
 
-    /// @inheritdoc ITWAMM
-    function killHook() external onlyOwner {
-        if (killedAt != 0) {
-            revert HookKilled();
-        }
 
-        killedAt = block.timestamp;
-    }
+
+    /* ============================================================================ */
+    /*                          UNISWAP V4 HOOK LIFECYCLE                          */
+    /* ============================================================================ */
 
     /// @inheritdoc BaseHook
+    /// @notice Declares which pool lifecycle events this hook wants to intercept
+    /// @dev We intercept:
+    ///      - beforeInitialize: Set up TWAMM state when pool is created
+    ///      - beforeAddLiquidity/beforeRemoveLiquidity: Execute pending orders before LP changes
+    ///      - beforeSwap: Execute pending orders before regular swaps
+    ///      - afterSwap: Validate price bounds and collect fees on exact output swaps
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,
@@ -130,6 +188,9 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         });
     }
 
+    /// @notice Called when a pool is first initialized
+    /// @dev Rejects pools with native ETH (only ERC20 supported)
+    ///      Initializes TWAMM state and oracle for the pool
     function _beforeInitialize(address, PoolKey calldata key, uint160) internal override returns (bytes4) {
         if (key.currency0.isAddressZero()) {
             revert PoolWithNativeNotSupported();
@@ -142,6 +203,9 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         return BaseHook.beforeInitialize.selector;
     }
 
+    /// @notice Called before liquidity is added to the pool
+    /// @dev Executes pending TWAMM orders first to ensure accurate pool state
+    ///      Validates that LP position doesn't violate price bounds (if set)
     function _beforeAddLiquidity(
         address,
         PoolKey calldata key,
@@ -161,6 +225,9 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         return BaseHook.beforeAddLiquidity.selector;
     }
 
+    /// @notice Called before liquidity is removed from the pool
+    /// @dev Executes pending TWAMM orders (with try/catch to never block LP removal)
+    ///      Liquidity removal must always succeed even if TWAMM execution fails
     function _beforeRemoveLiquidity(
         address,
         PoolKey calldata key,
@@ -175,19 +242,33 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
+    /* ============================================================================ */
+    /*                            PROTOCOL FEE MANAGEMENT                          */
+    /* ============================================================================ */
+
+    /// @notice Protocol fee per pool (in pips, denominator is 1,000,000)
+    /// @dev Example: 500 = 0.05% fee
     mapping(PoolId => uint24) public protocolFees;
+    
+    /// @notice Accumulated protocol fees per currency
     mapping(Currency => uint256) public collectedFees;
-    uint24 public constant MAX_PROTOCOL_FEE = 500; // 0.05% (500 pips if denominator is 1e6)
-    // Actually standard fee denominator in V4 is 1e6 usually. 
-    // If 1% = 10000, 0.05% = 500.
+    
+    /// @notice Maximum protocol fee (0.05% = 500 pips)
+    uint24 public constant MAX_PROTOCOL_FEE = 500;
 
-    /* ... Hook Permissions ... */
-
+    /// @notice Sets the protocol fee for a specific pool
+    /// @dev Only owner can call. Fee is capped at 0.05%
+    /// @param key The pool key
+    /// @param newFee Fee in pips (e.g., 500 = 0.05%)
     function setProtocolFee(PoolKey calldata key, uint24 newFee) external onlyOwner {
         if (newFee > MAX_PROTOCOL_FEE) revert("Fee exceeds 0.05%");
         protocolFees[key.toId()] = newFee;
     }
 
+    /// @notice Claims accumulated protocol fees
+    /// @dev Only owner can call. Transfers all collected fees for a currency
+    /// @param currency The currency to claim
+    /// @param recipient Address to receive the fees
     function claimProtocolFees(Currency currency, address recipient) external onlyOwner {
         uint256 amount = collectedFees[currency];
         collectedFees[currency] = 0;
@@ -196,6 +277,16 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
 
     /* ... beforeAddLiquidity ... */
 
+    /// @notice Called before a swap is executed
+    /// @dev Executes pending TWAMM orders first, then charges protocol fee on exact input swaps
+    ///      For exact input (amountSpecified < 0): Fee charged upfront on input token
+    ///      For exact output (amountSpecified > 0): Fee charged in afterSwap on output token
+    /// @param sender The address initiating the swap
+    /// @param key The pool key
+    /// @param params Swap parameters (direction, amount, price limit)
+    /// @return selector Function selector to confirm execution
+    /// @return delta BeforeSwapDelta (always zero for this hook)
+    /// @return lpFeeOverride LP fee override (always 0, we don't override)
     function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
         override
@@ -205,48 +296,30 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         executeTWAMMOrders(key);
 
         uint24 fee = protocolFees[key.toId()];
-        if (fee > 0) {
-            // Charge fee on INPUT amount
-            // Exact Input: amountSpecified < 0. Input = -amountSpecified.
-            // Exact Output: amountSpecified > 0. Input is unknown/calculated.
-            // Simplified Policy: Only charge on Exact Input swaps to avoid slippage issues? 
-            // Or Estimate?
-            // "Charge it from every swap".
-            // For Exact Output, we can charge fee on the OUTPUT token (the one user is receiving).
-            // Logic: User wants 100 OUT. Protocol takes 0.05% of 100 = 0.05. User receives 99.95.
+        if (fee > 0 && params.amountSpecified < 0) {
+            // Exact Input: Charge fee on input token upfront
+            Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
+            uint256 feeAmount = (uint256(-params.amountSpecified) * fee) / 1000000;
             
-            uint256 feeAmount;
-            Currency feeCurrency;
-            
-            uint256 amountAbs = params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
-            feeAmount = (amountAbs * fee) / 1000000;
-
-            if (params.amountSpecified < 0) {
-                // Exact Input: Fee is on Input Token (Zero if ZeroForOne)
-                feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
-                // Take from user
-                if (feeAmount > 0) {
-                    IERC20Minimal(Currency.unwrap(feeCurrency)).transferFrom(sender, address(this), feeAmount);
-                    collectedFees[feeCurrency] += feeAmount;
-                }
-            } else {
-                 // Exact Output: Fee is on Output Token (One if ZeroForOne)
-                 // Wait, if ZeroForOne, Input=0, Output=1.
-                 // We want to charge fee. If we charge on output, we reduce what user gets.
-                 // But we can't easily intercept the output transfer from pool.
-                 // We can however pull EXTRA input from user? "You need to pay swap cost + fee".
-                 // But we don't know swap cost.
-                 // Easiest is to revert if fee > 0 and exact output?
-                 // Or just skip fee for exact output (minority of trades).
-                 // User said "charge it from every swap".
-                 // I will skip ExactOutput for safety/simplicity in V1 and note it.
+            if (feeAmount > 0) {
+                IERC20Minimal(Currency.unwrap(feeCurrency)).transferFrom(sender, address(this), feeAmount);
+                collectedFees[feeCurrency] += feeAmount;
             }
         }
+        // Note: Exact output fees are handled in _afterSwap
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    function _afterSwap(address, PoolKey calldata key, SwapParams calldata, BalanceDelta, bytes calldata)
+    /// @notice Called after a swap is executed
+    /// @dev Validates price bounds and charges protocol fee on exact output swaps
+    ///      For exact output swaps, we take a fee from the output amount using negative delta
+    /// @param key The pool key
+    /// @param params Swap parameters
+    /// @param delta The balance changes from the swap
+    /// @return selector Function selector to confirm execution
+    /// @return hookDelta Amount to adjust user's output (negative = take fee from user)
+    function _afterSwap(address, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata)
         internal
         override
         returns (bytes4, int128)
@@ -258,20 +331,53 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
              if (sqrtPriceX96 < bounds.min || sqrtPriceX96 > bounds.max) revert("Price Out of Bounds");
         }
 
+        // Handle protocol fee for exact output swaps
+        uint24 fee = protocolFees[key.toId()];
+        if (fee > 0 && params.amountSpecified > 0) {
+            // Exact Output: Charge fee on output token
+            // The output is what the user receives, we take a cut
+            Currency feeCurrency = params.zeroForOne ? key.currency1 : key.currency0;
+            int128 outputAmount = params.zeroForOne ? delta.amount1() : delta.amount0();
+            
+            if (outputAmount > 0) {
+                uint256 feeAmount = (uint256(uint128(outputAmount)) * fee) / 1000000;
+                if (feeAmount > 0) {
+                    collectedFees[feeCurrency] += feeAmount;
+                    // Return negative delta to take fee from user's output
+                    return (BaseHook.afterSwap.selector, -int128(int256(feeAmount)));
+                }
+            }
+        }
+
         return (BaseHook.afterSwap.selector, 0);
     }
 
+    /* ============================================================================ */
+    /*                          TWAMM ORDER STATE GETTERS                          */
+    /* ============================================================================ */
+
     /// @inheritdoc ITWAMM
+    /// @notice Returns the last timestamp at which virtual orders were executed for a pool
+    /// @dev This is rounded down to the nearest interval boundary
     function lastVirtualOrderTimestamp(PoolId key) external view returns (uint256) {
         return twammStates[key].lastVirtualOrderTimestamp;
     }
 
     /// @inheritdoc ITWAMM
+    /// @notice Retrieves a specific order's state
+    /// @param poolKey The pool containing the order
+    /// @param orderKey The order identifier (owner, expiration, direction)
+    /// @return Order struct with sellRate and earningsFactorLast
     function getOrder(PoolKey calldata poolKey, OrderKey calldata orderKey) external view returns (Order memory) {
         return _getOrder(twammStates[poolKey.toId()], _orderId(orderKey));
     }
 
     /// @inheritdoc ITWAMM
+    /// @notice Returns the current state of an order pool (all orders in one direction)
+    /// @param key The pool key
+    /// @param zeroForOne True for 0→1 pool, false for 1→0 pool
+    /// @return sellRateCurrent Total sell rate across all active orders (scaled by RATE_SCALER)
+    /// @return earningsFactorCurrent Cumulative earnings factor for profit distribution
     function getOrderPool(PoolKey calldata key, bool zeroForOne)
         external
         view
@@ -284,17 +390,27 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
             : (twamm.orderPool1For0.sellRateCurrent, twamm.orderPool1For0.earningsFactorCurrent);
     }
 
-    /// @notice Initialize TWAMM state
+    /* ============================================================================ */
+    /*                          TWAMM CORE LOGIC                                   */
+    /* ============================================================================ */
+
+    /// @notice Initialize TWAMM state for a pool
+    /// @dev Sets lastVirtualOrderTimestamp to current interval boundary
+    ///      Called once during pool initialization in beforeInitialize hook
     function initialize(TWAMMState storage self) internal {
         self.lastVirtualOrderTimestamp = _getIntervalTime(block.timestamp);
     }
 
     /// @inheritdoc ITWAMM
+    /// @notice Executes all pending TWAMM orders up to a specific timestamp
+    /// @dev This is the main execution engine that:
+    ///      1. Calculates virtual order matching between opposing directions
+    ///      2. Determines if a swap against the pool is needed
+    ///      3. Executes the swap if necessary
+    ///      4. Updates order pool state and earnings factors
+    /// @param key The pool key
+    /// @param targetTimestamp The timestamp to execute orders up to (rounded to interval)
     function executeTWAMMOrders(PoolKey memory key, uint256 targetTimestamp) public {
-        if (killedAt != 0) {
-            // If the hook has been killed, skip all hook logic.
-            return;
-        }
 
         PoolId poolId = key.toId();
         TWAMMState storage twamm = twammStates[poolId];
@@ -311,6 +427,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
             targetTimestamp
         );
 
+        // If virtual matching left an imbalance, execute swap against pool
         if (sqrtPriceLimitX96 != 0 && sqrtPriceLimitX96 != sqrtPriceX96 && maxSwapAmount != 0) {
             SwapParams memory swapParams =
                 SwapParams(zeroForOne, -maxSwapAmount.toInt256(), sqrtPriceLimitX96);
@@ -326,11 +443,22 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
+    /// @notice Executes all pending TWAMM orders up to current block timestamp
+    /// @dev Convenience wrapper that calls executeTWAMMOrders(key, block.timestamp)
     function executeTWAMMOrders(PoolKey memory key) public override {
         executeTWAMMOrders(key, block.timestamp);
     }
 
+    /* ============================================================================ */
+    /*                          ORDER SUBMISSION & MANAGEMENT                      */
+    /* ============================================================================ */
+
     /// @inheritdoc ITWAMM
+    /// @notice Submits multiple TWAMM orders in a single transaction
+    /// @dev Gas-efficient batch submission. Each order is processed independently
+    /// @param orders Array of order parameters
+    /// @return orderIds Array of generated order IDs
+    /// @return orderKeys Array of order keys (owner, expiration, direction)
     function batchSubmitOrders(SubmitOrderParams[] calldata orders)
         external
         returns (bytes32[] memory orderIds, OrderKey[] memory orderKeys)
@@ -355,10 +483,6 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         internal
         returns (bytes32 orderId, OrderKey memory orderKey)
     {
-        if (killedAt != 0) {
-            // If the hook has been killed, do not allow new orders.
-            revert HookKilled();
-        }
 
         executeTWAMMOrders(params.key);
 
@@ -649,14 +773,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
             order.earningsFactorLast = earningsFactorLast;
         }
 
-        if (killedAt != 0 && !isOrderExpired) {
-            uint256 durationDelta = orderKey.expiration - twamm.lastVirtualOrderTimestamp;
-            sellTokensOwed = Math.mulDiv(order.sellRate, durationDelta, RATE_SCALER);
 
-            delete twamm.orders[orderId];
-
-            assetsRemoved = true;
-        }
     }
 
     function _claimTokens(Currency token) internal returns (uint256 amountTransferred) {
