@@ -16,6 +16,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../../src/shared/interfaces/ISpotOracle.sol";
 import {PositionToken} from "../../../src/rld/tokens/PositionToken.sol";
 import {IFundingModel} from "../../../src/shared/interfaces/IFundingModel.sol";
+import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 
 import {UniswapV4SingletonOracle} from "../../../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
 import {BondMetadataRenderer} from "../../../src/utils/BondMetadataRenderer.sol";
@@ -83,6 +84,12 @@ contract MockTwammHook {
     // For Module Valuation
     function getCancelOrderState(PoolKey calldata, ITWAMM.OrderKey calldata) external view returns (uint256, uint256) {
         return (mockBuyOwed, mockSellRefund);
+    }
+    
+    // For setActiveTwammOrder verification
+    function getOrder(PoolKey calldata, ITWAMM.OrderKey calldata orderKey) external view returns (ITWAMM.Order memory) {
+        bytes32 orderId = keccak256(abi.encode(orderKey));
+        return orders[orderId];
     }
     
     function setMockState(uint256 _buy, uint256 _sell) external {
@@ -217,44 +224,12 @@ contract TwammIntegrationTest is Test {
         address brokerAddr = pbf.createBroker(bytes32(0));
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
         
-        // Override 'hook' in Broker storage to likely slot (check layout)
-        // Storage:
-        // [..]
-        // address public hook; // 5th slot?
-        // Let's use vm.store or just a setter if we had one.
-        // Since we don't know exact slot easily without counting:
-        // Caching: collateral, underlying, rateOracle, hook.
-        // They are set in initialize.
-        // Let's just mock RLDCore's return value? No, Core is real.
-        // We will just use `stdStore` to find `hook`.
-        
-        // Hack: Assume Hook is stored at slot 10 or similar.
-        // Actually, let's just use `vm.store` at the correct slot.
-        // PrimeBroker Storage:
-        // 0: CORE (immutable - not storage)
-        // 0-3: Storage variables
-        // factory, bondMetadata (struct 2 slots?), marketId
-        // cache: collateral, underlying, rateOracle, hook
-        
-        // Let's try to overwrite it by brute force if we can't find it.
-        // Or better: modify createMarket parameters?
-        // RLDMarketFactory doesn't seem to take 'hook'.
-        
-        // Ok, we will manually overwrite local variable `hook` in the Broker instance using hevm.
-        // Finding slot for `hook` via `stdStorage` might differ by compiler version.
-        // Let's assume slot 7.
-        // factory (1), bondMetadata (1-2), marketId (1), collateral (1), underlying (1), rateOracle (1), hook (1).
-        
-        // Let's try `stdstore.target(address(broker)).sig("hook()").find()`
-        stdstore.target(address(broker)).sig("hook()").checked_write(address(hook));
-        
-        // 2. Fund User & Approve
+        // 2. Fund Broker directly (user transfers to broker)
         weth.mint(user, 10e18); // 10 WETH ($20k)
         vm.startPrank(user);
-        weth.approve(address(broker), 10e18);
+        weth.transfer(address(broker), 1e18); // Send 1 WETH to broker for the order
         
-        // 3. Submit Order
-        // Sell 1 WETH for USDC over 1000s
+        // 3. Build order parameters
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(address(weth)),
             currency1: Currency.wrap(address(usdc)),
@@ -270,11 +245,42 @@ contract TwammIntegrationTest is Test {
             amountIn: 1e18
         });
         
-        broker.submitTwammOrder(params);
+        // 4. Have broker approve TWAMM via execute()
+        bytes memory approveCall = abi.encodeWithSelector(
+            ERC20.approve.selector,
+            address(hook),
+            1e18
+        );
+        broker.execute(address(weth), approveCall);
+        
+        // 5. Have broker submit order via execute()
+        bytes memory submitCall = abi.encodeWithSelector(
+            ITWAMM.submitOrder.selector,
+            params
+        );
+        // We need to capture the return value, but execute() doesn't return it
+        // For testing, we'll call hook directly to get the orderId we expect
+        broker.execute(address(hook), submitCall);
+        
+        // 6. Track the order - build the orderInfo expected from the submission
+        // Since we can't get the return value from execute, we reconstruct it
+        ITWAMM.OrderKey memory orderKey = ITWAMM.OrderKey({
+            owner: address(broker),
+            expiration: uint160(block.timestamp + 1000),
+            zeroForOne: true
+        });
+        bytes32 orderId = keccak256(abi.encode(orderKey));
+        
+        IPrimeBroker.TwammOrderInfo memory orderInfo = IPrimeBroker.TwammOrderInfo({
+            key: key,
+            orderKey: orderKey,
+            orderId: orderId
+        });
+        broker.setActiveTwammOrder(orderInfo);
         vm.stopPrank();
 
         // Check: Broker balance decreased?
-        assertEq(weth.balanceOf(brokerAddr), 0); // Sent to Hook
+        assertEq(weth.balanceOf(address(broker)), 0); // Sent to Hook
         // Check: Hook balance increased
         assertEq(weth.balanceOf(address(hook)), 1e18);
 
