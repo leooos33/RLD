@@ -477,14 +477,10 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Cost = DebtToCover * NormFactor * IndexPrice
         uint256 brokerCost = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
 
-        // 6. Decrement Debt
+        // 6. Decrement Debt (optimistically - will be reduced by amount actually covered)
         pos.debtPrincipal -= uint128(debtToCover);
 
-        // 7. Burn wRLP from Liquidator
-        // Liquidator is effectively buying the debt position
-        PositionToken(addresses.positionToken).burn(msg.sender, debtToCover);
-
-        // 8. Calculate Seize Amount
+        // 7. Calculate Seize Amount
         // Spot price: Use oracle if configured, else assume 1:1 parity
         uint256 spotPrice = addresses.spotOracle != address(0)
             ? ISpotOracle(addresses.spotOracle).getSpotPrice(addresses.collateralToken, addresses.underlyingToken)
@@ -509,8 +505,25 @@ contract RLDCore is IRLDCore, RLDStorage {
             config.liquidationParams
         );
         
-        // 9. Seize Assets from Broker to Liquidator
-        IPrimeBroker(user).seize(seizeAmount, msg.sender);
+        // 8. Seize Assets - returns wRLP extracted from broker's positions
+        IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(seizeAmount, msg.sender);
+        
+        // 9. Use extracted wRLP to offset debt (cap at debtToCover)
+        uint256 wRLPFromBroker = seizeOutput.wRLPExtracted > debtToCover 
+            ? debtToCover 
+            : seizeOutput.wRLPExtracted;
+        
+        // 10. Burn extracted wRLP (transferred from broker to Core)
+        if (wRLPFromBroker > 0) {
+            PositionToken(addresses.positionToken).burn(address(this), wRLPFromBroker);
+        }
+        
+        // 11. Burn remaining debt from liquidator
+        // Liquidator only needs to provide the delta not covered by broker's wRLP
+        uint256 liquidatorOwes = debtToCover - wRLPFromBroker;
+        if (liquidatorOwes > 0) {
+            PositionToken(addresses.positionToken).burn(msg.sender, liquidatorOwes);
+        }
         
         emit PositionModified(id, user, 0, -int256(debtToCover));
     }

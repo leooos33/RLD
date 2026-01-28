@@ -12,6 +12,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ITWAMM} from "../../twamm/ITWAMM.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
+import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
 
 interface IERC721 {
     function ownerOf(uint256 tokenId) external view returns (address);
@@ -37,6 +38,8 @@ contract PrimeBroker is IPrimeBroker {
     // Cached Configuration (Gas Savings for Solvency Checks)
     address public collateralToken;
     address public underlyingToken;
+    address public positionToken;   // wRLP token
+    address public underlyingPool;  // Needed for oracle price lookup
     address public rateOracle;
 
     // Active Assets (V1 Limit: One of each)
@@ -71,9 +74,6 @@ contract PrimeBroker is IPrimeBroker {
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
         POSM = _posm;
-        TWAMM_MODULE = _twammModule;
-        POSM = _posm;
-        // FACTORY = _factory; // Removed immutable
         
         // Lock the implementation contract
         initialized = true;
@@ -84,7 +84,6 @@ contract PrimeBroker is IPrimeBroker {
         address _factory
     ) external {
         require(!initialized, "Initialized");
-        // owner = _owner; // Managed by NFT
         marketId = _marketId;
         factory = _factory;
         
@@ -92,6 +91,8 @@ contract PrimeBroker is IPrimeBroker {
         IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(_marketId);
         collateralToken = vars.collateralToken;
         underlyingToken = vars.underlyingToken;
+        positionToken = vars.positionToken;
+        underlyingPool = vars.underlyingPool;
         rateOracle = vars.rateOracle;
 
         initialized = true;
@@ -101,39 +102,47 @@ contract PrimeBroker is IPrimeBroker {
         // 1. Cash Balance (Collateral)
         totalValue += ERC20(collateralToken).balanceOf(address(this));
 
-        // 2. TWAMM Value
+        // 2. wRLP Token Value (Position Token)
+        // If broker holds wRLP tokens (e.g., bought on secondary market), count their value
+        uint256 wRLPBalance = ERC20(positionToken).balanceOf(address(this));
+        if (wRLPBalance > 0) {
+            // wRLP value = balance * indexPrice (wRLP tracks the underlying asset)
+            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(underlyingPool, collateralToken);
+            totalValue += FixedPointMathLib.mulWadDown(wRLPBalance, indexPrice);
+        }
+
+        // 3. TWAMM Value
         if (activeTwammOrder.orderId != bytes32(0)) {
-            // New Encoding for TWAMM Module
             bytes memory data = _encodeTwammData(activeTwammOrder);
             totalValue += IBrokerModule(TWAMM_MODULE).getValue(data);
         }
 
-        // 3. V4 Value
+        // 4. V4 Value
         if (activeTokenId != 0) {
             bytes memory data = _encodeModuleData(activeTokenId, collateralToken, underlyingToken);
             totalValue += IBrokerModule(V4_MODULE).getValue(data);
         }
     }
 
-    function seize(uint256 value, address recipient) external override onlyCore {
+    function seize(uint256 value, address recipient) external override onlyCore returns (SeizeOutput memory output) {
         uint256 remaining = value;
         address _collateral = collateralToken; // Gas saving: stack variable
+        address _positionToken = positionToken; // wRLP address
 
-        // 1. Priority: Cash
+        // 1. Priority: Cash (collateralToken only)
         uint256 cash = ERC20(_collateral).balanceOf(address(this));
         if (cash > 0) {
             uint256 take = cash >= remaining ? remaining : cash;
             ERC20(_collateral).safeTransfer(recipient, take);
+            output.collateralSeized += take;
             remaining -= take;
         }
         
-        if (remaining == 0) return;
+        if (remaining == 0) return output;
 
-        // 2. Priority: TWAMM
+        // 2. Priority: TWAMM Order
         if (activeTwammOrder.orderId != bytes32(0)) {
-            // Broker handles seizure directly to fix auth
-             
-            // a. Cancel Order
+            // a. Cancel Order - get tokens back to broker
             (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(TWAMM_MODULE).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
             
             // b. Identify Tokens
@@ -147,84 +156,144 @@ contract PrimeBroker is IPrimeBroker {
             // c. Clear State
             delete activeTwammOrder;
             
-            // Value Refund
+            // d. Process sellTokensRefund
             if (sellTokensRefund > 0) {
-                 uint256 price = _getOraclePrice(sellToken, underlyingToken);
-                 uint256 val = FixedPointMathLib.mulWadDown(sellTokensRefund, price);
-                 
-                 uint256 takeAmt = sellTokensRefund;
-                 uint256 takeVal = val;
-                 
-                 if (val > remaining) {
-                     takeAmt = FixedPointMathLib.mulDivUp(sellTokensRefund, remaining, val);
-                     takeVal = remaining;
-                 }
-                 
-                 ERC20(sellToken).safeTransfer(recipient, takeAmt);
-                 remaining -= takeVal;
+                uint256 price = _getOraclePrice(sellToken, underlyingToken);
+                uint256 val = FixedPointMathLib.mulWadDown(sellTokensRefund, price);
+                
+                uint256 takeAmt = sellTokensRefund;
+                uint256 takeVal = val;
+                
+                if (val > remaining) {
+                    takeAmt = FixedPointMathLib.mulDivUp(sellTokensRefund, remaining, val);
+                    takeVal = remaining;
+                }
+                
+                // Route based on token type
+                if (sellToken == _collateral) {
+                    ERC20(sellToken).safeTransfer(recipient, takeAmt);
+                    output.collateralSeized += takeAmt;
+                } else if (sellToken == _positionToken) {
+                    // wRLP -> send to Core (msg.sender) for burning
+                    ERC20(sellToken).safeTransfer(msg.sender, takeAmt);
+                    output.wRLPExtracted += takeAmt;
+                }
+                // else: other tokens stay in broker (not transferred)
+                
+                remaining -= takeVal;
             }
             
-            if (remaining == 0) return;
+            if (remaining == 0) return output;
             
-            // Value Earnings
+            // e. Process buyTokensOwed
             if (buyTokensOwed > 0) {
-                 uint256 price = _getOraclePrice(buyToken, underlyingToken);
-                 uint256 val = FixedPointMathLib.mulWadDown(buyTokensOwed, price);
-                 
-                 uint256 takeAmt = buyTokensOwed;
-                 uint256 takeVal = val;
-                 
-                  if (val > remaining) {
-                     takeAmt = FixedPointMathLib.mulDivUp(buyTokensOwed, remaining, val);
-                     takeVal = remaining;
-                 }
-                 
-                 ERC20(buyToken).safeTransfer(recipient, takeAmt);
-                 remaining -= takeVal;
+                uint256 price = _getOraclePrice(buyToken, underlyingToken);
+                uint256 val = FixedPointMathLib.mulWadDown(buyTokensOwed, price);
+                
+                uint256 takeAmt = buyTokensOwed;
+                uint256 takeVal = val;
+                
+                if (val > remaining) {
+                    takeAmt = FixedPointMathLib.mulDivUp(buyTokensOwed, remaining, val);
+                    takeVal = remaining;
+                }
+                
+                // Route based on token type
+                if (buyToken == _collateral) {
+                    ERC20(buyToken).safeTransfer(recipient, takeAmt);
+                    output.collateralSeized += takeAmt;
+                } else if (buyToken == _positionToken) {
+                    // wRLP -> send to Core (msg.sender) for burning
+                    ERC20(buyToken).safeTransfer(msg.sender, takeAmt);
+                    output.wRLPExtracted += takeAmt;
+                }
+                // else: other tokens stay in broker (not transferred)
+                
+                remaining -= takeVal;
             }
         }
+        
+        if (remaining == 0) return output;
 
         // 3. Priority: V4 LP
+        // Note: V4 module needs to be updated to return wRLP vs collateral split
+        // For now, delegate to module (future: module returns SeizeOutput too)
         if (activeTokenId != 0) {
             bytes memory data = _encodeModuleData(activeTokenId, _collateral, underlyingToken);
             IBrokerModule(V4_MODULE).seize(remaining, recipient, data);
+            // TODO: Update when V4 module returns SeizeOutput
         }
-    }
-    
-    // Transfer logic placeholder
-    function deposit(uint256 tokenId) external onlyAuthorized {
-        require(activeTokenId == 0, "Slot Full");
-        // IERC721(POSM).safeTransferFrom(msg.sender, address(this), tokenId);
-        activeTokenId = tokenId;
+        
+        return output;
     }
 
-    function submitTwammOrder(ITWAMM.SubmitOrderParams calldata params) external onlyAuthorized {
-        require(activeTwammOrder.orderId == bytes32(0), "Slot Full");
+    /* ============================================================================================ */
+    /*                                    POSITION TRACKING                                        */
+    /* ============================================================================================ */
+    
+    // NOTE: To open V4 LP or TWAMM positions, use execute() to interact with the
+    // respective protocols, then call setActiveV4Position() or setActiveTwammOrder()
+    // to track them for solvency calculations.
+    //
+    // Example V4 LP flow:
+    //   1. broker.execute(posm, addLiquidityCalldata)  // Open position
+    //   2. broker.setActiveV4Position(tokenId)         // Track it
+    //
+    // Example TWAMM flow:
+    //   1. broker.execute(collateral, approveCalldata) // Approve TWAMM
+    //   2. broker.execute(twamm, submitOrderCalldata)  // Submit order
+    //   3. broker.setActiveTwammOrder(orderInfo)       // Track it
+
+    /// @notice Updates the tracked V4 LP position.
+    /// @dev Use this when you have multiple V4 LP positions and want to change which one is tracked.
+    ///      V1 limitation: Only one V4 LP position can be tracked at a time.
+    ///      Must track the largest position to avoid being incorrectly flagged as insolvent.
+    /// @param newTokenId The NFT token ID of the V4 LP position to track (0 to clear)
+    function setActiveV4Position(uint256 newTokenId) external onlyAuthorized {
+        if (newTokenId != 0) {
+            // Verify broker actually owns this position
+            require(IERC721(POSM).ownerOf(newTokenId) == address(this), "Not position owner");
+        }
         
-        // 1. Transfer In (if needed)
-        // We assume User has approved Broker.
-        address inputToken = params.zeroForOne 
-            ? Currency.unwrap(params.key.currency0) 
-            : Currency.unwrap(params.key.currency1);
-            
-        // Pull funds from user to Broker
-        ERC20(inputToken).safeTransferFrom(msg.sender, address(this), params.amountIn);
+        activeTokenId = newTokenId;
         
-        // 2. Approve Hook
-        ERC20(inputToken).approve(TWAMM_MODULE, params.amountIn);
+        // Solvency check: Ensures user can't game by switching to smaller position
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after update");
+    }
+
+    /// @notice Updates the tracked TWAMM order.
+    /// @dev Use this when you have multiple TWAMM orders and want to change which one is tracked.
+    ///      V1 limitation: Only one TWAMM order can be tracked at a time.
+    ///      Must track the largest order to avoid being incorrectly flagged as insolvent.
+    /// @param info The TWAMM order info to track. Pass empty orderId to clear.
+    function setActiveTwammOrder(TwammOrderInfo calldata info) external onlyAuthorized {
+        if (info.orderId != bytes32(0)) {
+            // Verify order exists and belongs to this broker
+            // The TWAMM hook is at info.key.hooks, not TWAMM_MODULE (which is valuation module)
+            address twammHook = address(info.key.hooks);
+            ITWAMM.Order memory order = ITWAMM(twammHook).getOrder(info.key, info.orderKey);
+            require(order.sellRate > 0, "Order not found or empty");
+            require(info.orderKey.owner == address(this), "Not order owner");
+        }
         
-        // 3. Submit
-        (bytes32 orderId, ITWAMM.OrderKey memory key) = ITWAMM(TWAMM_MODULE).submitOrder(params);
+        activeTwammOrder = info;
         
-        // 4. Update State
-        activeTwammOrder = TwammOrderInfo({
-            key: params.key,
-            orderKey: key,
-            orderId: orderId
-        });
-        
-        // 5. Solvency Check
-        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent");
+        // Solvency check: Ensures user can't game by switching to smaller order
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after update");
+    }
+
+    /// @notice Clears the tracked V4 LP position.
+    /// @dev Convenience function equivalent to setActiveV4Position(0).
+    function clearActiveV4Position() external onlyAuthorized {
+        activeTokenId = 0;
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after clear");
+    }
+
+    /// @notice Clears the tracked TWAMM order.
+    /// @dev Convenience function for after an order is fully executed.
+    function clearActiveTwammOrder() external onlyAuthorized {
+        delete activeTwammOrder;
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after clear");
     }
 
     /// @notice Executes arbitrary calls to external contracts.
