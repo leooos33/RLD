@@ -73,8 +73,12 @@ contract PrimeBrokerFactory is ERC721 {
     /// @dev Each market has its own factory, ensuring market isolation.
     MarketId public immutable MARKET_ID;
 
-    /// @notice Optional metadata renderer for generating Bond NFT artwork.
-    /// @dev Can be address(0), in which case tokenURI returns empty string.
+
+    /// @notice Optional metadata renderer for generating Bond NFT artwork (CURRENTLY UNUSED)
+    /// @dev Can be address(0). Reserved for future on-chain metadata rendering.
+    ///      Currently, tokenURI() returns empty string regardless of this value.
+    ///      Metadata is handled off-chain or by frontend dynamic rendering.
+    ///      Stored for future extensibility without requiring factory redeployment.
     address public immutable RENDERER;
 
     /* ============================================================================================ */
@@ -97,7 +101,7 @@ contract PrimeBrokerFactory is ERC721 {
     /// @param marketId The market ID these brokers will serve (must be non-zero)
     /// @param name The ERC721 collection name (e.g., "RLD: aUSDC")
     /// @param symbol The ERC721 collection symbol (e.g., "RLD-aUSDC")
-    /// @param renderer Optional metadata renderer (can be address(0))
+    /// @param renderer Optional metadata renderer (currently unused, can be address(0))
     constructor(
         address implementation,
         MarketId marketId,
@@ -109,7 +113,7 @@ contract PrimeBrokerFactory is ERC721 {
         require(MarketId.unwrap(marketId) != bytes32(0), "Invalid marketId");
         IMPLEMENTATION = implementation;
         MARKET_ID = marketId;
-        RENDERER = renderer; // Can be 0, handled in tokenURI
+        RENDERER = renderer; // Stored but currently unused (see RENDERER docs)
     }
 
     /* ============================================================================================ */
@@ -156,6 +160,12 @@ contract PrimeBrokerFactory is ERC721 {
     /*                                       ERC721 METADATA                                        */
     /* ============================================================================================ */
 
+    /// @notice Returns the metadata URI for a Bond NFT token
+    /// @dev Currently returns empty string - metadata is handled off-chain.
+    ///      RENDERER is ignored but stored for future on-chain metadata functionality.
+    ///      Frontend/indexers should generate metadata dynamically based on broker state.
+    /// @param tokenId The token ID (equals broker address cast to uint256)
+    /// @return Empty string (metadata handled off-chain)
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         require(ownerOf(tokenId) != address(0), "NOT_MINTED");
         return ""; // Metadata is handled off-chain or by frontend dynamic rendering

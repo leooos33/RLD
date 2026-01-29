@@ -4,28 +4,32 @@ pragma solidity ^0.8.26;
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {MarketId} from "../../shared/interfaces/IRLDCore.sol";
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-contract PositionToken is ERC20, Owned, Initializable {
+/**
+ * @title PositionToken
+ * @notice ERC20 token representing wrapped RLP positions (wRLP)
+ * @dev Decimals are set via constructor to match collateral token
+ *      e.g., wRLPaUSDC has 6 decimals, wRLPaDAI has 18 decimals
+ */
+contract PositionToken is ERC20, Owned {
     MarketId public marketId;
-    address public underlying;
+    address public immutable collateral;
 
     error MarketIdAlreadySet();
-    error NotMarket();
 
-    constructor() ERC20("Position Token Impl", "POS-IMPL", 18) Owned(msg.sender) {
-        _disableInitializers();
-    }
-
-    function initialize(address _underlying, string memory _name, string memory _symbol) external initializer {
-        owner = msg.sender;
-        emit OwnershipTransferred(address(0), msg.sender);
-        
-        underlying = _underlying;
-        
-        name = _name;
-        symbol = _symbol;
-        // decimals is immutable (18) and shared by clones via bytecode.
+    /**
+     * @param _name Token name (e.g., "Wrapped RLP: aUSDC")
+     * @param _symbol Token symbol (e.g., "wRLPaUSDC")
+     * @param _decimals Token decimals (matches collateral, e.g., 6 for aUSDC)
+     * @param _collateral The collateral token address (e.g., aUSDC)
+     */
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        uint8 _decimals,
+        address _collateral
+    ) ERC20(_name, _symbol, _decimals) Owned(msg.sender) {
+        collateral = _collateral;
     }
 
     function setMarketId(MarketId _id) external onlyOwner {

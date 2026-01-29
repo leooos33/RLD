@@ -88,8 +88,22 @@ contract RLDMarketFactory {
     /// @notice Standard funding model for interest rate calculations
     address public immutable STD_FUNDING_MODEL;
 
-    /// @notice Metadata renderer for NFT display
+
+    /// @notice Metadata renderer for Bond NFT display (CURRENTLY UNUSED)
+    /// @dev Reserved for future on-chain metadata rendering functionality.
+    ///      Currently, PrimeBrokerFactory.tokenURI() returns empty string and metadata
+    ///      is handled off-chain or by frontend dynamic rendering.
+    ///      This parameter is passed through to PrimeBrokerFactory but not utilized.
+    ///      Kept for future extensibility without requiring contract upgrades.
     address public immutable METADATA_RENDERER;
+
+    /// @notice Minimum allowed oracle price: 0.0001 collateral per wRLP (1e14 in WAD)
+    /// @dev Used for both oracle price validation and TWAMM bounds calculation
+    uint256 public constant MIN_PRICE = 1e14;
+    
+    /// @notice Maximum allowed oracle price: 100 collateral per wRLP (100e18 in WAD)
+    /// @dev Used for both oracle price validation and TWAMM bounds calculation
+    uint256 public constant MAX_PRICE = 100e18;
 
     /* ============================================================================================ */
     /*                                            STORAGE                                           */
@@ -121,7 +135,7 @@ contract RLDMarketFactory {
      * @param collateralToken The yield-bearing collateral (e.g., aUSDC) - backs the wRLP token
      * @param curator The risk manager address for this market
      * @param positionTokenName Human-readable name for the wRLP token (e.g., "Wrapped RLP: aUSDC")
-     * @param positionTokenSymbol Token symbol for the wRLP token (e.g., "wRLP-aUSDC")
+     * @param positionTokenSymbol Token symbol for the wRLP token (e.g., "wRLPaUSDC")
      * @param minColRatio Minimum initial collateralization ratio in WAD (e.g., 1.2e18 = 120%)
      * @param maintenanceMargin Maintenance collateralization ratio in WAD (e.g., 1.1e18 = 110%)
      * @param liquidationCloseFactor Max portion liquidatable in single tx in WAD (e.g., 0.5e18 = 50%)
@@ -166,8 +180,18 @@ contract RLDMarketFactory {
      * @param id The unique MarketId for the new market
      * @param underlyingPool The lending pool address
      * @param collateral The collateral token address
+     * @param positionToken The deployed wRLP token address
+     * @param brokerFactory The deployed PrimeBrokerFactory address
+     * @param verifier The deployed BrokerVerifier address
      */
-    event MarketDeployed(MarketId indexed id, address indexed underlyingPool, address indexed collateral);
+    event MarketDeployed(
+        MarketId indexed id, 
+        address indexed underlyingPool, 
+        address indexed collateral,
+        address positionToken,
+        address brokerFactory,
+        address verifier
+    );
 
     /* ============================================================================================ */
     /*                                         CONSTRUCTOR                                          */
@@ -207,6 +231,9 @@ contract RLDMarketFactory {
         require(v4Oracle != address(0), "Invalid V4Oracle");
         require(fundingModel != address(0), "Invalid FundingModel");
         require(metadataRenderer != address(0), "Invalid MetadataRenderer");
+        
+        // Validate funding period is within reasonable bounds
+        require(_fundingPeriod >= 1 days && _fundingPeriod <= 365 days, "Invalid period");
         
         owner = msg.sender;
         
@@ -252,8 +279,16 @@ contract RLDMarketFactory {
         // 1. Validation Phase (Fail Fast)
         _validateParams(params);
 
+
         // 2. Identification Phase - Compute expected MarketId
         MarketId futureId = _precomputeId(params);
+        
+        // 2a. Duplicate Check (Fail Fast - Save Gas)
+        // Check BEFORE deploying contracts to avoid wasting ~600k gas
+        bytes32 canonicalKey = MarketId.unwrap(futureId);
+        if (MarketId.unwrap(canonicalMarkets[canonicalKey]) != bytes32(0)) {
+            revert MarketAlreadyExists();
+        }
 
         // 3. Infrastructure Phase - Deploy broker infrastructure
         address verifier;
@@ -266,7 +301,7 @@ contract RLDMarketFactory {
         _initializePool(positionToken, params);
 
         // 6. Registration Phase - Register with RLDCore
-        marketId = _registerMarket(params, positionToken, verifier);
+        marketId = _registerMarket(params, positionToken, verifier, brokerFactory);
 
         // 7. Post-Condition Check (Critical Security Invariant)
         // Ensures deterministic ID generation is consistent with RLDCore
@@ -299,7 +334,7 @@ contract RLDMarketFactory {
         
         // Risk Parameter Logic Checks
         require(params.minColRatio > 1e18, "MinCol < 100%");
-        require(params.maintenanceMargin > 0, "Invalid MaintenanceMargin");
+        require(params.maintenanceMargin >= 1e18, "Maintenance < 100%");
         require(params.minColRatio > params.maintenanceMargin, "Risk Config Error");
         require(
             params.liquidationCloseFactor > 0 && params.liquidationCloseFactor <= 1e18, 
@@ -342,18 +377,31 @@ contract RLDMarketFactory {
         MarketId id, 
         DeployParams calldata params
     ) internal returns (address factory, address verifier) {
-        // Build NFT metadata from underlying token
-        string memory symbol = ERC20(params.underlyingToken).symbol();
+        // SECURITY: Use try-catch with gas limit to prevent:
+        // 1. Gas bombs from malicious token contracts
+        // 2. Reverts from non-standard ERC20s without symbol()
+        // 3. DOS attacks during market creation
+        // CRITICAL for future permissionless market deployment workflow where
+        // untrusted tokens may be used to create markets without owner approval
+        string memory symbol;
+        try ERC20(params.underlyingToken).symbol{gas: 50000}() returns (string memory s) {
+            symbol = s;
+        } catch {
+            symbol = "UNKNOWN";  // Fallback for non-standard tokens
+        }
+        
         string memory name = string(abi.encodePacked("RLD: ", symbol));
         string memory nftSymbol = string(abi.encodePacked("RLD-", symbol));
 
         // Deploy factory for this market
+        // NOTE: METADATA_RENDERER is passed but currently unused by PrimeBrokerFactory
+        // Reserved for future on-chain metadata rendering (see METADATA_RENDERER docs above)
         PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(
             PRIME_BROKER_IMPL, 
             id,
             name,
             nftSymbol,
-            METADATA_RENDERER
+            METADATA_RENDERER  // Currently unused, reserved for future
         );
         factory = address(pbFactory);
         
@@ -363,19 +411,26 @@ contract RLDMarketFactory {
 
     /**
      * @notice Deploys and initializes the PositionToken (wRLP)
-     * @dev Uses minimal proxy (clone) pattern for gas efficiency
-     *      The token is backed by collateralToken (e.g., aUSDC), not underlying
+     * @dev Deploys a new ERC20 contract for each market
+     *      Position token decimals match collateral decimals for 1:1 representation
+     *      e.g., wRLPaUSDC has 6 decimals, wRLPaDAI has 18 decimals
      *
      * @param params Deployment parameters
      * @return tokenAddr The deployed PositionToken address
      */
     function _deployPositionToken(DeployParams calldata params) internal returns (address tokenAddr) {
-        tokenAddr = Clones.clone(POSITION_TOKEN_IMPL);
-        PositionToken(tokenAddr).initialize(
-            params.collateralToken,  // Backing asset (yield-bearing)
+        // Query collateral token decimals for position token
+        uint8 collateralDecimals = ERC20(params.collateralToken).decimals();
+        
+        // Deploy new PositionToken with matching decimals
+        PositionToken token = new PositionToken(
             params.positionTokenName, 
-            params.positionTokenSymbol
+            params.positionTokenSymbol,
+            collateralDecimals,  // Match collateral decimals (e.g., 6 for aUSDC, 18 for aDAI)
+            params.collateralToken  // Backing asset (yield-bearing)
         );
+        
+        tokenAddr = address(token);
     }
 
     /**
@@ -415,6 +470,10 @@ contract RLDMarketFactory {
             params.collateralToken
         );
         
+        // Validate oracle price matches TWAMM bounds
+        // This ensures consistency with TWAMM price bounds and prevents extreme prices
+        require(indexPrice >= MIN_PRICE && indexPrice <= MAX_PRICE, "Price out of bounds");
+        
         // Step 3: Invert if wRLP is token1
         // V4 stores price as token1/token0, so if wRLP is token1, we need 1/price
         if (Currency.wrap(positionToken) == currency1) {
@@ -441,21 +500,23 @@ contract RLDMarketFactory {
         IPoolManager(POOL_MANAGER).initialize(key, initSqrtPrice);
         
         // Step 7: Set price bounds for TWAMM
-        // Bounds define valid trading range to prevent extreme manipulation
+        // Bounds derived from MIN_PRICE (0.0001) and MAX_PRICE (100) to ensure consistency
         uint160 minSqrt; 
         uint160 maxSqrt;
         uint256 Q96 = 1 << 96;
 
         if (currency0 == Currency.wrap(positionToken)) {
             // wRLP is Token0: price = collateral/wRLP
-            // Allow wRLP price range: [0.0001, 100] collateral per wRLP
-            minSqrt = uint160(Q96 / 100);   // sqrt(0.0001) = 0.01
-            maxSqrt = uint160(Q96 * 10);    // sqrt(100) = 10
+            // Price range: [MIN_PRICE, MAX_PRICE] = [0.0001, 100]
+            // sqrtPrice range: [sqrt(0.0001), sqrt(100)] = [0.01, 10]
+            minSqrt = uint160(Q96 / 100);   // sqrt(MIN_PRICE) = sqrt(0.0001) = 0.01
+            maxSqrt = uint160(Q96 * 10);    // sqrt(MAX_PRICE) = sqrt(100) = 10
         } else {
             // wRLP is Token1: price = wRLP/collateral (inverted)
-            // Equivalent range: [0.01, 10000] in inverted terms
-            minSqrt = uint160(Q96 / 10);    // sqrt(0.01) = 0.1
-            maxSqrt = uint160(Q96 * 100);   // sqrt(10000) = 100
+            // Price range: [1/MAX_PRICE, 1/MIN_PRICE] = [0.01, 10000]
+            // sqrtPrice range: [sqrt(0.01), sqrt(10000)] = [0.1, 100]
+            minSqrt = uint160(Q96 / 10);    // sqrt(1/MAX_PRICE) = sqrt(0.01) = 0.1
+            maxSqrt = uint160(Q96 * 100);   // sqrt(1/MIN_PRICE) = sqrt(10000) = 100
         }
         
         // Only set bounds if TWAMM is configured (can be address(0) in tests)
@@ -463,7 +524,24 @@ contract RLDMarketFactory {
             TwammHook(TWAMM).setPriceBounds(key, minSqrt, maxSqrt);
         }
         
+        
         // Step 8: Register with singleton oracle for TWAP queries
+        // CRITICAL: Oracle uses positionToken (wRLP) as lookup key
+        // When queried via getSpotPrice(collateralToken, underlyingToken):
+        //   - collateralToken param = positionToken (wRLP) 
+        //   - underlyingToken param = actual collateral (e.g., aUSDC)
+        // The oracle will validate tokens match pool's currency0/currency1 in either order
+        
+        // Verify oracle can handle the pool configuration
+        // Pool currencies are ordered by address, but oracle queries by semantic meaning
+        address token0 = Currency.unwrap(currency0);
+        address token1 = Currency.unwrap(currency1);
+        require(
+            (positionToken == token0 && params.collateralToken == token1) ||
+            (positionToken == token1 && params.collateralToken == token0),
+            "Oracle token mismatch"
+        );
+        
         UniswapV4SingletonOracle(SINGLETON_V4_ORACLE).registerPool(
             positionToken,
             key,
@@ -482,16 +560,19 @@ contract RLDMarketFactory {
      *      3. Registers with RLDCore.createMarket()
      *      4. Links PositionToken to MarketId
      *      5. Transfers PositionToken ownership to RLDCore
+     *      6. Emits MarketDeployed event with all component addresses
      *
      * @param params Deployment parameters
      * @param positionToken The deployed wRLP address
      * @param verifier The deployed BrokerVerifier address
+     * @param brokerFactory The deployed PrimeBrokerFactory address
      * @return marketId The registered MarketId from RLDCore
      */
     function _registerMarket(
         DeployParams calldata params, 
         address positionToken, 
-        address verifier
+        address verifier,
+        address brokerFactory
     ) internal returns (MarketId marketId) {
         // Compute canonical key (must match _precomputeId exactly)
         bytes32 canonicalKey = keccak256(abi.encode(
@@ -500,10 +581,8 @@ contract RLDMarketFactory {
             params.underlyingPool
         ));
         
-        // Prevent duplicate markets
-        if (MarketId.unwrap(canonicalMarkets[canonicalKey]) != bytes32(0)) {
-            revert MarketAlreadyExists();
-        }
+        // Note: Duplicate check now performed in createMarket() before deployment
+
 
         // Build addresses struct for RLDCore
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
@@ -539,6 +618,14 @@ contract RLDMarketFactory {
         // Transfer ownership to RLDCore (for minting/burning control)
         PositionToken(positionToken).transferOwnership(CORE);
         
-        emit MarketDeployed(marketId, params.underlyingPool, params.collateralToken);
+        
+        emit MarketDeployed(
+            marketId, 
+            params.underlyingPool, 
+            params.collateralToken,
+            positionToken,
+            brokerFactory,
+            verifier
+        );
     }
 }

@@ -117,7 +117,11 @@ contract MockFundingModel is IFundingModel {
 
 
 
-contract TwammIntegrationTest is Test {
+import {GlobalTestConfig} from "../../utils/GlobalTestConfig.sol";
+
+
+
+contract TwammIntegrationTest is Test, GlobalTestConfig {
     using stdStorage for StdStorage;
 
     RLDCore core;
@@ -155,7 +159,7 @@ contract TwammIntegrationTest is Test {
         MockFundingModel funding = new MockFundingModel();
 
         PoolManager poolManager = new PoolManager(address(0));
-        PositionToken positionTokenImpl = new PositionToken();
+        PositionToken positionTokenImpl = createPositionTokenImpl();  // Use centralized helper
         UniswapV4SingletonOracle v4Oracle = new UniswapV4SingletonOracle(); 
         address renderer = address(0);
         
