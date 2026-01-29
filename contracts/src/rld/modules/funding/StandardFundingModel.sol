@@ -129,10 +129,13 @@ contract StandardFundingModel is IFundingModel {
         IRLDCore.MarketAddresses memory addresses
     ) internal view returns (uint256 markPrice, uint256 indexPrice) {
         
+        
         // Query mark price (TWAP from V4 pool)
+        // CRITICAL: V4 pool is wRLP/collateralToken (e.g., wRLP/aUSDC), NOT wRLP/underlyingToken
+        // Must query the correct pair to avoid InvalidTokens() revert
         markPrice = ISpotOracle(addresses.markOracle).getSpotPrice(
             addresses.positionToken,
-            addresses.underlyingToken
+            addresses.collateralToken
         );
         
         // Query index price (from rate oracle, e.g., Aave)
