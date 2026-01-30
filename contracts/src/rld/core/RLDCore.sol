@@ -19,6 +19,7 @@ import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title RLD Core Singleton
 /// @author RLD Protocol
@@ -72,7 +73,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 /// 3. All touched positions must be solvent when lock is released
 /// 4. Debt tokenization (wRLP) always matches actual debt principal
 /// 5. Liquidations can only occur when position is below maintenance margin
-contract RLDCore is IRLDCore, RLDStorage {
+contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     using FixedPointMath for uint256;
     using SafeTransferLib for ERC20;
 
@@ -192,20 +193,30 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @dev Pattern inspired by Uniswap V4's flash accounting.
     ///
     /// ## Execution Flow:
-    /// 1. Store msg.sender as lock holder in transient storage
-    /// 2. Reset touched positions counter
-    /// 3. Call `lockAcquired(data)` on msg.sender
-    /// 4. Check solvency of all touched positions
-    /// 5. Clear transient storage
+    /// 1. Check no lock is already active (reentrancy guard)
+    /// 2. Store msg.sender as lock holder in transient storage
+    /// 3. Reset touched positions counter
+    /// 4. Call `lockAcquired(data)` on msg.sender
+    /// 5. Check solvency of all touched positions
+    /// 6. Clear transient storage
     ///
     /// ## Security Properties:
-    /// - Reentrancy-safe: Transient storage isolates each lock session
+    /// - Reentrancy-safe: Explicit check prevents nested locks
     /// - Atomic: Either all operations succeed with valid solvency, or all revert
     /// - Gas-efficient: Uses EIP-1153 transient storage (cleared automatically)
     ///
     /// @param data Arbitrary data passed to the lockAcquired callback
     /// @return Result of the lockAcquired callback
     function lock(bytes calldata data) external override returns (bytes memory) {
+        // HIGH-001 FIX: Prevent nested locks (reentrancy protection)
+        // If a lock is already active, revert to prevent solvency check bypass
+        if (TransientStorage.tload(LOCK_ACTIVE_KEY) != 0) {
+            revert ReentrancyGuardActive();
+        }
+        
+        // Mark lock as active
+        TransientStorage.tstore(LOCK_ACTIVE_KEY, 1);
+        
         // 1. Enter Lock - Store caller as lock holder
         TransientStorage.tstore(LOCK_HOLDER_KEY, uint256(uint160(msg.sender)));
 
@@ -218,6 +229,8 @@ contract RLDCore is IRLDCore, RLDStorage {
         try IRLDCore(msg.sender).lockAcquired(data) returns (bytes memory res) {
             result = res;
         } catch (bytes memory reason) {
+            // Clear lock active flag before reverting
+            TransientStorage.tstore(LOCK_ACTIVE_KEY, 0);
             // Propagate revert reason from callback
             assembly {
                 revert(add(reason, 32), mload(reason))
@@ -227,6 +240,9 @@ contract RLDCore is IRLDCore, RLDStorage {
         // 3. Exit Lock & Enforce Solvency
         // All positions touched during the callback must be solvent
         _checkSolvencyOfTouched();
+        
+        // 4. Clear lock active flag
+        TransientStorage.tstore(LOCK_ACTIVE_KEY, 0);
         
         // 4. Cleanup - Clear transient storage
         TransientStorage.tstore(LOCK_HOLDER_KEY, 0);
@@ -400,7 +416,15 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         // 3. Get Total Assets from Broker
         // Broker reports total value of all its holdings (including wRLP)
-        uint256 totalAssets = IPrimeBroker(user).getNetAccountValue();
+        // HIGH-003 FIX: Use try-catch to prevent malicious brokers from blocking liquidation
+        // If broker reverts, treat as insolvent (return false)
+        uint256 totalAssets;
+        try IPrimeBroker(user).getNetAccountValue() returns (uint256 value) {
+            totalAssets = value;
+        } catch {
+            // Broker reverted - treat as insolvent to allow liquidation
+            return false;
+        }
         
         // 4. CRITICAL FIX: Calculate Net Worth
         // Net worth = Assets - Liabilities
@@ -483,7 +507,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @param id The market ID
     /// @param user The user to liquidate (must be a PrimeBroker)
     /// @param debtToCover Amount of debt principal to liquidate
-    function liquidate(MarketId id, address user, uint256 debtToCover) external override {
+    function liquidate(MarketId id, address user, uint256 debtToCover) external override nonReentrant {
         // 1. Apply Funding - Ensure normalization factor is current
         _applyFunding(id);
 
@@ -645,7 +669,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         uint32 fundingPeriod,
         uint128 debtCap,
         bytes32 liquidationParams
-    ) external onlyCurator(id) {
+    ) external onlyCurator(id) nonReentrant {
         if (!marketExists[id]) revert InvalidMarket();
 
         // Validate parameters (same rules as factory)
@@ -688,7 +712,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @notice Cancels a pending risk parameter update.
     /// @dev Only callable by market curator.
     /// @param id The market ID
-    function cancelRiskUpdate(MarketId id) external onlyCurator(id) {
+    function cancelRiskUpdate(MarketId id) external onlyCurator(id) nonReentrant {
         if (!pendingRiskUpdates[id].pending) revert InvalidParam("No pending update");
         
         delete pendingRiskUpdates[id];
@@ -700,7 +724,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @dev Requires pool to support dynamic fees and TWAMM to be configured.
     /// @param id The market ID
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    function updatePoolFee(MarketId id, uint24 newFee) external onlyCurator(id) {
+    function updatePoolFee(MarketId id, uint24 newFee) external onlyCurator(id) nonReentrant {
         if (!marketExists[id]) revert InvalidMarket();
         if (twamm == address(0)) revert InvalidParam("TWAMM not configured");
         

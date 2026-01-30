@@ -5,6 +5,7 @@ import {Clones} from "openzeppelin-v5/contracts/proxy/Clones.sol";
 import {PrimeBroker} from "../broker/PrimeBroker.sol";
 import {MarketId} from "../../shared/interfaces/IRLDCore.sol";
 import {ERC721} from "solmate/src/tokens/ERC721.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @notice Interface for rendering Bond NFT metadata.
 /// @dev Implementations should return a valid data URI or URL.
@@ -58,7 +59,7 @@ interface IBondMetadataRenderer {
 /// - **Deterministic**: Broker addresses are predictable via CREATE2
 /// - **Ownership via NFT**: Account ownership follows ERC721 standard
 /// - **Used by BrokerVerifier**: RLDCore checks broker validity via this factory
-contract PrimeBrokerFactory is ERC721 {
+contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     using Clones for address;
 
     /* ============================================================================================ */
@@ -137,7 +138,7 @@ contract PrimeBrokerFactory is ERC721 {
     ///
     /// @param salt Unique salt for deterministic CREATE2 address generation
     /// @return broker The deployed broker contract address
-    function createBroker(bytes32 salt) external returns (address broker) {
+    function createBroker(bytes32 salt) external nonReentrant returns (address broker) {
         // 1. Deploy minimal proxy clone using CREATE2
         broker = IMPLEMENTATION.cloneDeterministic(salt);
         

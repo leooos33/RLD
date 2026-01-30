@@ -24,6 +24,7 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/type
 import {LiquidityMath} from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
@@ -69,7 +70,7 @@ uint256 constant RATE_SCALER = 1e18;
  * @author Uniswap Labs
  * @author Zaha Studio
  */
-contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
+contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     using TransferHelper for IERC20Minimal;
     using CurrencySettler for Currency;
     using OrderPool for OrderPool.State;
@@ -292,7 +293,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
     /// @param marketId The RLD market ID that this pool belongs to
     /// @param key The pool key
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    function updateDynamicLPFee(MarketId marketId, PoolKey calldata key, uint24 newFee) external {
+    function updateDynamicLPFee(MarketId marketId, PoolKey calldata key, uint24 newFee) external nonReentrant {
         // Verify caller is the curator for this market
         if (rldCore == address(0)) revert Unauthorized();
         

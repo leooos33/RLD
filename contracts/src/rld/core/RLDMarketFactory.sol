@@ -16,6 +16,7 @@ import {UniswapV4SingletonOracle} from "../modules/oracles/UniswapV4SingletonOra
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {TWAMM as TwammHook} from "../../twamm/TWAMM.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title RLDMarketFactory
@@ -37,7 +38,7 @@ import {TWAMM as TwammHook} from "../../twamm/TWAMM.sol";
  * - All oracle and module addresses must be non-zero
  * - Price bounds are set on TWAMM to prevent extreme price manipulation
  */
-contract RLDMarketFactory {
+contract RLDMarketFactory is ReentrancyGuard {
     using Clones for address;
     using PoolIdLibrary for PoolKey;
 
@@ -309,7 +310,8 @@ contract RLDMarketFactory {
      */
     function createMarket(DeployParams calldata params) 
         external 
-        onlyOwner 
+        onlyOwner
+        nonReentrant 
         returns (MarketId marketId, address brokerFactory) 
     {
         // 0. Ensure CORE is initialized
