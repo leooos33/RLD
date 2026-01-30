@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {RLDMarketFactory} from "../../src/rld/core/RLDMarketFactory.sol";
+import {PositionToken} from "../../src/rld/tokens/PositionToken.sol";
 
 /// @title GlobalTestConfig
 /// @notice Centralized configuration for all RLD tests. 
@@ -23,6 +24,12 @@ contract GlobalTestConfig {
     string constant TEST_TOKEN_NAME = "Wrapped RLP Position: aUSDC";
     string constant TEST_TOKEN_SYMBOL = "wRLPaUSDC";
 
+    // --- PositionToken Implementation Config ---
+    string constant IMPL_TOKEN_NAME = "Position Token Impl";
+    string constant IMPL_TOKEN_SYMBOL = "POS-IMPL";
+    uint8 constant IMPL_TOKEN_DECIMALS = 18;
+    address constant IMPL_TOKEN_UNDERLYING = address(0);
+
     // --- Liquidation Params (Standard Dutch Auction) ---
     // Packed: [Slope 16b][Max 16b][Base 16b]
     
@@ -34,6 +41,20 @@ contract GlobalTestConfig {
         (LIQ_SLOPE << 32) | (LIQ_MAX_DISCOUNT << 16) | LIQ_BASE_DISCOUNT
     );
 
+    /**
+     * @notice Creates a PositionToken implementation for testing
+     * @dev Centralizes the constructor call so changes propagate across all tests
+     * @return impl The deployed PositionToken implementation
+     */
+    function createPositionTokenImpl() internal returns (PositionToken impl) {
+        impl = new PositionToken(
+            IMPL_TOKEN_NAME,
+            IMPL_TOKEN_SYMBOL,
+            IMPL_TOKEN_DECIMALS,
+            IMPL_TOKEN_UNDERLYING
+        );
+    }
+
     function getGlobalDeployParams(
         address _underlyingPool,
         address _underlyingToken,
@@ -42,7 +63,7 @@ contract GlobalTestConfig {
         address _spotOracle,
         address _rateOracle,
         address _liquidationModule
-    ) internal pure returns (RLDMarketFactory.DeployParams memory) {
+    ) internal pure virtual returns (RLDMarketFactory.DeployParams memory) {
         return RLDMarketFactory.DeployParams({
             underlyingPool: _underlyingPool,
             underlyingToken: _underlyingToken,

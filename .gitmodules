@@ -10,3 +10,6 @@
 [submodule "contracts/lib/permit2"]
 	path = contracts/lib/permit2
 	url = https://github.com/uniswap/permit2
+[submodule "contracts/lib/solady"]
+	path = contracts/lib/solady
+	url = https://github.com/Vectorized/solady.git

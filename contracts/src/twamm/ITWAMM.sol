@@ -44,8 +44,7 @@ interface ITWAMM {
     /// @notice Thrown when submitting an order with a sellRate of 0
     error SellRateCannotBeZero();
 
-    /// @notice Thrown when hook has been killed.
-    error HookKilled();
+
 
     /// @notice Thrown when an unauthorized action is attempted.
     error Unauthorized();
@@ -193,9 +192,7 @@ interface ITWAMM {
     /// @return timestamp The timestamp of the last TWAMM order execution for the given pool
     function lastVirtualOrderTimestamp(PoolId key) external view returns (uint256 timestamp);
 
-    /// @notice Kills the hook
-    /// @dev Normal pool operations can continue after hook is killed, TWAMM functions are disabled.
-    function killHook() external;
+
 
     /// @notice Retrieves a specific order from the TWAMM for the given pool.
     /// @dev Provides the entire Order struct associated with the given orderKey in the pool identified by poolKey.

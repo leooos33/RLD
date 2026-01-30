@@ -6,6 +6,9 @@ import {ITWAMM} from "../../twamm/ITWAMM.sol";
 
 /// @title Prime Broker Interface
 /// @notice Interface for the "Smart Margin Account" that holds assets.
+/// @dev The PrimeBroker uses execute() for all DeFi interactions (LP, TWAMM, etc.)
+///      and tracking functions (setActiveV4Position, setActiveTwammOrder) to register
+///      positions for solvency calculations.
 interface IPrimeBroker {
     struct TwammOrderInfo {
         PoolKey key;
@@ -13,18 +16,28 @@ interface IPrimeBroker {
         bytes32 orderId;
     }
 
-    /// @notice Submits a TWAMM order on behalf of the user and registers it as collateral.
-    /// @param params The order parameters.
-    function submitTwammOrder(ITWAMM.SubmitOrderParams calldata params) external;
-    /// @notice Returns the total Net Asset Value of the account in Underlying terms.
+    /// @notice Output from seize() during liquidation
+    /// @dev Enables two-phase seize: wRLP extracted is burned to offset debt,
+    ///      collateral goes to liquidator as bonus.
+    struct SeizeOutput {
+        uint256 collateralSeized;     // collateralToken transferred to recipient (liquidator bonus)
+        uint256 wRLPExtracted;        // positionToken (wRLP) sent to Core for burning
+    }
+
+    /// @notice Returns the total Net Asset Value of the account in collateral terms.
     /// @dev Used by RLDCore for solvency checks.
+    /// @dev Includes: cash + wRLP tokens + tracked TWAMM + tracked V4 LP
     function getNetAccountValue() external view returns (uint256);
 
-    /// @notice Seizes assets from the account to pay a Liquidator.
+    /// @notice Seizes assets from the account during liquidation.
     /// @dev Only callable by RLDCore during liquidation.
-    /// @param value The value (in Underlying terms) to seize.
-    /// @param recipient The liquidator address to receive the seized assets.
-    function seize(uint256 value, address recipient) external;
+    /// @dev Priority order: Cash → TWAMM → V4 LP
+    /// @dev Design: collateralToken goes to recipient, wRLP goes to caller (Core) for burning,
+    ///      other tokens stay in broker.
+    /// @param value The value (in collateral terms) to seize.
+    /// @param recipient The liquidator address to receive collateral.
+    /// @return output The amounts of collateral and wRLP extracted.
+    function seize(uint256 value, address recipient) external returns (SeizeOutput memory output);
     
     /// @notice Emitted when a generic execution is performed.
     event Execute(address indexed target, bytes data);
@@ -42,19 +55,7 @@ interface IPrimeBroker {
     /*                                        NFT METADATA                                          */
     /* ============================================================================================ */
 
-    enum BondType { YIELD, HEDGE }
+    // BondMetadata removed - rendering is now dynamic based on chain state
 
-    struct BondMetadata {
-        uint256 rate;           // The fixed rate/yield (WAD, e.g., 0.05e18 = 5%)
-        uint256 maturityDate;   // Timestamp of bond expiration
-        uint256 principal;      // The size of the bond (in Underlying tokens)
-        BondType bondType;      // YIELD (Lender) or HEDGE (Borrower)
-    }
 
-    /// @notice Sets the metadata for the Bond NFT.
-    /// @dev Callable only by the Owner.
-    function setBondMetadata(BondMetadata calldata metadata) external;
-
-    /// @notice Returns the metadata for the Bond NFT.
-    function getBondMetadata() external view returns (BondMetadata memory);
 }
