@@ -90,6 +90,7 @@ interface IRLDCore {
     error DebtCapExceeded();
 
     error NotLocked();
+    error ReentrancyGuardActive();
     error Insolvent(address user);
     error UserSolvent(address user);
     error InvalidBroker(address user);

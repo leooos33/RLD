@@ -7,6 +7,7 @@ import {IValuationModule} from "../../shared/interfaces/IValuationModule.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ITWAMM} from "../../twamm/ITWAMM.sol";
@@ -116,7 +117,7 @@ interface IERC721 {
 /// 5. JIT approvals are always revoked (no lingering allowances)
 /// 6. Asset ownership validated during NAV calculation
 ///
-contract PrimeBroker is IPrimeBroker {
+contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     using SafeTransferLib for ERC20;
     using PositionInfoLibrary for PositionInfo;
     using FixedPointMathLib for uint256;
@@ -604,7 +605,7 @@ contract PrimeBroker is IPrimeBroker {
     /// - The transaction reverts with "Insolvent after update"
     ///
     /// @param newTokenId The NFT token ID to track (0 to clear/untrack)
-    function setActiveV4Position(uint256 newTokenId) external onlyAuthorized {
+    function setActiveV4Position(uint256 newTokenId) external onlyAuthorized nonReentrant {
         if (newTokenId != 0) {
             // SECURITY: Verify this broker actually owns the position
             require(IERC721(POSM).ownerOf(newTokenId) == address(this), "Not position owner");
@@ -630,7 +631,7 @@ contract PrimeBroker is IPrimeBroker {
     /// The order is stored in the hook, so we call hook.getOrder() for verification.
     ///
     /// @param info The TWAMM order info to track (pass empty orderId to clear)
-    function setActiveTwammOrder(TwammOrderInfo calldata info) external onlyAuthorized {
+    function setActiveTwammOrder(TwammOrderInfo calldata info) external onlyAuthorized nonReentrant {
         if (info.orderId != bytes32(0)) {
             // The TWAMM hook is at info.key.hooks (NOT TWAMM_MODULE)
             address twammHook = address(info.key.hooks);
@@ -650,14 +651,14 @@ contract PrimeBroker is IPrimeBroker {
     /// @notice Clears the tracked V4 LP position
     /// @dev Convenience function equivalent to setActiveV4Position(0)
     /// Use after selling/closing your V4 position
-    function clearActiveV4Position() external onlyAuthorized {
+    function clearActiveV4Position() external onlyAuthorized nonReentrant {
         activeTokenId = 0;
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after clear");
     }
 
     /// @notice Clears the tracked TWAMM order
     /// @dev Convenience function for after an order is fully executed or cancelled
-    function clearActiveTwammOrder() external onlyAuthorized {
+    function clearActiveTwammOrder() external onlyAuthorized nonReentrant {
         delete activeTwammOrder;
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after clear");
     }
@@ -710,7 +711,7 @@ contract PrimeBroker is IPrimeBroker {
         bytes calldata data,
         address approvalToken,
         uint256 approvalAmount
-    ) external onlyAuthorized {
+    ) external onlyAuthorized nonReentrant {
         // SECURITY: Prevent direct calls to token contracts
         // Users must use the approval parameters to interact with tokens
         // This prevents bypassing the JIT approval cleanup mechanism
@@ -760,7 +761,7 @@ contract PrimeBroker is IPrimeBroker {
     ///
     /// @param data Array of encoded function calls to this contract
     /// @return results Array of return data from each call
-    function multicall(bytes[] calldata data) external returns (bytes[] memory results) {
+    function multicall(bytes[] calldata data) external nonReentrant returns (bytes[] memory results) {
         results = new bytes[](data.length);
         for (uint256 i = 0; i < data.length; i++) {
             // Use delegatecall to preserve msg.sender and execute in this contract's context
@@ -795,7 +796,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @param rawMarketId The market ID (must match this broker's market)
     /// @param deltaCollateral Collateral change (+deposit, -withdraw)
     /// @param deltaDebt Debt change (+borrow, -repay)
-    function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyAuthorized {
+    function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyAuthorized nonReentrant {
         MarketId id = MarketId.wrap(rawMarketId);
         
         // SECURITY: Can only modify position in this broker's market
@@ -847,7 +848,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
-    function withdrawCollateral(address recipient, uint256 amount) external onlyAuthorized {
+    function withdrawCollateral(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
         ERC20(collateralToken).safeTransfer(recipient, amount);
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
     }
@@ -856,7 +857,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
-    function withdrawPositionToken(address recipient, uint256 amount) external onlyAuthorized {
+    function withdrawPositionToken(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
         ERC20(positionToken).safeTransfer(recipient, amount);
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
     }
@@ -865,7 +866,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
-    function withdrawUnderlying(address recipient, uint256 amount) external onlyAuthorized {
+    function withdrawUnderlying(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
         ERC20(underlyingToken).safeTransfer(recipient, amount);
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
     }
@@ -925,7 +926,7 @@ contract PrimeBroker is IPrimeBroker {
     ///
     /// @param operator The address to grant/revoke operator status
     /// @param active True to grant, false to revoke
-    function setOperator(address operator, bool active) external override onlyOwner {
+    function setOperator(address operator, bool active) external override onlyOwner nonReentrant {
         operators[operator] = active;
         emit OperatorUpdated(operator, active);
     }

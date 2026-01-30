@@ -89,6 +89,11 @@ abstract contract RLDStorage is IRLDCore {
     /// @dev Derivation: keccak256("RLD.TOUCHED_COUNT")
     bytes32 internal constant TOUCHED_COUNT_KEY = 0x6e9f1d8c19955375494191c062804b4d68202528751351141315848733230892;
 
+    /// @notice EIP-1153 slot key for reentrancy guard on lock().
+    /// @dev Prevents nested locks that could bypass solvency checks.
+    /// @dev Derivation: keccak256("RLD.LOCK_ACTIVE")
+    bytes32 internal constant LOCK_ACTIVE_KEY = 0x7f9f1d8c19955375494191c062804b4d68202528751351141315848733230893;
+
     /// @notice Base slot for the array of touched (MarketId, Account) pairs.
     /// @dev Storage layout per entry:
     ///   - Slot[2*i]     = MarketId (bytes32)
