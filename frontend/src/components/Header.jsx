@@ -81,6 +81,15 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
               >
                 PORTFOLIO
               </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/simulation"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/simulation" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+              >
+                SIMULATION
+              </Link>
             </div>
           </div>
 

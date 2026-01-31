@@ -65,10 +65,9 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
         console.log("PositionToken impl deployed at:", address(positionTokenImpl));
         
         primeBrokerImpl = new PrimeBroker(
-            address(0),  // Core address will be set later
-            address(0),
-            address(0),
-            address(0)
+            address(0),  // _v4Module
+            address(0),  // _twammModule
+            address(0)   // _posm
         );
         console.log("PrimeBroker impl deployed at:", address(primeBrokerImpl));
         

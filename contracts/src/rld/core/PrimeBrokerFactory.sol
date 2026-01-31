@@ -82,6 +82,10 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     ///      Stored for future extensibility without requiring factory redeployment.
     address public immutable RENDERER;
 
+    /// @notice The RLDCore singleton address
+    /// @dev Passed to each broker during initialization so clones can call Core
+    address public immutable CORE;
+
     /* ============================================================================================ */
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
@@ -103,18 +107,22 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @param name The ERC721 collection name (e.g., "RLD: aUSDC")
     /// @param symbol The ERC721 collection symbol (e.g., "RLD-aUSDC")
     /// @param renderer Optional metadata renderer (currently unused, can be address(0))
+    /// @param core The RLDCore singleton address (passed to brokers during init)
     constructor(
         address implementation,
         MarketId marketId,
         string memory name,
         string memory symbol,
-        address renderer
+        address renderer,
+        address core
     ) ERC721(name, symbol) {
         require(implementation != address(0), "Invalid implementation");
         require(MarketId.unwrap(marketId) != bytes32(0), "Invalid marketId");
+        require(core != address(0), "Invalid core");
         IMPLEMENTATION = implementation;
         MARKET_ID = marketId;
         RENDERER = renderer; // Stored but currently unused (see RENDERER docs)
+        CORE = core;
     }
 
     /* ============================================================================================ */
@@ -142,11 +150,13 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
         // 1. Deploy minimal proxy clone using CREATE2
         broker = IMPLEMENTATION.cloneDeterministic(salt);
         
-        // 2. Initialize the clone with market context
-        // The broker needs to know which market it serves and who can verify ownership
+        // 2. Initialize the clone with market context + CORE address
+        // The broker needs to know which market it serves, who can verify ownership,
+        // and the CORE address for solvency checks and position management
         PrimeBroker(payable(broker)).initialize(
             MARKET_ID,
-            address(this)
+            address(this),
+            CORE  // Pass CORE to broker so clones have correct address
         );
         
         // 3. Mint NFT with tokenId = broker address

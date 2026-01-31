@@ -283,9 +283,21 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /*                            CURATOR FEE MANAGEMENT                           */
     /* ============================================================================ */
 
-    /// @notice RLDCore contract address (immutable, set only at deployment)
-    /// @dev Used to query curator status for markets
-    address public immutable rldCore;
+    /// @notice RLDCore contract address
+    /// @dev Changed from immutable to storage to support two-phase deployment
+    ///      TWAMM must be deployed before Core (for address mining), but needs Core reference
+    ///      Solution: Deploy with address(0), then call setRldCore() after Core is deployed
+    address public rldCore;
+
+    /// @notice Sets the RLDCore address (one-time only)
+    /// @dev Allows two-phase deployment: deploy TWAMM first, then Core, then link them
+    ///      Can only be called by owner and only when rldCore is not yet set
+    /// @param _rldCore The RLDCore contract address
+    function setRldCore(address _rldCore) external onlyOwner {
+        require(rldCore == address(0), "Already set");
+        require(_rldCore != address(0), "Invalid address");
+        rldCore = _rldCore;
+    }
 
     /// @notice Updates the dynamic LP fee for a pool
     /// @dev Only callable by the curator of the market that uses this pool

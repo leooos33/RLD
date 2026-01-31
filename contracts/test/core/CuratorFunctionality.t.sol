@@ -56,10 +56,9 @@ contract CuratorFunctionalityTest is Test, GlobalTestConfig {
         poolManager = new PoolManager(address(0));
         positionTokenImpl = createPositionTokenImpl();
         primeBrokerImpl = new PrimeBroker(
-            address(0),
-            address(0),
-            address(0),
-            address(0)
+            address(0),  // _v4Module
+            address(0),  // _twammModule
+            address(0)   // _posm
         );
         v4Oracle = new UniswapV4SingletonOracle();
         fundingModel = new StandardFundingModel();

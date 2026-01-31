@@ -437,12 +437,14 @@ contract RLDMarketFactory is ReentrancyGuard {
         // Deploy factory for this market
         // NOTE: METADATA_RENDERER is passed but currently unused by PrimeBrokerFactory
         // Reserved for future on-chain metadata rendering (see METADATA_RENDERER docs above)
+        // CORE is passed so brokers can call RLDCore during initialization
         PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(
             PRIME_BROKER_IMPL, 
             id,
             name,
             nftSymbol,
-            METADATA_RENDERER  // Currently unused, reserved for future
+            METADATA_RENDERER,  // Currently unused, reserved for future
+            CORE                // Passed to brokers during init
         );
         factory = address(pbFactory);
         

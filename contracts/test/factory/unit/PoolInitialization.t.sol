@@ -52,10 +52,9 @@ contract PoolInitializationTest is Test, GlobalTestConfig {
         poolManager = new PoolManager(address(0));
         positionTokenImpl = createPositionTokenImpl();  // Use centralized helper
         primeBrokerImpl = new PrimeBroker(
-            address(0),  // Core address will be set later
-            address(0),
-            address(0),
-            address(0)
+            address(0),  // _v4Module
+            address(0),  // _twammModule
+            address(0)   // _posm
         );
         v4Oracle = new UniswapV4SingletonOracle();
         

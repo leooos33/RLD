@@ -1,358 +1,167 @@
-import threading
-import requests
-from datetime import datetime
-import time
-import sqlite3
-import os
-from web3 import Web3
-from dotenv import load_dotenv
+"""
+Blockchain event indexer for RLD protocol.
+Monitors local Anvil chain for MarketDeployed events and indexes them into SQLite.
+"""
+import asyncio
 import logging
-
-# --- Logging Config ---
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s'
+import json
+from web3 import Web3
+from typing import Optional
+from db import (
+    init_db, 
+    insert_market, 
+    market_exists, 
+    get_last_indexed_block,
+    update_last_indexed_block
 )
-# --- CONFIGURATION ---
-load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
-RPC_URL = os.getenv("MAINNET_RPC_URL")
-RESERVE_RPC = os.getenv("RESERVE_RPC_URL")
 
-RPC_URLS = [url for url in [RPC_URL, RESERVE_RPC, "https://eth.llamarpc.com"] if url]
-current_rpc_index = 0
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-if not RPC_URLS:
-    logging.critical("CRITICAL: No RPC URLs found.")
-    exit(1)
-
-# Import Centralized Config
-from config import AAVE_POOL_ADDRESS, UNI_POOL_ADDRESS, ASSETS, DB_NAME, DB_PATH, CLEAN_DB_PATH
-
-POOL_ADDRESS = AAVE_POOL_ADDRESS
-# UNI_POOL_ADDRESS is imported directly
-
-# --- SETUP ---
-w3 = Web3(Web3.HTTPProvider(RPC_URLS[0]))
-
-def switch_rpc():
-    global current_rpc_index, w3
-    current_rpc_index = (current_rpc_index + 1) % len(RPC_URLS)
-    new_url = RPC_URLS[current_rpc_index]
-    logging.warning(f"⚠️ Switching RPC to: {new_url}")
-    w3.provider = Web3.HTTPProvider(new_url)
-
-# Database Setup
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
-
-# Initialize Tables (On-Chain Assets only)
-for symbol, data in ASSETS.items():
-    if data['type'] == 'onchain':
-        cursor.execute(f'''
-            CREATE TABLE IF NOT EXISTS {data['table']} (
-                block_number INTEGER,
-                timestamp INTEGER,
-                apy REAL
-            )
-        ''')
-
-# Price Table
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS eth_prices (
-        timestamp INTEGER PRIMARY KEY, 
-        price REAL,
-        block_number INTEGER
-    )
-''')
-
-# SOFR Table
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS sofr_rates (
-        timestamp INTEGER PRIMARY KEY,
-        apy REAL
-    )
-''')
-conn.commit()
-
-SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
-
-def poll_sofr_data():
-    """
-    Background thread to fetch SOFR rates from NY Fed API.
-    Runs every hour, but only inserts if data is new.
-    """
-    logging.info("📈 Starting SOFR Indexer Thread...")
+class RLDIndexer:
+    def __init__(self, rpc_url: str, factory_address: str, factory_abi: list):
+        """
+        Initialize the indexer.
+        
+        Args:
+            rpc_url: Anvil RPC URL
+            factory_address: RLDMarketFactory contract address
+            factory_abi: Factory contract ABI
+        """
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.factory_address = Web3.to_checksum_address(factory_address)
+        self.factory_contract = self.w3.eth.contract(
+            address=self.factory_address,
+            abi=factory_abi
+        )
+        self.running = False
+        self.poll_interval = 2  # seconds
+        
+        # Initialize database
+        init_db()
+        
+    async def start(self):
+        """Start the indexer background task."""
+        self.running = True
+        logger.info("🚀 Starting RLD Indexer...")
+        
+        # Backfill from last indexed block
+        last_block = get_last_indexed_block()
+        if last_block == 0:
+            # First run - start from current block
+            last_block = self.w3.eth.block_number
+            logger.info(f"📍 First run - starting from block {last_block}")
+        else:
+            logger.info(f"📍 Resuming from block {last_block}")
+        
+        while self.running:
+            try:
+                await self._poll_blocks(last_block)
+                last_block = get_last_indexed_block()
+                await asyncio.sleep(self.poll_interval)
+            except Exception as e:
+                logger.error(f"❌ Indexer error: {e}", exc_info=True)
+                await asyncio.sleep(self.poll_interval)
     
-    while True:
+    def stop(self):
+        """Stop the indexer."""
+        logger.info("🛑 Stopping RLD Indexer...")
+        self.running = False
+    
+    async def _poll_blocks(self, from_block: int):
+        """Poll for new blocks and process events."""
         try:
-            conn_sofr = sqlite3.connect(DB_NAME)
-            cursor_sofr = conn_sofr.cursor()
+            current_block = self.w3.eth.block_number
             
-            response = requests.get(SOFR_API_URL, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'refRates' in data and len(data['refRates']) > 0:
-                    rate_data = data['refRates'][0]
-                    
-                    # Parse Date
-                    date_str = rate_data['effectiveDate'] # YYYY-MM-DD
-                    percent = rate_data['percentRate']
-                    
-                    # Convert to Timestamp (Midnight UTC or specific?)
-                    # Existing Excel import likely used pd.to_datetime which defaults to midnight
-                    dt = datetime.strptime(date_str, "%Y-%m-%d")
-                    ts = int(dt.timestamp())
-                    
-                    # Insert (Ignore if exists to avoid duplicates)
-                    cursor_sofr.execute("INSERT OR IGNORE INTO sofr_rates (timestamp, apy) VALUES (?, ?)", (ts, percent))
-                    conn_sofr.commit()
-                    
-                    # Log if it was a new insertion (rowcount > 0 doesn't work well with IGNORE in all sqlite versions, check manually? 
-                    # simple print is fine, it's a background thread)
-                    # print(f"   [SOFR] Checked {date_str}: {percent}%")
+            if current_block <= from_block:
+                return  # No new blocks
             
-            conn_sofr.close()
+            # Process blocks in batches to avoid overwhelming the RPC
+            batch_size = 100
+            to_block = min(from_block + batch_size, current_block)
+            
+            logger.info(f"🔍 Scanning blocks {from_block + 1} to {to_block}")
+            
+            # Get MarketDeployed events
+            events = self.factory_contract.events.MarketDeployed.get_logs(
+                from_block=from_block + 1,
+                to_block=to_block
+            )
+            
+            for event in events:
+                await self._process_market_deployed_event(event)
+            
+            # Update last indexed block
+            update_last_indexed_block(to_block)
+            
+            if events:
+                logger.info(f"✅ Indexed {len(events)} market(s) up to block {to_block}")
             
         except Exception as e:
-            logging.error(f"   ⚠️ [SOFR] Error: {e}")
-        
-        # Sleep 1 hour
-        time.sleep(3600)
-
-
-# FULL ABI (Exact Aave V3 ReserveData Structure)
-# ... (ABI remains same) ...
-POOL_ABI = [
-    {
-        "inputs": [{"internalType": "address", "name": "asset", "type": "address"}],
-        "name": "getReserveData",
-        "outputs": [
-            # 0. Configuration (Bitmap)
-            {"internalType": "uint256", "name": "configuration", "type": "uint256"},
-            # 1. Liquidity Index
-            {"internalType": "uint128", "name": "liquidityIndex", "type": "uint128"},
-            # 2. Supply Rate
-            {"internalType": "uint128", "name": "currentLiquidityRate", "type": "uint128"},
-            # 3. Variable Borrow Index
-            {"internalType": "uint128", "name": "variableBorrowIndex", "type": "uint128"},
-            # 4. Variable Borrow Rate (TARGET)
-            {"internalType": "uint128", "name": "currentVariableBorrowRate", "type": "uint128"},
-            # 5. Stable Borrow Rate
-            {"internalType": "uint128", "name": "currentStableBorrowRate", "type": "uint128"},
-            # 6. Timestamp
-            {"internalType": "uint40", "name": "lastUpdateTimestamp", "type": "uint40"},
-            # 7. ID
-            {"internalType": "uint16", "name": "id", "type": "uint16"},
-            # 8. aToken Address
-            {"internalType": "address", "name": "aTokenAddress", "type": "address"},
-            # 9. Stable Debt Token
-            {"internalType": "address", "name": "stableDebtTokenAddress", "type": "address"},
-            # 10. Variable Debt Token
-            {"internalType": "address", "name": "variableDebtTokenAddress", "type": "address"},
-            # 11. Interest Strategy
-            {"internalType": "address", "name": "interestRateStrategyAddress", "type": "address"},
-            # 12. Accrued To Treasury
-            {"internalType": "uint128", "name": "accruedToTreasury", "type": "uint128"},
-            # 13. Unbacked
-            {"internalType": "uint128", "name": "unbacked", "type": "uint128"},
-            # 14. Isolation Mode Total Debt
-            {"internalType": "uint128", "name": "isolationModeTotalDebt", "type": "uint128"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]
-
-UNI_ABI = [
-    {
-        "inputs": [],
-        "name": "slot0",
-        "outputs": [
-            {"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"},
-            {"internalType": "int24", "name": "tick", "type": "int24"},
-            {"internalType": "uint16", "name": "observationIndex", "type": "uint16"},
-            {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"},
-            {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"},
-            {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"},
-            {"internalType": "bool", "name": "unlocked", "type": "bool"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]
-
-pool_contract = w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
-uni_contract = w3.eth.contract(address=UNI_POOL_ADDRESS, abi=UNI_ABI)
-
-# --- FUNCTIONS ---
-def get_aave_rate(asset_address, block_identifier='latest'):
-    try:
-        # Fetch data from smart contract
-        reserve_data = pool_contract.functions.getReserveData(asset_address).call(block_identifier=block_identifier)
-        
-        # Target Index: 4 (currentVariableBorrowRate)
-        raw_rate = reserve_data[4]
-        
-        # Convert from Ray (10^27) to percentage
-        apy = raw_rate / 10**27 * 100
-        return apy
-    except Exception as e:
-        logging.error(f"Error fetching data for {asset_address}: {e}")
-        return None
-
-def get_eth_price(block_identifier='latest'):
-    try:
-        # slot0 returns (sqrtPriceX96, tick, observationIndex, ...)
-        slot0 = uni_contract.functions.slot0().call(block_identifier=block_identifier)
-        sqrtPriceX96 = slot0[0]
-        
-        # Calculate Price
-        # Address 0xA0b8... (USDC) is Token0
-        # Address 0xC02a... (WETH) is Token1
-        # Price = Token1/Token0 (WETH per USDC)
-        # We want USDC per ETH = 1 / Price
-        
-        # P_raw = (sqrtPriceX96 / 2^96) ^ 2
-        # Price_USD = 10^12 / P_raw = 10^12 / ((sqrtPriceX96 / 2^96) ^ 2)
-        
-        price_raw = (sqrtPriceX96 / (2**96)) ** 2
-        eth_price = (10**12) / price_raw
-        return eth_price
-    except Exception as e:
-        logging.error(f"Error fetching ETH Price: {e}")
-        return None
-
-# --- MAIN EXECUTION ---
-if __name__ == "__main__":
-    if not w3.is_connected():
-        logging.critical("CRITICAL: Could not connect to Ethereum node.")
-        exit()
-        
-    logging.info(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
-    logging.info(f"Connected to: {RPC_URL}")
-    logging.info("-" * 40)
+            logger.error(f"Error polling blocks: {e}", exc_info=True)
     
-    # Start SOFR Thread
-    t = threading.Thread(target=poll_sofr_data, daemon=True)
-    t.start()
-    
-    # Clean DB Path
-    CLEAN_DB_NAME = "clean_rates.db"
-
-    # Initialize Clean DB Tables
-    try:
-        conn_clean_init = sqlite3.connect(CLEAN_DB_PATH)
-        cursor_clean_init = conn_clean_init.cursor()
-        cursor_clean_init.execute('''
-            CREATE TABLE IF NOT EXISTS sync_state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        cursor_clean_init.execute('''
-            CREATE TABLE IF NOT EXISTS hourly_stats (
-                timestamp INTEGER PRIMARY KEY,
-                usdc_rate REAL,
-                dai_rate REAL,
-                usdt_rate REAL,
-                eth_price REAL
-            )
-        ''')
-        conn_clean_init.commit()
-        conn_clean_init.close()
-        logging.info("✅ Clean DB initialized.")
-    except Exception as e:
-        logging.error(f"Failed to init Clean DB: {e}")
-    
-    # Initialize Clean DB Tables
-    try:
-        conn_clean_init = sqlite3.connect(CLEAN_DB_PATH)
-        cursor_clean_init = conn_clean_init.cursor()
-        cursor_clean_init.execute('''
-            CREATE TABLE IF NOT EXISTS sync_state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        cursor_clean_init.execute('''
-            CREATE TABLE IF NOT EXISTS hourly_stats (
-                timestamp INTEGER PRIMARY KEY,
-                usdc_rate REAL,
-                dai_rate REAL,
-                usdt_rate REAL,
-                eth_price REAL
-            )
-        ''')
-        conn_clean_init.commit()
-        conn_clean_init.close()
-        logging.info("✅ Clean DB initialized.")
-    except Exception as e:
-        logging.error(f"Failed to init Clean DB: {e}")
-
-    try:
-        while True:
-            # Fetch latest block for timestamp and consistency
-            try:
-                block = w3.eth.get_block('latest')
-                block_number = block['number']
-                block_timestamp = block['timestamp']
-                
-                timestamp_str = time.strftime("%H:%M:%S", time.localtime(block_timestamp))
-                
-                # --- UPDATE CLEAN DB ---
-                period_ts = (block_timestamp // 3600) * 3600
-                conn_clean = sqlite3.connect(CLEAN_DB_PATH)
-                cursor_clean = conn_clean.cursor()
-                cursor_clean.execute("INSERT OR IGNORE INTO hourly_stats (timestamp) VALUES (?)", (period_ts,))
-                conn_clean.commit()
-                # -----------------------
-
-                for symbol, data in ASSETS.items():
-                    if data.get('type') != 'onchain':
-                        continue
-                        
-                    rate = get_aave_rate(data['address'], block_number)
-                    if rate is not None:
-                        # Existing DB
-                        cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
-                        conn.commit()
-                        logging.info(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
-                        
-                        # Clean DB Update
-                        col_map = {
-                            "USDC": "usdc_rate",
-                            "DAI": "dai_rate",
-                            "USDT": "usdt_rate"
-                        }
-                        if symbol in col_map:
-                            col = col_map[symbol]
-                            cursor_clean.execute(f"UPDATE hourly_stats SET {col} = ? WHERE timestamp = ?", (rate, period_ts))
-                            conn_clean.commit()
-                
-                # Fetch & Store ETH Price
-                eth_price = get_eth_price(block_number)
-                if eth_price:
-                    # Existing DB
-                    cursor.execute("INSERT OR REPLACE INTO eth_prices (timestamp, price, block_number) VALUES (?, ?, ?)", 
-                                  (block_timestamp, eth_price, block_number))
-                    conn.commit()
-                    logging.info(f"[{timestamp_str}] Block {block_number} | ETH Price: ${eth_price:,.2f}")
-                    
-                    # Clean DB Update
-                    cursor_clean.execute("UPDATE hourly_stats SET eth_price = ? WHERE timestamp = ?", (eth_price, period_ts))
-                    conn_clean.commit()
-
-                # Update Sync State (Latest Block)
-                cursor_clean.execute("INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)", ("last_block_number", str(block_number)))
-                conn_clean.commit()
-                
-                conn_clean.close()
+    async def _process_market_deployed_event(self, event):
+        """Process a MarketDeployed event and insert into database."""
+        try:
+            tx_hash = event['transactionHash'].hex()
             
-            except Exception as loop_err:
-                logging.error(f"Error in loop: {loop_err}")
-                switch_rpc()
-
-            time.sleep(12)
+            # Skip if already indexed
+            if market_exists(tx_hash):
+                logger.debug(f"⏭️  Market {tx_hash} already indexed")
+                return
             
-    except KeyboardInterrupt:
-        logging.info("\nStopping script.")
+            # Extract event data
+            args = event['args']
+            market_id = args['marketId']
+            market_address = args['market']
+            position_token = args['positionToken']
+            params = args['params']
+            
+            # Get block timestamp
+            block = self.w3.eth.get_block(event['blockNumber'])
+            
+            # Prepare market data
+            market_data = {
+                'tx_hash': tx_hash,
+                'market_address': market_address,
+                'position_token': position_token,
+                'underlying_token': params['underlyingToken'],
+                'collateral_token': params['collateralToken'],
+                'underlying_pool': params['underlyingPool'],
+                'curator': params['curator'],
+                'spot_oracle': params['spotOracle'],
+                'rate_oracle': params['rateOracle'],
+                'liquidation_module': params['liquidationModule'],
+                'min_col_ratio': params['minColRatio'],
+                'maintenance_margin': params['maintenanceMargin'],
+                'liquidation_close_factor': params['liquidationCloseFactor'],
+                'oracle_period': params['oraclePeriod'],
+                'pool_fee': params['poolFee'],
+                'tick_spacing': params['tickSpacing'],
+                'position_token_name': params['positionTokenName'],
+                'position_token_symbol': params['positionTokenSymbol'],
+                'deployment_block': event['blockNumber'],
+                'deployment_timestamp': block['timestamp'],
+                'status': 'active'
+            }
+            
+            # Insert into database
+            insert_market(market_data)
+            logger.info(f"✅ Indexed market: {params['positionTokenSymbol']} (tx: {tx_hash[:10]}...)")
+            
+        except Exception as e:
+            logger.error(f"Error processing event: {e}", exc_info=True)
+
+# Global indexer instance
+_indexer: Optional[RLDIndexer] = None
+
+def get_indexer() -> Optional[RLDIndexer]:
+    """Get the global indexer instance."""
+    return _indexer
+
+def init_indexer(rpc_url: str, factory_address: str, factory_abi: list) -> RLDIndexer:
+    """Initialize the global indexer instance."""
+    global _indexer
+    _indexer = RLDIndexer(rpc_url, factory_address, factory_abi)
+    return _indexer

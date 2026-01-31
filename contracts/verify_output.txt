@@ -1,0 +1,88 @@
+Compiling 1 files with Solc 0.8.26
+Solc 0.8.26 finished in 14.91s
+Compiler run successful with warnings:
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+  --> src/twamm/libraries/TwapOracle.sol:81:9:
+   |
+81 |         mapping(uint256 => Observation) storage self,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+   --> src/twamm/TWAMM.sol:776:13:
+    |
+776 |             uint256 sellTokensOwed,
+    |             ^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+   --> src/twamm/TWAMM.sol:779:13:
+    |
+779 |             bool assetsRemoved
+    |             ^^^^^^^^^^^^^^^^^^
+
+Script ran successfully.
+
+== Logs ==
+  ================================================================
+    CONTRACT CONNECTIONS VERIFICATION
+  ================================================================
+  
+  ----------------------------------------------------------------
+  RLDCore: 0x6B5CF024365D5d5d0786673780CA7E3F07f85B63
+  ----------------------------------------------------------------
+    factory(): 0xAaC7D4A36DAb95955ef3c641c23F1fA46416CF71
+      -> Expected RLDMarketFactory [OK]
+    poolManager(): 0x000000000004444c5dc75cB358380D2e3dE08A90
+      -> Expected UniswapPoolManager [OK]
+    twamm(): 0x4089C71eD1f89Bc8cC66dddabaFFE755850eeAc0
+      -> Expected TWAMM Hook [OK]
+  
+  ----------------------------------------------------------------
+  RLDMarketFactory: 0xAaC7D4A36DAb95955ef3c641c23F1fA46416CF71
+  ----------------------------------------------------------------
+    CORE(): 0x6B5CF024365D5d5d0786673780CA7E3F07f85B63
+      -> Expected RLDCore [OK]
+    POOL_MANAGER(): 0x000000000004444c5dc75cB358380D2e3dE08A90
+      -> Expected UniswapPoolManager [OK]
+    PRIME_BROKER_IMPL(): 0xf975A646FCa589Be9fc4E0C28ea426A75645fB1f
+      -> Expected PrimeBrokerImpl [OK]
+    SINGLETON_V4_ORACLE(): 0xf4fa0d1C10c47cDe9F65D56c3eC977CbEb13449A
+      -> Expected V4Oracle [OK]
+    STD_FUNDING_MODEL(): 0x2ca60d89144D4cdf85dA87af4FE12aBF9265F28C
+      -> Expected StandardFundingModel [OK]
+    TWAMM(): 0x4089C71eD1f89Bc8cC66dddabaFFE755850eeAc0
+      -> Expected TWAMM Hook [OK]
+  
+  ----------------------------------------------------------------
+  PrimeBrokerImpl: 0xf975A646FCa589Be9fc4E0C28ea426A75645fB1f
+  ----------------------------------------------------------------
+    CORE(): 0x000000000000000000000000000000000000dEaD
+      [WARNING] This is 0xDEAD placeholder - clones inherit this!
+    POSM(): 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e
+      -> UniswapPositionManager
+  
+  ----------------------------------------------------------------
+  TWAMM Hook: 0x4089C71eD1f89Bc8cC66dddabaFFE755850eeAc0
+  ----------------------------------------------------------------
+    poolManager(): 0x000000000004444c5dc75cB358380D2e3dE08A90
+      -> Expected UniswapPoolManager [OK]
+    rldCore(): 0x0000000000000000000000000000000000000000
+      [WARNING] This is address(0) - updateDynamicLPFee() will revert!
+    owner(): 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    expirationInterval(): 3600 seconds
+  
+  ================================================================
+    CONNECTION VERIFICATION COMPLETE
+  ================================================================
+  
+  Core <-> Factory: BIDIRECTIONAL OK
+  Core -> PoolManager: OK
+  Core -> TWAMM: OK
+  Factory -> TWAMM: OK
+  Factory -> PrimeBrokerImpl: OK
+  Factory -> V4Oracle: OK
+  Factory -> FundingModel: OK
+  TWAMM -> PoolManager: OK
+  
+  KNOWN ISSUES:
+    1. PrimeBrokerImpl.CORE() = 0xDEAD (placeholder)
+    2. TWAMM.rldCore() = address(0)

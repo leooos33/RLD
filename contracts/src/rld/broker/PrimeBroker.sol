@@ -126,10 +126,11 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /*                                         IMMUTABLES                                          */
     /* ============================================================================================ */
 
-    /// @notice The RLDCore singleton contract address
-    /// @dev Set in implementation constructor, shared by all clones
+    /// @notice The RLDCore singleton contract
+    /// @dev Set in initialize(), NOT in constructor (clones don't inherit immutables correctly)
     /// Used for: solvency checks, position modifications, lock pattern
-    address public immutable CORE;
+    /// ARCHITECTURE FIX: Changed from immutable to storage to support EIP-1167 clone pattern
+    address public CORE;
 
     /// @notice The module for valuing V4 LP positions
     /// @dev Implements IValuationModule - getValue() for V4 positions
@@ -253,12 +254,15 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev This is the IMPLEMENTATION that clones will delegate to
     /// The constructor locks the implementation to prevent direct use
     ///
-    /// @param _core RLDCore singleton address - the protocol's central contract
+    /// NOTE: CORE is NOT set here - it's set in initialize() because:
+    /// - EIP-1167 clones inherit immutables from implementation bytecode
+    /// - We need each clone to use the correct Core address for its market
+    ///
     /// @param _v4Module IValuationModule for Uniswap V4 LP position valuation
     /// @param _twammModule IValuationModule for TWAMM order valuation
     /// @param _posm Universal V4 Position Manager for NFT ownership checks
-    constructor(address _core, address _v4Module, address _twammModule, address _posm) {
-        CORE = _core;
+    constructor(address _v4Module, address _twammModule, address _posm) {
+        // CORE is set in initialize() - see ARCHITECTURE FIX comment above
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
         POSM = _posm;
@@ -277,21 +281,29 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Called by PrimeBrokerFactory immediately after clone deployment
     ///
     /// This function:
-    /// 1. Sets the market ID this broker will operate in
-    /// 2. Sets the factory address for ownership lookups
-    /// 3. Caches market addresses from Core to save gas on future calls
+    /// 1. Sets the CORE address (CRITICAL - must be set here, not in constructor)
+    /// 2. Sets the market ID this broker will operate in
+    /// 3. Sets the factory address for ownership lookups
+    /// 4. Caches market addresses from Core to save gas on future calls
     ///
     /// Gas Optimization: We cache token addresses because getNetAccountValue() is called
     /// on EVERY solvency check. Avoiding Core calls saves ~2600 gas per check.
     ///
     /// @param _marketId The market ID this broker is bound to
     /// @param _factory The PrimeBrokerFactory that deployed this clone
+    /// @param _core The RLDCore singleton address
     function initialize(
         MarketId _marketId,
-        address _factory
+        address _factory,
+        address _core
     ) external {
         // SECURITY: Prevent re-initialization
         require(!initialized, "Initialized");
+        require(_core != address(0), "Invalid Core");
+        
+        // CRITICAL: Set CORE here, not in constructor
+        // EIP-1167 clones would otherwise inherit placeholder from implementation
+        CORE = _core;
         
         marketId = _marketId;
         factory = _factory;

@@ -14,7 +14,28 @@ import os
 from collections import defaultdict
 import logging
 import re
+import json
 from cachetools import TTLCache
+from pydantic import BaseModel
+from typing import Optional
+from web3 import Web3
+from eth_account import Account
+from dotenv import load_dotenv
+
+# Import indexer modules
+from indexer import init_indexer, get_indexer
+import db
+
+# Import market state modules (separate database)
+from market_state_indexer import init_state_indexer, get_state_indexer, register_market_manually
+from market_state_db import (
+    init_market_state_db,
+    get_all_markets_with_state,
+    get_market_by_id,
+    upsert_market,
+    upsert_risk_params,
+    insert_state_snapshot
+)
 
 # --- Logging Config ---
 logging.basicConfig(
@@ -34,11 +55,13 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
     return api_key_header
 
 app = FastAPI(
-    dependencies=[Depends(get_api_key)],
     docs_url=None,
     redoc_url=None,
     openapi_url=None
 )
+
+# Global indexer task
+indexer_task = None
 
 # --- Security: Rate Limiter ---
 # Limit: 20 requests per 10 seconds per IP
@@ -128,6 +151,462 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+# --- Web3 Setup (For Deployment) ---
+# Load env vars from contracts/.env
+load_dotenv("../contracts/.env")
+# FORCE LOCALHOST FOR SIMULATION (User requested local deployment)
+RPC_URL = "http://127.0.0.1:8545" 
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+account = None
+if PRIVATE_KEY:
+    try:
+        account = Account.from_key(PRIVATE_KEY)
+        logging.info(f"✅ Loaded Deployer: {account.address}")
+    except Exception as e:
+        logging.error(f"❌ Invalid Private Key: {e}")
+
+# Load ABIs
+# Load ABIs
+CORE_ABI = []
+FACTORY_ABI = []
+ORACLE_ABI = []
+ADDRESSES = {}
+FACTORY_ADDRESS = None
+CORE_ADDRESS = None
+
+try:
+    with open("../contracts/out/RLDMarketFactory.sol/RLDMarketFactory.json") as f:
+        FACTORY_ABI = json.load(f)["abi"]
+    with open("../contracts/out/RLDCore.sol/RLDCore.json") as f:
+        CORE_ABI = json.load(f)["abi"]
+    with open("../contracts/out/RLDAaveOracle.sol/RLDAaveOracle.json") as f:
+        ORACLE_ABI = json.load(f)["abi"]
+    with open("../shared/addresses.json") as f:
+        ADDRESSES = json.load(f)
+        FACTORY_ADDRESS = ADDRESSES.get("RLDMarketFactory")
+        CORE_ADDRESS = ADDRESSES.get("RLDCore")
+    logging.info(f"✅ Loaded ABIs - Core: {CORE_ADDRESS}, Factory: {FACTORY_ADDRESS}")
+except Exception as e:
+    logging.warning(f"⚠️ Could not load ABIs or Addresses: {e}")
+
+# Global task handles
+indexer_task = None
+state_indexer_task = None
+
+# Startup event: Initialize and start indexers
+@app.on_event("startup")
+async def startup_event_indexers():
+    global indexer_task, state_indexer_task
+    
+    # Original event indexer
+    if FACTORY_ADDRESS and FACTORY_ABI:
+        try:
+            indexer = init_indexer(RPC_URL, FACTORY_ADDRESS, FACTORY_ABI)
+            indexer_task = asyncio.create_task(indexer.start())
+            logging.info("✅ Event Indexer started")
+        except Exception as e:
+            logging.error(f"❌ Failed to start event indexer: {e}")
+    
+    # NEW: Market State Indexer (separate database)
+    if CORE_ADDRESS and CORE_ABI and FACTORY_ADDRESS and FACTORY_ABI:
+        try:
+            state_indexer = init_state_indexer(
+                RPC_URL, 
+                CORE_ADDRESS, 
+                FACTORY_ADDRESS,
+                CORE_ABI, 
+                FACTORY_ABI
+            )
+            state_indexer_task = asyncio.create_task(state_indexer.start())
+            logging.info("✅ Market State Indexer started (separate DB)")
+        except Exception as e:
+            logging.error(f"❌ Failed to start state indexer: {e}")
+    else:
+        logging.warning("⚠️ State Indexer not started - missing Core address or ABI")
+    
+    # Start WebSocket broadcast task
+    asyncio.create_task(broadcast_rates())
+
+@app.on_event("shutdown")
+async def shutdown_event_indexers():
+    # Stop original indexer
+    indexer = get_indexer()
+    if indexer:
+        indexer.stop()
+    if indexer_task:
+        indexer_task.cancel()
+    
+    # Stop state indexer
+    state_indexer = get_state_indexer()
+    if state_indexer:
+        state_indexer.stop()
+    if state_indexer_task:
+        state_indexer_task.cancel()
+    
+    logging.info("🛑 All indexers stopped")
+
+# Deployment Models
+class MarketParams(BaseModel):
+    lending_protocol: str # "AAVE"
+    target_market: str    # "aUSDC"
+    collateral_token: str # "USDC" (for now, mapped manually)
+    initial_price: str    # "4.50"
+    min_col_ratio: str    # "150"
+    maintenance_margin: str # "110"
+    liq_close_factor: str # "50"
+    debt_cap: str         # "1000000"
+    funding_period: str   # "86400"
+
+@app.post("/deploy-market", dependencies=[Depends(get_api_key)])
+async def deploy_market(params: MarketParams):
+    if not w3.is_connected():
+        raise HTTPException(status_code=500, detail="RPC Connection Failed")
+    if not account:
+        raise HTTPException(status_code=500, detail="Server Wallet Not Configured")
+    if not FACTORY_ADDRESS:
+        raise HTTPException(status_code=500, detail="Factory Address Not Found")
+
+    try:
+        logging.info(f"🚀 Deploying Market: {params.target_market}")
+
+        # 1. Parse & Scale Parameters (Frontend sends Display values)
+        # Convert "150" % -> 1.5e18 (WAD)
+        # 150 / 100 * 1e18 = 1.5e18
+        # Formula: value * 1e16
+        min_col_wad = int(float(params.min_col_ratio) * 10**16)
+        maint_margin_wad = int(float(params.maintenance_margin) * 10**16)
+        liq_close_wad = int(float(params.liq_close_factor) * 10**16)
+        
+        debt_cap_raw = int(params.debt_cap) * 10**18 # Assuming 18 decimals for cap
+        funding_period = int(params.funding_period)
+
+        # 2. Resolve Addresses (Hardcoded for Anvil/Testnet Sim)
+        # In a real app, these come from a config DB
+        # MOCK ADDRESSES FOR ANVIL (Replace with real ones if needed)
+        TOKEN_MAP = {
+            "aUSDC": {
+                "collateral": w3.to_checksum_address("0xFF00000000000000000000000000000000000001"), 
+                "underlying": w3.to_checksum_address("0xFF00000000000000000000000000000000000002"), 
+                "pool": w3.to_checksum_address("0xFF00000000000000000000000000000000000003")
+            },
+            "aUSDT": {
+                 "collateral": w3.to_checksum_address("0xFF00000000000000000000000000000000000004"), 
+                "underlying": w3.to_checksum_address("0xFF00000000000000000000000000000000000005"),
+                "pool": w3.to_checksum_address("0xFF00000000000000000000000000000000000003")
+            },
+            "aDAI": {
+                 "collateral": w3.to_checksum_address("0xFF00000000000000000000000000000000000006"), 
+                "underlying": w3.to_checksum_address("0xFF00000000000000000000000000000000000007"),
+                "pool": w3.to_checksum_address("0xFF00000000000000000000000000000000000003")
+            }
+        }
+        
+        market_config = TOKEN_MAP.get(params.target_market)
+        if not market_config:
+             raise HTTPException(status_code=400, detail="Unsupported Target Market")
+
+        # 3. Deploy RLDAaveOracle (Rate Oracle)
+        # Using the json artifact to get bytecode
+        with open("../contracts/out/RLDAaveOracle.sol/RLDAaveOracle.json") as f:
+            oracle_artifact = json.load(f)
+            oracle_bytecode = oracle_artifact["bytecode"]["object"]
+        
+        OracleFactory = w3.eth.contract(abi=ORACLE_ABI, bytecode=oracle_bytecode)
+        
+        # Build Construct Tx
+        # RLDAaveOracle is stateless (no constructor args in this version)
+        construct_tx = OracleFactory.constructor().build_transaction({
+            'from': account.address,
+            'nonce': w3.eth.get_transaction_count(account.address),
+            'gas': 2000000,
+            'maxFeePerGas': w3.to_wei('2', 'gwei'),
+            'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+        })
+        
+        # Sign & Send
+        signed_tx = w3.eth.account.sign_transaction(construct_tx, PRIVATE_KEY)
+        tx_hash_oracle = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        receipt_oracle = w3.eth.wait_for_transaction_receipt(tx_hash_oracle)
+        rate_oracle_address = receipt_oracle.contractAddress
+        logging.info(f"✅ Deployed RLDAaveOracle: {rate_oracle_address}")
+
+        # 4. Deploy Market via Factory
+        factory_contract = w3.eth.contract(address=FACTORY_ADDRESS, abi=FACTORY_ABI)
+        
+        # Spot Oracle is 0x0 (1:1 Peg)
+        spot_oracle_address = w3.to_checksum_address("0x0000000000000000000000000000000000000000")
+        
+        # Curator (Fee Receiver) -> Deployer
+        curator_address = account.address
+        
+        # Liquidation Module -> Use RLDCore (implements liquidation interface)
+        liq_module = w3.to_checksum_address(ADDRESSES.get("RLDCore"))
+        
+        # Construct Params Struct (Tuple)
+        # struct DeployParams {
+        #     address underlyingPool;
+        #     address underlyingToken;
+        #     address collateralToken;
+        #     address curator;
+        #     string positionTokenName;
+        #     string positionTokenSymbol;
+        #     uint64 minColRatio;
+        #     uint64 maintenanceMargin;
+        #     uint64 liquidationCloseFactor;
+        #     address liquidationModule;
+        #     bytes32 liquidationParams;
+        #     address spotOracle;
+        #     address rateOracle;
+        #     uint32 oraclePeriod;
+        #     uint24 poolFee;
+        #     int24 tickSpacing;
+        # }
+        
+        deploy_params = (
+            market_config["pool"],          # underlyingPool
+            market_config["underlying"],    # underlyingToken
+            market_config["collateral"],    # collateralToken
+            curator_address,                # curator
+            f"Wrapped RLP: {params.target_market}", # name
+            f"wRLP{params.target_market}",          # symbol
+            min_col_wad,                    # minColRatio (1e18)
+            maint_margin_wad,               # maintenanceMargin (1e18)
+            liq_close_wad,                  # liquidationCloseFactor (1e18)
+            liq_module,                     # liquidationModule
+            b'\x00' * 32,                   # liquidationParams (empty)
+            spot_oracle_address,            # spotOracle
+            rate_oracle_address,            # rateOracle
+            3600,                           # oraclePeriod (1h)
+            3000,                           # poolFee (0.3%)
+            60                              # tickSpacing
+        )
+
+        create_tx = factory_contract.functions.createMarket(deploy_params).build_transaction({
+            'from': account.address,
+            'nonce': w3.eth.get_transaction_count(account.address),
+            'gas': 5000000,
+            'maxFeePerGas': w3.to_wei('2', 'gwei'),
+            'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+        })
+
+        signed_create_tx = w3.eth.account.sign_transaction(create_tx, PRIVATE_KEY)
+        tx_hash_create = w3.eth.send_raw_transaction(signed_create_tx.raw_transaction)
+        
+        # Don't wait for receipt to keep UI snappy, return Hash immediately
+        # (Or wait 1 sec to get Market ID if possible? Factory returns (MarketId, address))
+        # Better to wait to confirm success.
+        receipt_create = w3.eth.wait_for_transaction_receipt(tx_hash_create)
+        
+        # Decode Event to get Market ID? 
+        # Alternatively, find the MarketDeployed event in the logs.
+        # For prototype, just return success.
+        
+        # Store in Simulation List (Persistent JSON)
+        sim_data = {
+            "id": receipt_create.transactionHash.hex(),
+            "target_market": params.target_market,
+            "rate_oracle": rate_oracle_address,
+            "status": "Running",
+            "timestamp": int(time.time())
+        }
+        
+        save_simulation(sim_data)
+
+        return {
+            "status": "success",
+            "tx_hash": receipt_create.transactionHash.hex(),
+            "rate_oracle": rate_oracle_address,
+            "market_id": "0x..." # Placeholder
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Deployment Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/simulations")
+def get_simulations():
+    """Get all active simulations from the database."""
+    try:
+        markets = db.get_all_markets()
+        
+        # Transform to match frontend expected format
+        simulations = []
+        for market in markets:
+            simulations.append({
+                "id": market['tx_hash'],
+                "target_market": market['position_token_symbol'],
+                "rate_oracle": market['rate_oracle'],
+                "status": "Running",  # Could be derived from market state
+                "timestamp": market['deployment_timestamp']
+            })
+        
+        return simulations
+    except Exception as e:
+        logging.error(f"Error fetching simulations: {e}")
+        return []
+
+@app.get("/simulations/enriched")
+def get_enriched_simulations():
+    """
+    Get all simulations with live market state data.
+    Uses the separate market_state.db database.
+    Returns enriched data including normalizationFactor, totalDebt, risk params.
+    """
+    try:
+        markets = get_all_markets_with_state()
+        
+        enriched = []
+        for market in markets:
+            # Format normalization factor
+            nf_raw = int(market.get('normalization_factor') or 0)
+            nf_display = nf_raw / 1e18 if nf_raw else 0
+            accrued_interest_pct = (nf_display - 1) * 100 if nf_display > 0 else 0
+            
+            # Format total debt
+            total_debt_raw = int(market.get('total_debt') or 0)
+            total_debt_display = total_debt_raw / 1e18 if total_debt_raw else 0
+            
+            # Format risk params (WAD -> percentage)
+            min_col_raw = int(market.get('min_col_ratio') or 0)
+            maint_margin_raw = int(market.get('maintenance_margin') or 0)
+            liq_close_raw = int(market.get('liquidation_close_factor') or 0)
+            
+            min_col_pct = min_col_raw / 1e16 if min_col_raw else 0
+            maint_margin_pct = maint_margin_raw / 1e16 if maint_margin_raw else 0
+            liq_close_pct = liq_close_raw / 1e16 if liq_close_raw else 0
+            
+            funding_period = market.get('funding_period') or 0
+            funding_period_days = funding_period / 86400 if funding_period else 0
+            
+            # Format last update timestamp
+            state_last_update = market.get('state_last_update')
+            last_update_display = ""
+            if state_last_update:
+                from datetime import datetime
+                last_update_display = datetime.utcfromtimestamp(state_last_update).strftime('%Y-%m-%d %H:%M:%S')
+            
+            enriched.append({
+                "id": market.get('tx_hash') or market.get('market_id'),
+                "market_id": market.get('market_id'),
+                "target_market": market.get('position_token_symbol') or "Unknown",
+                "broker_factory": market.get('broker_factory'),
+                "position_token": market.get('position_token'),
+                "collateral_token": market.get('collateral_token'),
+                "underlying_token": market.get('underlying_token'),
+                "curator": market.get('curator'),
+                "status": "Running",
+                "timestamp": market.get('deployment_timestamp'),
+                "state": {
+                    "normalization_factor": str(nf_raw),
+                    "normalization_factor_display": f"{nf_display:.6f}",
+                    "accrued_interest_pct": f"{accrued_interest_pct:.4f}%",
+                    "total_debt": str(total_debt_raw),
+                    "total_debt_display": f"{total_debt_display:.2f}",
+                    "last_update": last_update_display,
+                    "last_update_timestamp": state_last_update,
+                    "block_number": market.get('state_block')
+                },
+                "risk_params": {
+                    "min_col_ratio": min_col_pct,
+                    "min_col_ratio_display": f"{min_col_pct:.0f}%",
+                    "maintenance_margin": maint_margin_pct,
+                    "maintenance_margin_display": f"{maint_margin_pct:.0f}%",
+                    "liquidation_close_factor": liq_close_pct,
+                    "liquidation_close_factor_display": f"{liq_close_pct:.0f}%",
+                    "funding_period_seconds": funding_period,
+                    "funding_period_days": funding_period_days,
+                    "debt_cap": market.get('debt_cap'),
+                    "broker_verifier": market.get('broker_verifier')
+                },
+                "oracles": {
+                    "spot_oracle": market.get('spot_oracle'),
+                    "rate_oracle": market.get('rate_oracle')
+                }
+            })
+        
+        return enriched
+    except Exception as e:
+        logging.error(f"Error fetching enriched simulations: {e}", exc_info=True)
+        return []
+
+@app.get("/market/{market_id}/state")
+def get_market_state(market_id: str):
+    """
+    Get the current state for a specific market.
+    Uses the separate market_state.db database.
+    """
+    try:
+        market = get_market_by_id(market_id)
+        if not market:
+            raise HTTPException(status_code=404, detail="Market not found")
+        
+        # Format similar to enriched endpoint
+        nf_raw = int(market.get('normalization_factor') or 0)
+        nf_display = nf_raw / 1e18 if nf_raw else 0
+        accrued_interest = (nf_display - 1) * 100 if nf_display > 0 else 0
+        
+        return {
+            "market_id": market_id,
+            "state": {
+                "normalization_factor": str(nf_raw),
+                "normalization_factor_display": f"{nf_display:.6f}",
+                "accrued_interest_pct": f"{accrued_interest:.4f}%",
+                "total_debt": str(market.get('total_debt') or 0),
+                "last_update_timestamp": market.get('state_last_update'),
+                "block_number": market.get('state_block')
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching market state: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/market/register")
+async def register_market(market_id: str):
+    """
+    Manually register a market that was deployed before the indexer started.
+    """
+    if not w3.is_connected():
+        raise HTTPException(status_code=500, detail="RPC not connected")
+    if not CORE_ADDRESS or not CORE_ABI:
+        raise HTTPException(status_code=500, detail="Core contract not configured")
+    
+    try:
+        core_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(CORE_ADDRESS),
+            abi=CORE_ABI
+        )
+        
+        success = register_market_manually(market_id, w3, core_contract)
+        if success:
+            return {"status": "success", "market_id": market_id}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to register market")
+    except Exception as e:
+        logging.error(f"Error registering market: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Persistence Utils ---
+SIMULATIONS_FILE = "simulations.json"
+
+def load_simulations():
+    if not os.path.exists(SIMULATIONS_FILE):
+        return []
+    try:
+        with open(SIMULATIONS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_simulation(data):
+    current = load_simulations()
+    current.insert(0, data) # Prepend new sim
+    with open(SIMULATIONS_FILE, "w") as f:
+        json.dump(current, f, indent=4)
+
 # 3. Secure In-Memory Cache (TTL: 20s, Max: 1000 items)
 CACHE_STORE = TTLCache(maxsize=1000, ttl=20)
 
@@ -137,6 +616,201 @@ def get_from_cache(key):
 
 def set_cache(key, val):
     CACHE_STORE[key] = val
+
+@app.get("/simulation/{tx_hash}")
+def get_simulation_detail(tx_hash: str):
+    """
+    Fetch details for a specific market simulation.
+    Crucially, this fetches the *actual* parameters from the blockchain
+    by decoding the original deployment transaction.
+    """
+    if not w3.is_connected():
+         raise HTTPException(status_code=500, detail="RPC Connection Failed")
+
+    try:
+        # 1. Fetch Transaction
+        tx = w3.eth.get_transaction(tx_hash)
+        
+        # 2. Decode Input Data using Factory ABI
+        # Factory ABI must be loaded.
+        factory_contract = w3.eth.contract(abi=FACTORY_ABI)
+        
+        # decode_function_input returns (function_obj, dict_params)
+        func_obj, decoded_params = factory_contract.decode_function_input(tx.input)
+        
+        # decoded_params is a dict: {'params': ( ...tuple... )}
+        # The tuple matches DeployParams struct.
+        # We need to map it back to readable keys.
+        
+        # Struct Definition:
+        # struct DeployParams {
+        #     address underlyingPool;
+        #     address underlyingToken;
+        #     address collateralToken;
+        #     address curator;
+        #     string positionTokenName;
+        #     string positionTokenSymbol;
+        #     uint64 minColRatio;
+        #     uint64 maintenanceMargin;
+        #     uint64 liquidationCloseFactor;
+        #     address liquidationModule;
+        #     bytes32 liquidationParams;
+        #     address spotOracle;
+        #     address rateOracle;
+        #     uint32 oraclePeriod;
+        #     uint24 poolFee;
+        #     int24 tickSpacing;
+        # }
+        
+        # The decoded_params['params'] will be a tuple or struct-like depending on web3 version.
+        # usually it's a dict if ABI has names, or tuple.
+        # params argument in createMarket is named 'params'.
+        
+        data = decoded_params.get('params')
+        if not data:
+             raise HTTPException(status_code=404, detail="Could not decode params")
+
+        # Normalize Data (Handle BigInts, Bytes, etc.)
+        def normalize(v):
+            if isinstance(v, bytes):
+                return v.hex()
+            return v
+            
+        # If it's a tuple (which it likely is if using older web3 or specific ABI parsing), index it.
+        # If it's a dict (newer web3 with ABI names), access keys.
+        # Let's assume dict if names are present in ABI.
+        # Checking logic by try/except or just constructing response.
+        
+        # Map manually if it's a dict (safer to just return the dict with normalized values)
+        response = {}
+        for k, v in data.items():
+            response[k] = normalize(v)
+            
+        # Enrich with other data (Block number, etc)
+        response["tx_hash"] = tx_hash
+        response["block_number"] = tx.blockNumber
+        
+        # Scaling WADs back to percentages for display
+        # minColRatio (1e18) -> %
+        if 'minColRatio' in response:
+            response['display_minColRatio'] = float(response['minColRatio']) / 10**16
+        if 'maintenanceMargin' in response:
+            response['display_maintenanceMargin'] = float(response['maintenanceMargin']) / 10**16
+        if 'liquidationCloseFactor' in response:
+            response['display_liquidationCloseFactor'] = float(response['liquidationCloseFactor']) / 10**16
+            
+        return response
+
+    except Exception as e:
+        logging.error(f"Error fetching sim detail: {e}")
+        # Fallback for manual restore items that might not exist on current chain state
+        # (e.g. if we restarted anvil strictly but kept json)
+        # return basic info from JSON?
+        # User explicitly asked for "obtained from blockchain".
+        raise HTTPException(status_code=404, detail=f"Simulation data not found on chain: {e}")
+
+@app.get("/simulation/{market_id}/enriched")
+def get_simulation_detail_enriched(market_id: str):
+    """
+    Fetch enriched details for a specific market simulation.
+    Uses the market_state.db for live state data.
+    Works with both tx_hash and market_id formats.
+    """
+    try:
+        # Normalize market_id format
+        if not market_id.startswith('0x'):
+            market_id = '0x' + market_id
+        
+        # First try to get from market_state DB
+        market = get_market_by_id(market_id)
+        
+        if not market:
+            raise HTTPException(status_code=404, detail="Market not found in state database")
+        
+        # Format the response with all available data
+        nf_raw = int(market.get('normalization_factor') or 0)
+        nf_display = nf_raw / 1e18 if nf_raw else 1.0
+        accrued_interest_pct = (nf_display - 1) * 100 if nf_display > 0 else 0
+        
+        total_debt_raw = int(market.get('total_debt') or 0)
+        total_debt_display = total_debt_raw / 1e18 if total_debt_raw else 0
+        
+        # Risk params
+        min_col_raw = int(market.get('min_col_ratio') or 0)
+        maint_margin_raw = int(market.get('maintenance_margin') or 0)
+        liq_close_raw = int(market.get('liquidation_close_factor') or 0)
+        
+        min_col_pct = min_col_raw / 1e16 if min_col_raw else 0
+        maint_margin_pct = maint_margin_raw / 1e16 if maint_margin_raw else 0
+        liq_close_pct = liq_close_raw / 1e16 if liq_close_raw else 0
+        
+        funding_period = market.get('funding_period') or 0
+        funding_period_days = funding_period / 86400 if funding_period else 0
+        
+        # Format last update
+        state_last_update = market.get('state_last_update')
+        last_update_display = ""
+        if state_last_update:
+            from datetime import datetime
+            last_update_display = datetime.utcfromtimestamp(state_last_update).strftime('%Y-%m-%d %H:%M:%S UTC')
+        
+        response = {
+            "market_id": market_id,
+            "tx_hash": market.get('tx_hash'),
+            "block_number": market.get('state_block'),
+            
+            # Token info
+            "positionTokenSymbol": market.get('position_token_symbol') or "Unknown",
+            "positionTokenName": market.get('position_token_symbol') or "Unknown Market",
+            "positionToken": market.get('position_token'),
+            "collateralToken": market.get('collateral_token'),
+            "underlyingToken": market.get('underlying_token'),
+            "underlyingPool": market.get('underlying_pool'),
+            "curator": market.get('curator'),
+            
+            # Oracles
+            "spotOracle": market.get('spot_oracle'),
+            "rateOracle": market.get('rate_oracle'),
+            "liquidationModule": market.get('liquidation_module'),
+            
+            # Live Market State
+            "state": {
+                "normalization_factor": str(nf_raw),
+                "normalization_factor_display": f"{nf_display:.6f}",
+                "accrued_interest_pct": f"{accrued_interest_pct:.4f}%",
+                "total_debt": str(total_debt_raw),
+                "total_debt_display": f"{total_debt_display:.2f}",
+                "last_update": last_update_display,
+                "last_update_timestamp": state_last_update,
+                "block_number": market.get('state_block')
+            },
+            
+            # Risk Parameters
+            "risk_params": {
+                "minColRatio": min_col_raw,
+                "display_minColRatio": min_col_pct,
+                "maintenanceMargin": maint_margin_raw,
+                "display_maintenanceMargin": maint_margin_pct,
+                "liquidationCloseFactor": liq_close_raw,
+                "display_liquidationCloseFactor": liq_close_pct,
+                "fundingPeriod": funding_period,
+                "fundingPeriodDays": funding_period_days,
+                "debtCap": market.get('debt_cap'),
+                "brokerVerifier": market.get('broker_verifier')
+            },
+            
+            # Deployment info
+            "deployment_block": market.get('deployment_block'),
+            "deployment_timestamp": market.get('deployment_timestamp')
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching enriched sim detail: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching market details: {e}")
 
 # 4. WebSocket Manager
 class ConnectionManager:
@@ -213,9 +887,7 @@ async def broadcast_rates():
             logging.error(f"WS Broadcast Error: {e}")
             await asyncio.sleep(5)
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(broadcast_rates())
+# Note: broadcast_rates is started in the main startup_event_indexers function above
 
 
 @app.get("/rates")
