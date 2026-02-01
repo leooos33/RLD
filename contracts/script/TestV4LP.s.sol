@@ -52,14 +52,14 @@ contract TestV4LP is Script, StdCheats {
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
     
     // RLD Infrastructure
-    address constant BROKER_FACTORY = 0x87C7685147A150A069628479bEc5748f491B5cA0;
-    bytes32 constant MARKET_ID = 0x6b63870a1260fcb989a7459c5e537d9f8a1f76890dd88927f105de03d513b33c;
+    address brokerFactory;
+    bytes32 marketId;
     
     // Uniswap V4
     address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address constant POSM = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
     address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
-    address constant TWAMM = 0x8E894E20a38B89C004E4FF5691553B08e8e52ac0;
+    address twamm;
     
     // Pool parameters
     uint24 constant FEE = 500;
@@ -69,6 +69,15 @@ contract TestV4LP is Script, StdCheats {
     
     function run() external {
         console.log("====== TEST: V4 LP PROVISION ======");
+        
+        string memory json = vm.readFile("./deployments.json");
+        twamm = vm.parseJsonAddress(json, ".TWAMM");
+        brokerFactory = vm.parseJsonAddress(json, ".BrokerFactory");
+        marketId = vm.parseJsonBytes32(json, ".MarketId");
+
+        console.log("TWAMM:", twamm);
+        console.log("BrokerFactory:", brokerFactory);
+        console.log("MarketId:", vm.toString(marketId));
         
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
@@ -94,7 +103,7 @@ contract TestV4LP is Script, StdCheats {
         console.log("");
         console.log("Step 2: Creating broker and minting wRLP...");
         
-        address broker = PrimeBrokerFactory(BROKER_FACTORY).createBroker(
+        address broker = PrimeBrokerFactory(brokerFactory).createBroker(
             keccak256(abi.encode(block.timestamp, deployer, "v4lp"))
         );
         console.log("  Broker:", broker);
@@ -106,7 +115,7 @@ contract TestV4LP is Script, StdCheats {
         // Mint 2000 wRLP (~$10k at $5 each, ~20% LTV on 50k collateral)
         uint256 wRLPToMint = 2_000 * 1e6;
         PrimeBroker(payable(broker)).modifyPosition(
-            MARKET_ID,
+            marketId,
             int256(collateralAmount),
             int256(wRLPToMint)
         );
@@ -161,7 +170,7 @@ contract TestV4LP is Script, StdCheats {
             currency1: Currency.wrap(AUSDC),
             fee: FEE,
             tickSpacing: TICK_SPACING,
-            hooks: IHooks(TWAMM)
+            hooks: IHooks(twamm)
         });
         
         // Get current sqrt price

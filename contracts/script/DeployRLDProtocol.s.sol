@@ -16,6 +16,12 @@ import {DutchLiquidationModule} from "../src/rld/modules/liquidation/DutchLiquid
 import {StandardFundingModel} from "../src/rld/modules/funding/StandardFundingModel.sol";
 import {UniswapV4SingletonOracle} from "../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
 import {RLDAaveOracle} from "../src/rld/modules/oracles/RLDAaveOracle.sol";
+import {UniswapV4BrokerModule} from "../src/rld/modules/broker/UniswapV4BrokerModule.sol";
+import {TwammBrokerModule} from "../src/rld/modules/broker/TwammBrokerModule.sol";
+import {TWAMM} from "../src/twamm/TWAMM.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 
 /// @notice Minimal metadata renderer that returns empty strings (satisfies non-zero check)
 contract MinimalMetadataRenderer {
@@ -44,6 +50,7 @@ contract DeployRLDProtocol is Script {
     // Uniswap V4
     address constant UNISWAP_POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address constant UNISWAP_POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
+    address constant CREATE2_DEPLOYER = address(0x4e59b44847b379578588920cA78FbF26c0B4956C);
     
     // Aave V3
     address constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
@@ -75,6 +82,7 @@ contract DeployRLDProtocol is Script {
     
     // Config
     uint32 constant FUNDING_PERIOD = 30 days;
+    uint256 constant TWAMM_EXPIRATION_INTERVAL = 3600; // 1 hour
     
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -99,13 +107,53 @@ contract DeployRLDProtocol is Script {
         metadataRenderer = address(renderer);
         console.log("MetadataRenderer:", metadataRenderer);
         
-        MinimalValuationModule v4Module = new MinimalValuationModule();
+        UniswapV4BrokerModule v4Module = new UniswapV4BrokerModule();
         v4ValuationModule = address(v4Module);
         console.log("V4 Valuation Module:", v4ValuationModule);
         
-        MinimalValuationModule twammModule = new MinimalValuationModule();
+        TwammBrokerModule twammModule = new TwammBrokerModule();
         twammValuationModule = address(twammModule);
         console.log("TWAMM Valuation Module:", twammValuationModule);
+        
+        console.log("");
+        
+        // TWAMM Hook (Core set to address(0) initially)
+        // Mine for available hook address
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG |
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG
+        );
+        
+        bytes memory creationCode = type(TWAMM).creationCode;
+        bytes memory constructorArgs = abi.encode(
+            IPoolManager(UNISWAP_POOL_MANAGER),
+            TWAMM_EXPIRATION_INTERVAL,
+            deployer,
+            address(0) // Core logic initialized later
+        );
+
+        console.log("Mining TWAMM salt...");
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            CREATE2_DEPLOYER,
+            flags,
+            creationCode,
+            constructorArgs
+        );
+        console.log("Mined salt:", vm.toString(salt));
+
+        TWAMM twammHook = new TWAMM{salt: salt}(
+            IPoolManager(UNISWAP_POOL_MANAGER),
+            TWAMM_EXPIRATION_INTERVAL,
+            deployer,
+            address(0) // Core logic initialized later
+        );
+        require(address(twammHook) == hookAddress, "Hook address mismatch");
+
+        address twammAddress = address(twammHook);
+        console.log("TWAMM Hook:", twammAddress);
         
         console.log("");
         
@@ -179,7 +227,7 @@ contract DeployRLDProtocol is Script {
             primeBrokerImpl,        // primeBrokerImpl
             v4Oracle,               // v4Oracle
             standardFundingModel,   // fundingModel
-            address(0),             // twamm (optional for testing)
+            twammAddress,           // twamm (real contract)
             metadataRenderer,       // metadataRenderer
             FUNDING_PERIOD          // fundingPeriod
         );
@@ -197,7 +245,7 @@ contract DeployRLDProtocol is Script {
         RLDCore core = new RLDCore(
             rldMarketFactory,       // factory
             UNISWAP_POOL_MANAGER,   // poolManager
-            address(0)              // twamm (optional for testing)
+            twammAddress            // twamm (real contract)
         );
         rldCore = address(core);
         console.log("RLDCore:", rldCore);
@@ -212,6 +260,9 @@ contract DeployRLDProtocol is Script {
         
         factory.initializeCore(rldCore);
         console.log("Factory linked to Core: OK");
+
+        twammHook.setRldCore(rldCore);
+        console.log("TWAMM linked to Core: OK");
         
         vm.stopBroadcast();
         
@@ -238,5 +289,26 @@ contract DeployRLDProtocol is Script {
         console.log("  Aave Pool:", AAVE_POOL);
         console.log("  aUSDC:", AUSDC);
         console.log("  USDC:", USDC);
+
+        // ============================================
+        // EXPORT ADDRESSES
+        // ============================================
+        string memory jsonObj = "deployment";
+        vm.serializeAddress(jsonObj, "RLDCore", rldCore);
+        vm.serializeAddress(jsonObj, "RLDMarketFactory", rldMarketFactory);
+        vm.serializeAddress(jsonObj, "DutchLiquidationModule", dutchLiquidationModule);
+        vm.serializeAddress(jsonObj, "StandardFundingModel", standardFundingModel);
+        vm.serializeAddress(jsonObj, "UniswapV4SingletonOracle", v4Oracle);
+        vm.serializeAddress(jsonObj, "RLDAaveOracle", rldAaveOracle);
+        vm.serializeAddress(jsonObj, "TwammBrokerModule", twammValuationModule);
+        vm.serializeAddress(jsonObj, "UniswapV4BrokerModule", v4ValuationModule);
+        vm.serializeAddress(jsonObj, "TWAMM", twammAddress);
+        vm.serializeAddress(jsonObj, "PrimeBrokerImpl", primeBrokerImpl);
+        vm.serializeAddress(jsonObj, "PositionTokenImpl", positionTokenImpl);
+        
+        string memory finalJson = vm.serializeAddress(jsonObj, "MetadataRenderer", metadataRenderer);
+        
+        vm.writeJson(finalJson, "./deployments.json");
+        console.log("Addresses saved to ./deployments.json");
     }
 }

@@ -84,13 +84,13 @@ echo -e "${GREEN}✓ Anvil running on block $BLOCK_DEC${NC}"
 echo -e "${CYAN}[3/9] Deploying RLD Protocol contracts...${NC}"
 
 cd "$CONTRACTS_DIR"
-forge script script/DeployRLDFull.s.sol:DeployRLDFull \
+forge script script/DeployRLDProtocol.s.sol:DeployRLDProtocol \
     --rpc-url http://localhost:8545 \
     --broadcast \
     --quiet
 
 # Extract key addresses
-BROADCAST_FILE="$CONTRACTS_DIR/broadcast/DeployRLDFull.s.sol/1/run-latest.json"
+BROADCAST_FILE="$CONTRACTS_DIR/broadcast/DeployRLDProtocol.s.sol/1/run-latest.json"
 CORE_ADDR=$(python3 -c "import json; d=json.load(open('$BROADCAST_FILE')); print([t['contractAddress'] for t in d['transactions'] if t.get('contractName')=='RLDCore'][0])")
 FACTORY_ADDR=$(python3 -c "import json; d=json.load(open('$BROADCAST_FILE')); print([t['contractAddress'] for t in d['transactions'] if t.get('contractName')=='RLDMarketFactory'][0])")
 AAVE_ORACLE=$(python3 -c "import json; d=json.load(open('$BROADCAST_FILE')); print([t['contractAddress'] for t in d['transactions'] if t.get('contractName')=='RLDAaveOracle'][0])")
@@ -112,6 +112,14 @@ forge script script/CreateTestMarket.s.sol:CreateTestMarket \
     --quiet 2>&1 || {
     echo -e "${YELLOW}⚠ Market creation may have failed. Continuing...${NC}"
 }
+
+# Merge market deployments into main deployments.json
+if [ -f "market_deployments.json" ] && [ -f "deployments.json" ]; then
+    echo "Merging deployment files..."
+    jq -s '.[0] * .[1]' deployments.json market_deployments.json > deployments.tmp && mv deployments.tmp deployments.json
+    rm market_deployments.json
+    echo -e "${GREEN}✓ Addresses consolidated into contracts/deployments.json${NC}"
+fi
 
 echo -e "${GREEN}✓ Test market created${NC}"
 
