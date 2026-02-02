@@ -51,11 +51,52 @@ interface IPrimeBroker {
     /// @param active True to authorize, false to deauthorize.
     function setOperator(address operator, bool active) external;
 
+    /// @notice Sets which V4 LP position is tracked for NAV calculation.
+    /// @param newTokenId The NFT token ID to track (0 to clear).
+    function setActiveV4Position(uint256 newTokenId) external;
+
+    /// @notice Sets which TWAMM order is tracked for NAV calculation.
+    /// @param info The TWAMM order info to track.
+    function setActiveTwammOrder(TwammOrderInfo calldata info) external;
+
+    /// @notice Get the current nonce for signature-based operator authorization.
+    /// @param caller The address of the caller (executor contract).
+    function operatorNonces(address caller) external view returns (uint256);
+
+    /// @notice Set operator via signature from the NFT owner.
+    /// @param operator The address to grant/revoke operator status.
+    /// @param active True to grant, false to revoke.
+    /// @param signature EIP-191 signature from the NFT owner.
+    /// @param nonce Must match operatorNonces[msg.sender].
+    function setOperatorWithSignature(
+        address operator,
+        bool active,
+        bytes calldata signature,
+        uint256 nonce
+    ) external;
+
+    /// @notice Submits a TWAMM order with automatic registration for solvency tracking.
+    /// @dev The broker becomes the order owner. Uses JIT approval internally.
+    /// @param twammHook The TWAMM hook contract address.
+    /// @param params The order parameters (key, zeroForOne, duration, amountIn).
+    /// @return orderId The unique identifier of the created order.
+    /// @return orderKey The order key for tracking and claiming.
+    function submitTwammOrder(
+        address twammHook,
+        ITWAMM.SubmitOrderParams calldata params
+    ) external returns (bytes32 orderId, ITWAMM.OrderKey memory orderKey);
+
+    /// @notice Cancels the active TWAMM order and claims proceeds.
+    /// @return buyTokensOut Amount of buy tokens received.
+    /// @return sellTokensRefund Amount of sell tokens refunded.
+    function cancelTwammOrder() external returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+
     /* ============================================================================================ */
     /*                                        NFT METADATA                                          */
     /* ============================================================================================ */
 
     // BondMetadata removed - rendering is now dynamic based on chain state
 
-
 }
+
+

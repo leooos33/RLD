@@ -86,11 +86,15 @@ contract DeployWrappedMarket is Script {
         console.log("collateralToken (waUSDC):", addrs.collateralToken);
         console.log("positionToken (wRLP):", addrs.positionToken);
         
-        // Output for script consumption
+        // Output for script consumption (simple format for shell parsing)
         console.log("");
-        console.log("WAUSDC_ADDRESS=%s", address(waUSDC));
-        console.log("WRAPPED_MARKET_ID=%s", vm.toString(MarketId.unwrap(marketId)));
-        console.log("WRAPPED_BROKER_FACTORY=%s", brokerFactory);
-        console.log("WRAPPED_POSITION_TOKEN=%s", addrs.positionToken);
+        string memory wausdcStr = string(abi.encodePacked("WAUSDC_ADDRESS=", vm.toString(address(waUSDC))));
+        string memory marketIdStr = string(abi.encodePacked("WRAPPED_MARKET_ID=", vm.toString(MarketId.unwrap(marketId))));
+        string memory brokerStr = string(abi.encodePacked("WRAPPED_BROKER_FACTORY=", vm.toString(brokerFactory)));
+        string memory positionStr = string(abi.encodePacked("WRAPPED_POSITION_TOKEN=", vm.toString(addrs.positionToken)));
+        console.log(wausdcStr);
+        console.log(marketIdStr);
+        console.log(brokerStr);
+        console.log(positionStr);
     }
 }

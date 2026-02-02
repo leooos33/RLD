@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {IValuationModule} from "../../../shared/interfaces/IValuationModule.sol";
-import {ISpotOracle} from "../../../shared/interfaces/ISpotOracle.sol";
+import {IRLDOracle} from "../../../shared/interfaces/IRLDOracle.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 import {ITWAMM} from "../../../twamm/ITWAMM.sol";
@@ -81,23 +81,28 @@ contract TwammBrokerModule is IValuationModule {
     /// @dev Encoded by PrimeBroker._encodeTwammData() and decoded here
     struct VerifyParams {
         /// @dev The TWAMM hook contract address (NOT this module!)
-        /// The hook stores order state and executes swaps.
         address hook;
         
         /// @dev The Uniswap V4 PoolKey identifying the pool
-        /// Contains: currency0, currency1, fee, tickSpacing, hooks
         PoolKey key;
         
         /// @dev The order identifier within the TWAMM
-        /// Contains: owner, expiration, zeroForOne (trade direction)
         ITWAMM.OrderKey orderKey;
         
-        /// @dev The price oracle for valuation (ISpotOracle)
+        /// @dev The RLD oracle for valuation (IRLDOracle for getIndexPrice)
         address oracle;
         
-        /// @dev The base token for pricing (e.g., collateralToken like aUSDC)
-        /// All token values are converted to this denomination
+        /// @dev The collateral token (e.g., waUSDC) - valued 1:1
         address valuationToken;
+        
+        /// @dev The position token (e.g., wRLP) - valued via index price
+        address positionToken;
+        
+        /// @dev Aave pool address for index price lookup
+        address underlyingPool;
+        
+        /// @dev Underlying asset address (e.g., USDC)
+        address underlyingToken;
     }
 
     /* ============================================================================================ */
@@ -160,22 +165,43 @@ contract TwammBrokerModule is IValuationModule {
         // ┌─────────────────────────────────────────────────────────────────┐
         // │ STEP 3: Value the Refund (Unsold Principal)                     │
         // └─────────────────────────────────────────────────────────────────┘
-        // Convert sellTokensRefund to valuationToken value
-        // Formula: value = amount × price
         if (sellTokensRefund > 0) {
-            uint256 price = ISpotOracle(params.oracle).getSpotPrice(sellToken, params.valuationToken);
-            totalValue += sellTokensRefund.mulWadDown(price);
+            totalValue += _priceToken(sellToken, sellTokensRefund, params);
         }
         
         // ┌─────────────────────────────────────────────────────────────────┐
         // │ STEP 4: Value the Earnings (Bought Tokens)                      │
         // └─────────────────────────────────────────────────────────────────┘
-        // Convert buyTokensOwed to valuationToken value
         if (buyTokensOwed > 0) {
-            uint256 price = ISpotOracle(params.oracle).getSpotPrice(buyToken, params.valuationToken);
-            totalValue += buyTokensOwed.mulWadDown(price);
+            totalValue += _priceToken(buyToken, buyTokensOwed, params);
         }
         
         return totalValue;
+    }
+    
+    /// @dev Prices a token amount in valuation token terms
+    /// @param token The token address
+    /// @param amount The token amount
+    /// @param params The verification params
+    /// @return The value in valuation token terms
+    function _priceToken(
+        address token,
+        uint256 amount,
+        VerifyParams memory params
+    ) internal view returns (uint256) {
+        if (token == params.valuationToken) {
+            // Collateral token: 1:1 value
+            return amount;
+        } else if (token == params.positionToken) {
+            // Position token: use index price from Aave oracle
+            uint256 indexPrice = IRLDOracle(params.oracle).getIndexPrice(
+                params.underlyingPool,
+                params.underlyingToken
+            );
+            return amount.mulWadDown(indexPrice);
+        } else {
+            // Unknown token - shouldn't happen in RLD pools
+            return 0;
+        }
     }
 }

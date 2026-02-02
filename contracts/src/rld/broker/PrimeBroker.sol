@@ -8,6 +8,7 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {ITWAMM} from "../../twamm/ITWAMM.sol";
@@ -38,7 +39,7 @@ interface IERC721 {
 ///
 /// 1. **Holds Assets** - Cash (collateral token), wRLP tokens, V4 LP positions, TWAMM orders
 /// 2. **Reports Value** - `getNetAccountValue()` calculates total asset value for solvency checks
-/// 3. **Enables Actions** - `executeWithApproval()` allows DeFi interactions with JIT approval pattern
+/// 3. **Enables Actions** - External `BrokerExecutor` contracts enable custom DeFi interactions
 /// 4. **Supports Liquidation** - `seize()` extracts assets during liquidation with proper routing
 ///
 /// ## Architecture
@@ -60,7 +61,7 @@ interface IERC721 {
 /// │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │    │
 /// │  │                                                                  │    │
 /// │  │  getNetAccountValue() → Sum of all asset values                 │    │
-/// │  │  executeWithApproval() → JIT approval + DeFi call + solvency    │    │
+/// │  │  BrokerExecutor pattern → custom DeFi interactions via operator│    │
 /// │  │  withdrawCollateral() → Direct withdrawal with solvency check   │    │
 /// │  │  seize(amount, recipient) → Liquidation asset extraction        │    │
 /// │  └─────────────────────────────────────────────────────────────────┘    │
@@ -82,10 +83,10 @@ interface IERC721 {
 ///
 /// ## Security Features (V1.1)
 ///
-/// ### 1. JIT (Just-In-Time) Approval Pattern
-/// - `executeWithApproval()` grants temporary approvals that are revoked immediately
-/// - Prevents approval drain attacks
-/// - Blacklists critical tokens (collateral, position, underlying)
+/// ### 1. External Executor Pattern
+/// - Custom execution paths use external `BrokerExecutor` contracts
+/// - Executors become temporary operators via signature
+/// - No approval persistence - executors revoke themselves after actions
 ///
 /// ### 2. Ownership Validation in NAV
 /// - V4 LP positions only counted if broker still owns the NFT
@@ -212,6 +213,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Prevents re-initialization of clones
     /// Set to true in implementation constructor AND after clone initialization
     bool private initialized;
+
+    /// @notice Nonces for signature-based operator authorization
+    /// @dev Incremented after each successful setOperatorWithSignature call
+    mapping(address => uint256) public operatorNonces;
 
     /* ============================================================================================ */
     /*                                         MODIFIERS                                           */
@@ -594,9 +599,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     // │   2. broker.setActiveV4Position(newTokenId)      // Track it for solvency              │
     // │                                                                                          │
     // │ EXAMPLE: Opening a TWAMM Order                                                          │
-    // │   1. broker.execute(collateral, approveCalldata) // Approve TWAMM hook                 │
-    // │   2. broker.execute(twammHook, submitOrder...)   // Submit the order                   │
-    // │   3. broker.setActiveTwammOrder(orderInfo)       // Track it for solvency              │
+    // │   1. broker.submitTwammOrder(twammHook, params)   // Submit + auto-register             │
     // │                                                                                          │
     // │ WARNING: Untracked positions are INVISIBLE to solvency checks!                          │
     // │ If you have 100k in position A and 1k in position B, track position A.                 │
@@ -675,114 +678,75 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after clear");
     }
 
-    /* ============================================================================================ */
-    /*                                    GENERIC EXECUTION                                        */
-    /* ============================================================================================ */
+    /// @notice Submits a TWAMM order and automatically registers it for solvency tracking
+    /// @dev This broker becomes the order owner (msg.sender to TWAMM = this broker)
+    ///
+    /// ## Flow
+    /// 1. Approves TWAMM hook to pull tokens (JIT approval)
+    /// 2. Calls TWAMM.submitOrder() - broker becomes order owner
+    /// 3. Revokes approval (cleanup)
+    /// 4. Automatically sets activeTwammOrder for solvency tracking
+    /// 5. Checks solvency
+    ///
+    /// ## Token Requirements
+    /// Broker must hold sufficient tokens BEFORE calling this function.
+    /// For selling wRLP: first call modifyPosition() to mint, then withdrawPositionToken() to self.
+    /// For selling collateral: ensure collateral balance in broker.
+    ///
+    /// @param twammHook The TWAMM hook contract address
+    /// @param params The order parameters (key, zeroForOne, duration, amountIn)
+    /// @return orderId The unique identifier of the created order
+    /// @return orderKey The order key for tracking and claiming
+    function submitTwammOrder(
+        address twammHook,
+        ITWAMM.SubmitOrderParams calldata params
+    ) external onlyAuthorized nonReentrant returns (bytes32 orderId, ITWAMM.OrderKey memory orderKey) {
+        // Determine which token is being sold
+        address sellToken = params.zeroForOne 
+            ? Currency.unwrap(params.key.currency0) 
+            : Currency.unwrap(params.key.currency1);
+        
+        // Step 1: JIT Approval - approve exact amount needed
+        ERC20(sellToken).approve(twammHook, params.amountIn);
+        
+        // Step 2: Submit order - this broker becomes the owner
+        (orderId, orderKey) = ITWAMM(twammHook).submitOrder(params);
+        
+        // Step 3: Revoke approval (cleanup)
+        ERC20(sellToken).approve(twammHook, 0);
+        
+        // Step 4: Auto-register for solvency tracking
+        activeTwammOrder = TwammOrderInfo({
+            key: params.key,
+            orderKey: orderKey,
+            orderId: orderId
+        });
+        
+        // Step 5: Verify solvency
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after order");
+    }
 
-    /// @notice Executes an arbitrary call with Just-In-Time (JIT) approval pattern
-    /// @dev The "Swiss Army Knife" of the broker - enables any DeFi interaction with approval safety
-    ///
-    /// ## Security Model: Flash Approvals
-    ///
-    /// This function implements a "flash approval" pattern inspired by EIP-1153 transient storage:
-    /// 1. **Grant** - Approve target for exact amount needed
-    /// 2. **Execute** - Perform the action
-    /// 3. **Revoke** - Force approval back to 0
-    /// 4. **Verify** - Check solvency
-    ///
-    /// Approvals exist ONLY during the execution and are ALWAYS revoked, even if unused.
-    /// This prevents the Critical "Approval Drain" vulnerability where persistent approvals
-    /// could be exploited via transferFrom in a separate transaction.
-    ///
-    /// ## Example Uses
-    ///
-    /// ```solidity
-    /// // Swap on Uniswap (needs approval)
-    /// broker.executeWithApproval(
-    ///     router, 
-    ///     abi.encodeCall(Router.swap, (...)),
-    ///     USDC,  // Token to approve
-    ///     1000e6 // Amount
-    /// );
-    ///
-    /// // Claim rewards (no approval needed)
-    /// broker.executeWithApproval(
-    ///     rewardContract, 
-    ///     abi.encodeCall(Rewards.claim, (...)),
-    ///     address(0), // No token
-    ///     0           // No amount
-    /// );
-    /// ```
-    ///
-    /// @param target The contract address to call
-    /// @param data The encoded function call data
-    /// @param approvalToken The token to approve (address(0) to skip approval)
-    /// @param approvalAmount The amount to approve (0 to skip approval)
-    function executeWithApproval(
-        address target, 
-        bytes calldata data,
-        address approvalToken,
-        uint256 approvalAmount
-    ) external onlyAuthorized nonReentrant {
-        // SECURITY: Prevent direct calls to token contracts
-        // Users must use the approval parameters to interact with tokens
-        // This prevents bypassing the JIT approval cleanup mechanism
-        require(
-            target != collateralToken &&
-            target != positionToken &&
-            target != underlyingToken,
-            "Use approval parameters for token interactions"
+    /// @notice Cancels the active TWAMM order and claims proceeds
+    /// @dev Wrapper around _cancelTwammOrder that includes solvency check
+    /// @return buyTokensOut Amount of buy tokens received
+    /// @return sellTokensRefund Amount of sell tokens refunded
+    function cancelTwammOrder() external onlyAuthorized nonReentrant returns (uint256 buyTokensOut, uint256 sellTokensRefund) {
+        require(activeTwammOrder.orderId != bytes32(0), "No active order");
+        
+        // Cancel and receive tokens
+        (buyTokensOut, sellTokensRefund) = ITWAMM(address(activeTwammOrder.key.hooks)).cancelOrder(
+            activeTwammOrder.key, 
+            activeTwammOrder.orderKey
         );
         
-        // Step 1: Grant JIT Approval (if requested)
-        if (approvalToken != address(0) && approvalAmount > 0) {
-            ERC20(approvalToken).approve(target, approvalAmount);
-        }
-
-        // Step 2: Execute the external call
-        (bool success, ) = target.call(data);
-        require(success, "Interaction Failed");
-
-        // Step 3: Revoke Approval (force cleanup)
-        // This runs even if the target didn't use the full allowance
-        if (approvalToken != address(0) && approvalAmount > 0) {
-            ERC20(approvalToken).approve(target, 0);
-        }
-
-        // Step 4: Emit for off-chain indexing
-        emit Execute(target, data);
-
-        // Step 5: CRITICAL SAFETY CHECK
-        // If the interaction made the broker insolvent, the entire tx reverts
-        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Action causes Insolvency");
+        // Clear tracking
+        delete activeTwammOrder;
+        
+        // Verify solvency
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after cancel");
     }
 
-    /// @notice Executes multiple calls in a single transaction
-    /// @dev Standard multicall pattern - allows batching operations atomically
-    ///
-    /// ## Use Case: Leverage Looping
-    ///
-    /// ```solidity
-    /// bytes[] memory calls = new bytes[](4);
-    /// calls[0] = abi.encodeCall(modifyPosition, (marketId, 1000e6, 0));     // Deposit
-    /// calls[1] = abi.encodeCall(modifyPosition, (marketId, 0, 500e18));     // Borrow
-    /// calls[2] = abi.encodeCall(executeWithApproval, (router, swapData, wRLP, 500e18)); // Swap
-    /// calls[3] = abi.encodeCall(modifyPosition, (marketId, 500e6, 0));      // Re-deposit
-    /// broker.multicall(calls);
-    /// ```
-    ///
-    /// @param data Array of encoded function calls to this contract
-    /// @return results Array of return data from each call
-    function multicall(bytes[] calldata data) external nonReentrant returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            // Use delegatecall to preserve msg.sender and execute in this contract's context
-            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
-            require(success, "Multicall: call failed");
-            results[i] = result;
-        }
-    }
-    
+
     /* ============================================================================================ */
     /*                                  CORE POSITION MANAGEMENT                                   */
     /* ============================================================================================ */
@@ -857,7 +821,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /* ============================================================================================ */
 
     /// @notice Withdraws collateral token to a specified recipient
-    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @dev Dedicated withdrawal function with solvency check
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
     function withdrawCollateral(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
@@ -866,7 +830,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     }
 
     /// @notice Withdraws position token (wRLP) to a specified recipient
-    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @dev Dedicated withdrawal function with solvency check
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
     function withdrawPositionToken(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
@@ -875,7 +839,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     }
 
     /// @notice Withdraws underlying token to a specified recipient
-    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @dev Dedicated withdrawal function with solvency check
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
     function withdrawUnderlying(address recipient, uint256 amount) external onlyAuthorized nonReentrant {
@@ -892,7 +856,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @return Encoded bytes for module consumption
     function _encodeModuleData(uint256 id) internal view returns (bytes memory) {
          // Uses cached values to avoid calling Core
-         return abi.encode(id, POSM, rateOracle, collateralToken);
+         // Order must match UniswapV4BrokerModule.VerifyParams struct:
+         // (tokenId, positionManager, oracle, valuationToken, positionToken, underlyingPool, underlyingToken)
+         return abi.encode(
+             id,
+             POSM,
+             rateOracle,
+             collateralToken,
+             positionToken,
+             underlyingPool,
+             underlyingToken
+         );
     }
     
     /// @dev Encodes data for TWAMM_MODULE.getValue()
@@ -900,13 +874,16 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @return Encoded bytes matching TwammBrokerModule.VerifyParams
     function _encodeTwammData(TwammOrderInfo memory info) internal view returns (bytes memory) {
         // NOTE: Order must match TwammBrokerModule.VerifyParams struct:
-        // (hook, key, orderKey, oracle, valuationToken)
+        // (hook, key, orderKey, oracle, valuationToken, positionToken, underlyingPool, underlyingToken)
         return abi.encode(
             address(info.key.hooks),  // hook - The TWAMM hook address
             info.key,                  // key - PoolKey
             info.orderKey,             // orderKey - OrderKey
-            rateOracle,                // oracle - for pricing
-            collateralToken            // valuationToken - Target currency (e.g. USDC)
+            rateOracle,                // oracle - IRLDOracle for getIndexPrice
+            collateralToken,           // valuationToken - valued 1:1
+            positionToken,             // positionToken - wRLP, valued via index price
+            underlyingPool,            // underlyingPool - Aave pool
+            underlyingToken            // underlyingToken - underlying asset (USDC)
         );
     }
     
@@ -935,10 +912,68 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// - Operators persist through ownership transfers (NFT transfer)
     /// - New owner can remove old operators
     /// - Operators cannot add other operators
+    /// - Operators CAN revoke themselves (enables atomic executor pattern)
     ///
     /// @param operator The address to grant/revoke operator status
     /// @param active True to grant, false to revoke
-    function setOperator(address operator, bool active) external override onlyOwner nonReentrant {
+    function setOperator(address operator, bool active) external override nonReentrant {
+        address owner = IERC721(factory).ownerOf(uint256(uint160(address(this))));
+        
+        // Owner can do anything
+        // Operators can only REVOKE themselves (not add or revoke others)
+        if (msg.sender == owner) {
+            // Owner can grant or revoke any operator
+        } else if (msg.sender == operator && operators[msg.sender] && !active) {
+            // Operator can revoke themselves
+        } else {
+            revert("Not authorized");
+        }
+        
+        operators[operator] = active;
+        emit OperatorUpdated(operator, active);
+    }
+
+    /// @notice Set operator via signature from the NFT owner
+    /// @dev Enables atomic operator set + execute + revoke pattern in a single tx
+    ///
+    /// Security:
+    /// - Signature must be from current NFT owner
+    /// - Nonce prevents replay attacks
+    /// - Signature binds to specific operator and caller
+    ///
+    /// @param operator The address to grant/revoke operator status
+    /// @param active True to grant, false to revoke
+    /// @param signature EIP-191 signature from the NFT owner
+    /// @param nonce Must match operatorNonces[msg.sender]
+    function setOperatorWithSignature(
+        address operator,
+        bool active,
+        bytes calldata signature,
+        uint256 nonce
+    ) external nonReentrant {
+        address owner = IERC721(factory).ownerOf(uint256(uint160(address(this))));
+        
+        // Verify nonce
+        require(nonce == operatorNonces[msg.sender], "Invalid nonce");
+        operatorNonces[msg.sender]++;
+        
+        // Build signed message hash
+        // Includes: operator, broker, nonce, caller (executor)
+        bytes32 structHash = keccak256(abi.encode(
+            operator,
+            address(this),
+            nonce,
+            msg.sender
+        ));
+        bytes32 ethSignedHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            structHash
+        ));
+        
+        // Verify signature is from owner
+        address signer = ECDSA.recover(ethSignedHash, signature);
+        require(signer == owner, "Invalid signature");
+        
         operators[operator] = active;
         emit OperatorUpdated(operator, active);
     }

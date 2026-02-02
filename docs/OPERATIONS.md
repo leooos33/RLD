@@ -171,6 +171,49 @@ LP_AMOUNT=100000             # 100k each for LP
 
 ---
 
+## 4. Mint & LP via PrimeBroker (Recommended)
+
+**Script**: [`./scripts/mint_and_lp_broker.sh`](file:///home/ubuntu/RLD/scripts/mint_and_lp_broker.sh)
+
+Full flow where LP NFT stays in broker and is tracked for NAV calculation.
+
+### Key Difference from Method 3
+
+| Aspect                    | mint_and_lp_wrapped.sh | mint_and_lp_broker.sh |
+| ------------------------- | ---------------------- | --------------------- |
+| LP NFT Owner              | Deployer               | **Broker** ✓          |
+| Tracked for NAV           | No                     | **Yes** ✓             |
+| Can be used as collateral | No                     | **Yes** ✓             |
+
+### Command
+
+```bash
+./scripts/mint_and_lp_broker.sh
+```
+
+### What it does
+
+| Step | Action             | Details                                                 |
+| ---- | ------------------ | ------------------------------------------------------- |
+| 1-6  | Same as wrapped    | Acquire waUSDC, create broker, mint wRLP                |
+| 7    | Approve via broker | `executeWithApproval(Permit2, approve, ...)`            |
+| 8    | Add LP + Track     | Multicall on Forge script, then `setActiveV4Position()` |
+
+### Flow Diagram
+
+```
+Broker
+  ├── waUSDC (collateral)
+  ├── wRLP (minted debt)
+  └── executeWithApproval()
+        ├── Approve Permit2 (waUSDC)
+        ├── Approve Permit2 (wRLP)
+        └── V4 PM modifyLiquidities() → LP NFT (owned by Broker!)
+            └── setActiveV4Position(tokenId) → NAV includes LP
+```
+
+---
+
 ## Quick Reference
 
 ### All Scripts

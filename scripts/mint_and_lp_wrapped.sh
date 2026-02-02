@@ -44,11 +44,25 @@ USDC_WHALE="0xCFFAd3200574698b78f32232aa9D63eABD290703"
 V4_POSITION_MANAGER="0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e"
 PERMIT2="0x000000000022D473030F116dDEE9F6B43aC78BA3"
 
-# Wrapped market addresses (from deployment)
-WAUSDC="0xcb68357b50A5e759E9C530f172A8174EfA1E350D"
-WRAPPED_MARKET_ID="0x9adc509a91014b06fe2b952bd20a4e188901e2292f3a5c238630e5d0fd313d8f"
-WRAPPED_BROKER_FACTORY="0x9554b52516f306360a239746F70f88c23D187b63"
-WRAPPED_POSITION_TOKEN="0x9ed4F4724b521326a9d9d2420252440bD05556c4"
+# Path to wrapped market JSON (created by deploy_wrapped_market.sh)
+MARKET_JSON="$CONTRACTS_DIR/wrapped_market.json"
+
+# Load addresses from wrapped_market.json if it exists
+if [ -f "$MARKET_JSON" ]; then
+    echo -e "${GREEN}Loading addresses from wrapped_market.json${NC}"
+    WAUSDC=$(jq -r '.waUSDC' "$MARKET_JSON")
+    WRAPPED_MARKET_ID=$(jq -r '.marketId' "$MARKET_JSON")
+    WRAPPED_BROKER_FACTORY=$(jq -r '.brokerFactory' "$MARKET_JSON")
+    WRAPPED_POSITION_TOKEN=$(jq -r '.positionToken' "$MARKET_JSON")
+else
+    echo -e "${YELLOW}⚠ wrapped_market.json not found, using fallback addresses${NC}"
+    echo -e "${YELLOW}  Run ./scripts/deploy_wrapped_market.sh first${NC}"
+    # Fallback to hardcoded defaults
+    WAUSDC="0xa1da18755De55f3929620a530968a28F16EA981D"
+    WRAPPED_MARKET_ID="0x56d02bade54cf9cd09b965dbc4e652aed2668f83e0d1686ae3a4c285551755c3"
+    WRAPPED_BROKER_FACTORY="0xBB20A1C05f54c9eF20a9f5A20587f345932fF236"
+    WRAPPED_POSITION_TOKEN="0xC6C7c316E4CBbD73cC36280E2E290487a42C11d0"
+fi
 
 parse_cast_output() {
     echo "$1" | awk '{print $1}'
@@ -63,9 +77,21 @@ echo -e "  Debt:        ${YELLOW}$DEBT_AMOUNT${NC} wRLP"
 echo -e "  LP Amount:   ${YELLOW}$LP_AMOUNT${NC} each token"
 echo ""
 
-# Load environment
+# Save JSON-loaded addresses (before .env overwrites them)
+SAVED_WAUSDC=$WAUSDC
+SAVED_WRAPPED_MARKET_ID=$WRAPPED_MARKET_ID
+SAVED_WRAPPED_BROKER_FACTORY=$WRAPPED_BROKER_FACTORY
+SAVED_WRAPPED_POSITION_TOKEN=$WRAPPED_POSITION_TOKEN
+
+# Load environment (for PRIVATE_KEY only)
 cd "$CONTRACTS_DIR"
 source .env
+
+# Restore JSON-loaded addresses (prevents .env from overwriting)
+WAUSDC=$SAVED_WAUSDC
+WRAPPED_MARKET_ID=$SAVED_WRAPPED_MARKET_ID
+WRAPPED_BROKER_FACTORY=$SAVED_WRAPPED_BROKER_FACTORY
+WRAPPED_POSITION_TOKEN=$SAVED_WRAPPED_POSITION_TOKEN
 
 if [ -z "$PRIVATE_KEY" ]; then
     echo -e "${RED}✗ Error: PRIVATE_KEY not set${NC}"
