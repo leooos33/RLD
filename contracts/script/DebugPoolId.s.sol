@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolIdLibrary, PoolId} from "v4-core/types/PoolId.sol";
-import {Currency} from "v4-core/types/Currency.sol";
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolIdLibrary, PoolId} from "v4-core/src/types/PoolId.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 contract DebugPoolId is Script {
     function run() external view {
