@@ -924,10 +924,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                     )
                 );
 
-                // FIX: Record earnings factor for orders expiring at this interval
-                // This ensures getCancelOrderState() can retrieve correct earnings for expired orders
-                self.orderPool0For1.recordExpirationFactor(nextExpirationTimestamp);
-                self.orderPool1For0.recordExpirationFactor(nextExpirationTimestamp);
+                // Finalize interval accounting and expire orders at this boundary
+                self.orderPool0For1.advanceToInterval(nextExpirationTimestamp, 0);
+                self.orderPool1For0.advanceToInterval(nextExpirationTimestamp, 0);
 
                 prevTimestamp = nextExpirationTimestamp;
             }
@@ -952,6 +951,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                     0
                 )
             );
+            // Finalize interval accounting for the current boundary
+            self.orderPool0For1.advanceToInterval(currentTimestampAtInterval, 0);
+            self.orderPool1For0.advanceToInterval(currentTimestampAtInterval, 0);
         }
 
         self.lastVirtualOrderTimestamp = currentTimestampAtInterval;
@@ -1091,17 +1093,30 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                 continue;
             }
 
+            // Calculate the final segment's earnings (from last tick to final price)
+            uint256 swapDelta0 = SqrtPriceMath.getAmount0Delta(
+                params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
+            );
+            uint256 swapDelta1 = SqrtPriceMath.getAmount1Delta(
+                params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
+            );
+            
             params.pool.sqrtPriceX96 = finalSqrtPriceX96;
+            unchecked {
+                totalEarnings += params.zeroForOne ? swapDelta1 : swapDelta0;
+            }
             break;
         }
 
-        totalEarnings = Math.mulDiv(
-            amountSelling,
-            FixedPoint96.Q96,
+        // Convert raw token earnings to earnings factor with proper scaling
+        uint256 earningsFactor = Math.mulDiv(
+            totalEarnings,
+            FixedPoint96.Q96 * RATE_SCALER,
             orderPool.sellRateCurrent
         );
 
-        orderPool.commit(totalEarnings, amountSelling);
+        // Commit with properly scaled values (earningsFactor and sellRateCurrent used)
+        orderPool.commit(earningsFactor, sellRateCurrent);
 
         return params.pool;
     }
