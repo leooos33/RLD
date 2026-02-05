@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IValuationModule} from "../../../shared/interfaces/IValuationModule.sol";
 import {IRLDOracle} from "../../../shared/interfaces/IRLDOracle.sol";
-import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "../../../shared/utils/FixedPointMathLib.sol";
 
 import {ITWAMM} from "../../../twamm/ITWAMM.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {IFundingModel} from "../../../shared/interfaces/IFundingModel.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "../../../shared/utils/FixedPointMathLib.sol";
 import {IRLDCore, MarketId} from "../../../shared/interfaces/IRLDCore.sol";
 import {IRLDOracle} from "../../../shared/interfaces/IRLDOracle.sol";
 import {ISpotOracle} from "../../../shared/interfaces/ISpotOracle.sol";

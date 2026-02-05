@@ -14,7 +14,7 @@ import {PrimeBrokerFactory} from "./PrimeBrokerFactory.sol";
 import {BrokerVerifier} from "../modules/verifier/BrokerVerifier.sol";
 import {UniswapV4SingletonOracle} from "../modules/oracles/UniswapV4SingletonOracle.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "../../shared/utils/FixedPointMathLib.sol";
 import {TWAMM as TwammHook} from "../../twamm/TWAMM.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 

@@ -11,7 +11,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {LiquidityAmounts} from "../../../shared/libraries/LiquidityAmounts.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {PositionInfo, PositionInfoLibrary} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
-import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "../../../shared/utils/FixedPointMathLib.sol";
 
 /// @title Uniswap V4 Broker Module
 /// @author RLD Protocol
