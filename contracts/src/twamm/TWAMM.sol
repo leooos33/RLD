@@ -924,6 +924,11 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                     )
                 );
 
+                // FIX: Record earnings factor for orders expiring at this interval
+                // This ensures getCancelOrderState() can retrieve correct earnings for expired orders
+                self.orderPool0For1.recordExpirationFactor(nextExpirationTimestamp);
+                self.orderPool1For0.recordExpirationFactor(nextExpirationTimestamp);
+
                 prevTimestamp = nextExpirationTimestamp;
             }
 

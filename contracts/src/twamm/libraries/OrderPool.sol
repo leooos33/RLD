@@ -38,4 +38,19 @@ library OrderPool {
     function commit(State storage self, uint256 earningsFactor, uint256 usedSellRate) internal {
         advanceWithoutCommit(self, earningsFactor, usedSellRate);
     }
+
+    /// @notice Records the current earnings factor for orders expiring at this interval
+    /// @dev Called AFTER commit() has updated earningsFactorCurrent
+    /// @param self The order pool state
+    /// @param expiration The expiration timestamp
+    function recordExpirationFactor(State storage self, uint256 expiration) internal {
+        // Only record if there are orders expiring at this interval
+        if (self.sellRateEndingAtInterval[expiration] > 0) {
+            self.earningsFactorAtInterval[expiration] = self.earningsFactorCurrent;
+            // Reduce sellRateCurrent by the amount expiring
+            self.sellRateCurrent -= self.sellRateEndingAtInterval[expiration];
+            // Reset accounted since we've finalized this interval
+            self.sellRateAccounted = 0;
+        }
+    }
 }
