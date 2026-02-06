@@ -220,7 +220,21 @@ async def get_events_list(
 ):
     """Get historical events."""
     try:
-        events = get_events(event_name, market_id, from_block, to_block, limit)
+        # Use named parameters to avoid order confusion
+        events = get_events(
+            from_block=from_block, 
+            to_block=to_block, 
+            event_name=event_name, 
+            market_id=market_id, 
+            limit=limit
+        )
+        # Rename 'data' to 'event_data' for API response model
+        for e in events:
+            if 'data' in e:
+                e['event_data'] = e.pop('data')
+            # Rename 'timestamp' to 'block_timestamp' for API response model
+            if 'timestamp' in e:
+                e['block_timestamp'] = e.pop('timestamp')
         return events
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

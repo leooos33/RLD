@@ -537,21 +537,28 @@ class ComprehensiveIndexer:
             elif event_name == "Swap":
                 # Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, 
                 #      uint160 sqrtPriceX96After, uint128 liquidity, int24 tick, uint24 fee)
+                # Note: ABI encoding pads each value to 32 bytes (64 hex chars)
                 pool_id = topics[1].hex() if len(topics) > 1 else None
                 sender = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
-                # Parse data: int128, int128, uint160, uint128, int24, uint24
-                if len(data) >= 256:
-                    amount0 = int(data[0:32], 16)
-                    if amount0 >= 2**127:
-                        amount0 -= 2**128
-                    amount1 = int(data[32:64], 16)
-                    if amount1 >= 2**127:
-                        amount1 -= 2**128
-                    sqrt_price = int(data[64:104], 16)
-                    liquidity = int(data[104:136], 16)
-                    tick = int(data[136:142], 16)
-                    if tick >= 2**23:
-                        tick -= 2**24
+                # Parse data: each field is padded to 32 bytes (64 hex chars)
+                # Data layout: amount0 (32) | amount1 (32) | sqrtPriceX96 (32) | liquidity (32) | tick (32) | fee (32)
+                if len(data) >= 384:  # 6 * 64 hex chars = 192 bytes = 384 hex chars
+                    # amount0: int128 (signed) - first 32 bytes
+                    amount0 = int(data[0:64], 16)
+                    if amount0 >= 2**255:  # Check sign bit for 256-bit
+                        amount0 -= 2**256
+                    # amount1: int128 (signed) - second 32 bytes
+                    amount1 = int(data[64:128], 16)
+                    if amount1 >= 2**255:
+                        amount1 -= 2**256
+                    # sqrtPriceX96: uint160 - third 32 bytes
+                    sqrt_price = int(data[128:192], 16)
+                    # liquidity: uint128 - fourth 32 bytes
+                    liquidity = int(data[192:256], 16)
+                    # tick: int24 - fifth 32 bytes
+                    tick = int(data[256:320], 16)
+                    if tick >= 2**255:
+                        tick -= 2**256
                     return {
                         'pool_id': pool_id,
                         'sender': sender,
@@ -559,7 +566,7 @@ class ComprehensiveIndexer:
                         'amount1': str(amount1),
                         'sqrtPriceX96': str(sqrt_price),
                         'liquidity': str(liquidity),
-                        'tick': tick
+                        'tick': int(tick)
                     }
                 return {'pool_id': pool_id, 'sender': sender, 'raw': data}
             

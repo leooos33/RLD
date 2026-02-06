@@ -15,8 +15,8 @@ cd /home/ubuntu/RLD/backend
 export RPC_URL MARKET_ID MOCK_ORACLE
 export USER_A_BROKER MM_BROKER CHAOS_BROKER
 
-# Run indexer in background
-python3 scripts/run_comprehensive_indexer.py > /tmp/indexer.log 2>&1 &
+# Run indexer in background with --run for continuous mode
+python3 scripts/run_comprehensive_indexer.py --run > /tmp/indexer.log 2>&1 &
 echo $! > /tmp/indexer.pid
 
 log_success "Indexer started (PID: $(cat /tmp/indexer.pid))"
