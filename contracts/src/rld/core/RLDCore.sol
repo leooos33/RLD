@@ -335,6 +335,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         _addTouchedPosition(id, msg.sender);
 
         emit PositionModified(id, msg.sender, deltaCollateral, deltaDebt);
+        
+        // Emit market state update for indexer
+        if (deltaDebt != 0) {
+            emit MarketStateUpdated(id, state.normalizationFactor, state.totalDebt);
+        }
     }
 
     /* ============================================================================================ */
@@ -454,21 +459,28 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         MarketState storage state = marketStates[id];
         MarketAddresses storage addresses = marketAddresses[id];
         
+        uint256 oldNormFactor = state.normalizationFactor;
+        uint256 timeDelta = block.timestamp - state.lastUpdateTimestamp;
+        
         // 1. Calculate new normalization factor via external model
-        (uint256 newNormFactor, ) = IFundingModel(addresses.fundingModel).calculateFunding(
+        (uint256 newNormFactor, int256 fundingRate) = IFundingModel(addresses.fundingModel).calculateFunding(
             MarketId.unwrap(id),
             address(this),
-            state.normalizationFactor,
+            oldNormFactor,
             state.lastUpdateTimestamp
         );
 
         // 2. Update storage with overflow protection
-        if (newNormFactor != state.normalizationFactor) {
+        if (newNormFactor != oldNormFactor) {
             require(newNormFactor <= type(uint128).max, "NormFactor overflow");
             state.normalizationFactor = uint128(newNormFactor);
+            
+            // Emit for indexer tracking
+            emit FundingApplied(id, oldNormFactor, newNormFactor, fundingRate, timeDelta);
         }
         state.lastUpdateTimestamp = uint48(block.timestamp);
     }
+
 
     /// @notice External wrapper to apply funding for testing purposes.
     /// @dev TODO: REMOVE BEFORE PRODUCTION - This is only for testnet debugging.

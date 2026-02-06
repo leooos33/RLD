@@ -81,6 +81,31 @@ interface IRLDCore {
     event RiskUpdateCancelled(MarketId indexed id);
     event RiskUpdateApplied(MarketId indexed id);
     event PoolFeeUpdated(MarketId indexed id, uint24 newFee);
+
+    // Indexing Events
+    /// @notice Emitted when funding is applied to a market
+    event FundingApplied(
+        MarketId indexed marketId,
+        uint256 oldNormFactor,
+        uint256 newNormFactor,
+        int256 fundingRate,
+        uint256 timeDelta
+    );
+
+    /// @notice Emitted when market state changes (debt, NF)
+    event MarketStateUpdated(
+        MarketId indexed marketId,
+        uint128 normalizationFactor,
+        uint128 totalDebt
+    );
+
+    /// @notice Emitted for account state verification
+    event AccountStateHash(
+        MarketId indexed marketId,
+        address indexed account,
+        bytes32 stateHash
+    );
+
     
     // --- Errors ---
     error Unauthorized();

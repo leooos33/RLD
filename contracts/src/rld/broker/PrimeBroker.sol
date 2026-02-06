@@ -977,4 +977,73 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         operators[operator] = active;
         emit OperatorUpdated(operator, active);
     }
+
+    /* ============================================================================================ */
+    /*                                    INDEXING SUPPORT                                         */
+    /* ============================================================================================ */
+
+    /// @notice Returns the complete state of this broker for indexing
+    /// @dev Used by indexers to verify their computed state matches on-chain
+    function getFullState() external view override returns (BrokerState memory state) {
+        // Balances
+        state.collateralBalance = ERC20(collateralToken).balanceOf(address(this));
+        state.positionBalance = ERC20(positionToken).balanceOf(address(this));
+        
+        // Debt from Core
+        IRLDCore.Position memory pos = IRLDCore(CORE).getPosition(marketId, address(this));
+        state.debtPrincipal = pos.debtPrincipal;
+        
+        // Debt value (principal × normFactor × price)
+        if (state.debtPrincipal > 0) {
+            IRLDCore.MarketState memory marketState = IRLDCore(CORE).getMarketState(marketId);
+            uint256 trueDebt = uint256(state.debtPrincipal) * marketState.normalizationFactor / 1e18;
+            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(underlyingPool, underlyingToken);
+            state.debtValue = trueDebt * indexPrice / 1e18;
+        }
+        
+        // TWAMM owed amounts
+        if (activeTwammOrder.orderId != bytes32(0) && activeTwammOrder.orderKey.owner == address(this)) {
+            address twammHook = address(activeTwammOrder.key.hooks);
+            (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(twammHook).getCancelOrderState(
+                activeTwammOrder.key,
+                activeTwammOrder.orderKey
+            );
+            state.twammSellOwed = sellTokensRefund;
+            state.twammBuyOwed = buyTokensOwed;
+        }
+        
+        // V4 LP value
+        if (activeTokenId != 0 && IERC721(POSM).ownerOf(activeTokenId) == address(this)) {
+            bytes memory data = _encodeModuleData(activeTokenId);
+            state.v4LPValue = IValuationModule(V4_MODULE).getValue(data);
+        }
+        
+        // NAV (total assets)
+        state.netAccountValue = this.getNetAccountValue();
+        
+        // Health factor and solvency
+        if (state.debtValue > 0) {
+            // health = nav / debtValue (scaled by 1e18)
+            state.healthFactor = state.netAccountValue * 1e18 / state.debtValue;
+            state.isSolvent = IRLDCore(CORE).isSolvent(marketId, address(this));
+        } else {
+            state.healthFactor = type(uint256).max;
+            state.isSolvent = true;
+        }
+    }
+
+    /// @notice Emits a StateAudit event for reconciliation
+    /// @dev Called periodically by keepers to verify indexer state
+    function emitStateAudit() external override {
+        IRLDCore.Position memory pos = IRLDCore(CORE).getPosition(marketId, address(this));
+        
+        emit StateAudit(
+            address(this),
+            ERC20(collateralToken).balanceOf(address(this)),
+            ERC20(positionToken).balanceOf(address(this)),
+            pos.debtPrincipal,
+            this.getNetAccountValue(),
+            block.number
+        );
+    }
 }

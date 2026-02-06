@@ -45,6 +45,47 @@ interface IPrimeBroker {
     /// @notice Emitted when an operator is updated.
     event OperatorUpdated(address indexed operator, bool active);
 
+    // Indexing Events
+    /// @notice Emitted on any balance change for indexer tracking
+    event AccountBalanceChanged(
+        address indexed account,
+        address indexed token,
+        int256 delta,
+        uint256 newBalance,
+        bytes32 reason  // keccak256("deposit"), keccak256("withdraw"), etc.
+    );
+
+    /// @notice Emitted for periodic state verification
+    event StateAudit(
+        address indexed account,
+        uint256 collateralBalance,
+        uint256 positionBalance,
+        uint128 debtPrincipal,
+        uint256 nav,
+        uint256 blockNumber
+    );
+
+    /// @notice Complete broker state for indexing
+    struct BrokerState {
+        uint256 collateralBalance;
+        uint256 positionBalance;
+        uint128 debtPrincipal;
+        uint256 debtValue;
+        uint256 twammSellOwed;
+        uint256 twammBuyOwed;
+        uint256 v4LPValue;
+        uint256 netAccountValue;
+        uint256 healthFactor;
+        bool isSolvent;
+    }
+
+    /// @notice Returns the complete state of this broker
+    function getFullState() external view returns (BrokerState memory);
+
+    /// @notice Emits a StateAudit event for reconciliation
+    function emitStateAudit() external;
+
+
     /// @notice Sets an operator for the Prime Broker.
     /// @dev Operators can perform all actions except ownership transfer.
     /// @param operator The address to set as operator.
