@@ -382,82 +382,57 @@ class ComprehensiveIndexer:
             return {}
     
     def get_events_in_block(self, block_number: int) -> List[Dict]:
-        """Get all relevant events in a block."""
+        """Get all relevant events in a block using raw topic signatures."""
         events = []
         
-        # Get all logs for our contracts
+        # Event topic signatures (keccak256 of event signature)
+        EVENT_TOPICS = {
+            # ERC20 Standard Events
+            Web3.keccak(text="Transfer(address,address,uint256)").hex(): "Transfer",
+            Web3.keccak(text="Approval(address,address,uint256)").hex(): "Approval",
+            
+            # RLDCore Events
+            Web3.keccak(text="PositionModified(bytes32,address,int256,int256)").hex(): "PositionModified",
+            Web3.keccak(text="MarketCreated(bytes32,address,address,address)").hex(): "MarketCreated",
+            Web3.keccak(text="FundingApplied(bytes32,int256,uint256)").hex(): "FundingApplied",
+            
+            # Uniswap V4 Pool Manager Events
+            Web3.keccak(text="Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)").hex(): "Swap",
+            Web3.keccak(text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)").hex(): "ModifyLiquidity",
+            Web3.keccak(text="Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)").hex(): "Initialize",
+            
+            # TWAMM Events
+            Web3.keccak(text="SubmitOrder(bytes32,address,uint256,uint256,bool,uint256)").hex(): "SubmitOrder",
+            Web3.keccak(text="ModifyOrder(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ModifyOrder",
+            Web3.keccak(text="ClaimEarnings(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ClaimEarnings",
+            
+            # Universal Router Events (just track the execute)
+            Web3.keccak(text="UniversalRouterExecute()").hex(): "UniversalRouterExecute",
+        }
+        
+        # Contracts to monitor - include PoolManager and Universal Router
+        pool_manager = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+        universal_router = "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"
+        
         contract_addresses = [
             self.rld_core.address.lower(),
             self.collateral_token.lower(),
-            self.position_token.lower()
+            self.position_token.lower(),
+            pool_manager.lower(),
         ]
         
+        # Also get TWAMM hook address if available
+        twamm_hook = None
         try:
-            # PositionModified events
-            pos_events = self.rld_core.events.PositionModified.get_logs(
-                from_block=block_number,
-                to_block=block_number
-            )
-            for e in pos_events:
-                events.append({
-                    'event_name': 'PositionModified',
-                    'tx_hash': e['transactionHash'].hex(),
-                    'log_index': e['logIndex'],
-                    'market_id': e['args']['id'].hex(),
-                    'contract_address': e['address'],
-                    'data': {
-                        'user': e['args']['user'],
-                        'deltaCollateral': str(e['args']['deltaCollateral']),
-                        'deltaDebt': str(e['args']['deltaDebt'])
-                    }
-                })
-        except Exception as e:
-            logger.debug(f"Could not get PositionModified events: {e}")
+            with open("/home/ubuntu/RLD/contracts/deployments.json") as f:
+                deployments = json.load(f)
+                twamm_hook = deployments.get("TWAMM") or deployments.get("TWAMMHook")
+                if twamm_hook:
+                    contract_addresses.append(twamm_hook.lower())
+        except:
+            pass
         
-        try:
-            # MarketCreated events
-            market_events = self.rld_core.events.MarketCreated.get_logs(
-                from_block=block_number,
-                to_block=block_number
-            )
-            for e in market_events:
-                events.append({
-                    'event_name': 'MarketCreated',
-                    'tx_hash': e['transactionHash'].hex(),
-                    'log_index': e['logIndex'],
-                    'market_id': e['args']['id'].hex(),
-                    'contract_address': e['address'],
-                    'data': {
-                        'collateral': e['args']['collateral'],
-                        'underlying': e['args']['underlying'],
-                        'pool': e['args']['pool']
-                    }
-                })
-        except Exception as e:
-            logger.debug(f"Could not get MarketCreated events: {e}")
-        
-        try:
-            # FundingApplied events
-            funding_events = self.rld_core.events.FundingApplied.get_logs(
-                from_block=block_number,
-                to_block=block_number
-            )
-            for e in funding_events:
-                events.append({
-                    'event_name': 'FundingApplied',
-                    'tx_hash': e['transactionHash'].hex(),
-                    'log_index': e['logIndex'],
-                    'market_id': e['args']['id'].hex(),
-                    'contract_address': e['address'],
-                    'data': {
-                        'fundingFee': str(e['args']['fundingFee']),
-                        'newNormalizationFactor': str(e['args']['newNormalizationFactor'])
-                    }
-                })
-        except Exception as e:
-            logger.debug(f"Could not get FundingApplied events: {e}")
-        
-        # Get all raw logs for our contracts to capture Transfer, Swap, etc.
+        # Get ALL logs for all tracked contracts
         try:
             logs = self.w3.eth.get_logs({
                 'fromBlock': block_number,
@@ -465,42 +440,169 @@ class ComprehensiveIndexer:
                 'address': [Web3.to_checksum_address(addr) for addr in contract_addresses]
             })
             
-            # Process raw logs (Transfer events, etc.)
-            transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
-            approval_topic = Web3.keccak(text="Approval(address,address,uint256)").hex()
-            
             for log in logs:
-                topic0 = log['topics'][0].hex() if log['topics'] else None
-                if topic0 == transfer_topic and len(log['topics']) >= 3:
+                if not log['topics']:
+                    continue
+                    
+                topic0 = log['topics'][0].hex()
+                event_name = EVENT_TOPICS.get(topic0, None)
+                contract_addr = log['address'].lower()
+                
+                if event_name is None:
+                    # Unknown event - still record it with topic0
+                    event_name = f"Unknown_{topic0[:10]}"
+                
+                # Parse event data based on type
+                event_data = self._parse_event_data(event_name, log)
+                
+                events.append({
+                    'event_name': event_name,
+                    'tx_hash': log['transactionHash'].hex(),
+                    'log_index': log['logIndex'],
+                    'market_id': self.market_id,
+                    'contract_address': log['address'],
+                    'data': event_data
+                })
+                
+        except Exception as e:
+            logger.warning(f"Could not get logs for block {block_number}: {e}")
+        
+        # Also look for Universal Router swaps by checking transactions to the router
+        try:
+            block = self.w3.eth.get_block(block_number, full_transactions=True)
+            for tx in block['transactions']:
+                to_addr = tx.get('to', '').lower() if tx.get('to') else ''
+                if to_addr == universal_router.lower():
+                    # This is a Universal Router transaction - decode and track
+                    input_data = tx.get('input', '0x')
+                    method_id = input_data[:10] if len(input_data) >= 10 else input_data
+                    
                     events.append({
-                        'event_name': 'Transfer',
-                        'tx_hash': log['transactionHash'].hex(),
-                        'log_index': log['logIndex'],
+                        'event_name': 'UniversalRouterSwap',
+                        'tx_hash': tx['hash'].hex(),
+                        'log_index': 9999,  # Synthetic log index
                         'market_id': self.market_id,
-                        'contract_address': log['address'],
+                        'contract_address': universal_router,
                         'data': {
-                            'from': '0x' + log['topics'][1].hex()[-40:],
-                            'to': '0x' + log['topics'][2].hex()[-40:],
-                            'value': str(int(log['data'].hex(), 16)) if log['data'] else '0'
-                        }
-                    })
-                elif topic0 == approval_topic and len(log['topics']) >= 3:
-                    events.append({
-                        'event_name': 'Approval',
-                        'tx_hash': log['transactionHash'].hex(),
-                        'log_index': log['logIndex'],
-                        'market_id': self.market_id,
-                        'contract_address': log['address'],
-                        'data': {
-                            'owner': '0x' + log['topics'][1].hex()[-40:],
-                            'spender': '0x' + log['topics'][2].hex()[-40:],
-                            'value': str(int(log['data'].hex(), 16)) if log['data'] else '0'
+                            'from': tx['from'],
+                            'method_id': method_id,
+                            'value': str(tx.get('value', 0))
                         }
                     })
         except Exception as e:
-            logger.debug(f"Could not get raw logs: {e}")
+            logger.debug(f"Could not check Universal Router txs: {e}")
         
         return events
+    
+    def _parse_event_data(self, event_name: str, log: dict) -> dict:
+        """Parse event log data based on event type."""
+        topics = log['topics']
+        data = log['data'].hex() if log['data'] else ''
+        
+        try:
+            if event_name == "Transfer":
+                return {
+                    'from': '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None,
+                    'to': '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None,
+                    'value': str(int(data, 16)) if data else '0'
+                }
+            
+            elif event_name == "Approval":
+                return {
+                    'owner': '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None,
+                    'spender': '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None,
+                    'value': str(int(data, 16)) if data else '0'
+                }
+            
+            elif event_name == "PositionModified":
+                # PositionModified(bytes32 indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt)
+                market_id = topics[1].hex() if len(topics) > 1 else None
+                user = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                # Data contains deltaCollateral (int256) and deltaDebt (int256)
+                if len(data) >= 128:
+                    delta_coll = int(data[0:64], 16)
+                    if delta_coll >= 2**255:
+                        delta_coll -= 2**256
+                    delta_debt = int(data[64:128], 16)
+                    if delta_debt >= 2**255:
+                        delta_debt -= 2**256
+                    return {
+                        'market_id': market_id,
+                        'user': user,
+                        'deltaCollateral': str(delta_coll),
+                        'deltaDebt': str(delta_debt)
+                    }
+                return {'market_id': market_id, 'user': user, 'raw': data}
+            
+            elif event_name == "Swap":
+                # Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, 
+                #      uint160 sqrtPriceX96After, uint128 liquidity, int24 tick, uint24 fee)
+                pool_id = topics[1].hex() if len(topics) > 1 else None
+                sender = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                # Parse data: int128, int128, uint160, uint128, int24, uint24
+                if len(data) >= 256:
+                    amount0 = int(data[0:32], 16)
+                    if amount0 >= 2**127:
+                        amount0 -= 2**128
+                    amount1 = int(data[32:64], 16)
+                    if amount1 >= 2**127:
+                        amount1 -= 2**128
+                    sqrt_price = int(data[64:104], 16)
+                    liquidity = int(data[104:136], 16)
+                    tick = int(data[136:142], 16)
+                    if tick >= 2**23:
+                        tick -= 2**24
+                    return {
+                        'pool_id': pool_id,
+                        'sender': sender,
+                        'amount0': str(amount0),
+                        'amount1': str(amount1),
+                        'sqrtPriceX96': str(sqrt_price),
+                        'liquidity': str(liquidity),
+                        'tick': tick
+                    }
+                return {'pool_id': pool_id, 'sender': sender, 'raw': data}
+            
+            elif event_name == "FundingApplied":
+                # FundingApplied(bytes32 indexed id, int256 fundingFee, uint256 newNormalizationFactor)
+                market_id = topics[1].hex() if len(topics) > 1 else None
+                if len(data) >= 128:
+                    funding_fee = int(data[0:64], 16)
+                    if funding_fee >= 2**255:
+                        funding_fee -= 2**256
+                    new_nf = int(data[64:128], 16)
+                    return {
+                        'market_id': market_id,
+                        'fundingFee': str(funding_fee),
+                        'newNormalizationFactor': str(new_nf)
+                    }
+                return {'market_id': market_id, 'raw': data}
+            
+            elif event_name in ["SubmitOrder", "ModifyOrder", "ClaimEarnings"]:
+                # TWAMM order events
+                pool_id = topics[1].hex() if len(topics) > 1 else None
+                owner = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                return {
+                    'pool_id': pool_id,
+                    'owner': owner,
+                    'raw': data[:100] + '...' if len(data) > 100 else data
+                }
+            
+            elif event_name == "ModifyLiquidity":
+                pool_id = topics[1].hex() if len(topics) > 1 else None
+                sender = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                return {'pool_id': pool_id, 'sender': sender, 'raw': data[:100] if data else ''}
+            
+            else:
+                # Generic parsing for unknown events
+                return {
+                    'topics': [t.hex() for t in topics],
+                    'data': data[:200] + '...' if len(data) > 200 else data
+                }
+                
+        except Exception as e:
+            logger.debug(f"Error parsing {event_name}: {e}")
+            return {'error': str(e), 'raw': data[:100] if data else ''}
     
     def get_transactions_in_block(self, block_number: int) -> List[Dict]:
         """Get all transactions interacting with our contracts in a block."""
