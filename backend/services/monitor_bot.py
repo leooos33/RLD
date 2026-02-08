@@ -5,6 +5,8 @@ import requests
 import json
 import logging
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 import sys
 
 # Add backend directory to path for config
@@ -223,9 +225,33 @@ def generate_report():
 def get_dashboard_markup():
     return {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": "refresh"}]]}
 
+# --- HEALTH ENDPOINT ---
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            "status": "ok",
+            "service": "telegram-monitor-bot",
+            "uptime": int(time.time() - _start_time),
+        }).encode())
+
+    def log_message(self, format, *args):
+        pass  # Suppress request logs
+
+_start_time = time.time()
+
+def start_health_server(port=8080):
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    logger.info(f"🩺 Health endpoint running on :{port}")
+
 # --- MAIN LOOP ---
 def monitor_loop():
     global CHAT_ID
+    start_health_server()
     logger.info("🤖 Interactive Monitor Bot Started")
     
     if CHAT_ID:
