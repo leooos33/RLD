@@ -48,6 +48,7 @@
         --p: #a78bfa;
         --pd: #8b5cf6;
         --p10: rgba(167, 139, 250, 0.06);
+        --p20: rgba(167, 139, 250, 0.12);
         --t: #8892a0;
         --td: #4a5260;
         --tb: #d0d5dd;
@@ -345,10 +346,10 @@
         font-weight: 300;
       }
 
-      /* ── Price chart ── */
+      /* ── Chart ── */
       .chart-wrap {
         position: relative;
-        height: 180px;
+        height: 360px;
         border: 1px solid var(--bdr);
         background: var(--s2);
         border-radius: 2px;
@@ -359,21 +360,7 @@
         height: 100%;
       }
 
-      /* ── Bar ── */
-      .bar-bg {
-        height: 3px;
-        background: var(--bdr);
-        border-radius: 1px;
-        overflow: hidden;
-        flex: 1;
-      }
-      .bar-fg {
-        height: 100%;
-        border-radius: 1px;
-        transition: width 0.5s ease;
-      }
-
-      /* ── Event pill ── */
+      /* ── Event item ── */
       .evt {
         display: flex;
         align-items: center;
@@ -385,12 +372,14 @@
       }
       .evt-type {
         font-size: 8px;
-        padding: 1px 6px;
+        padding: 2px 0;
         border-radius: 1px;
         letter-spacing: 1px;
         font-weight: 600;
-        min-width: 52px;
+        width: 72px;
         text-align: center;
+        flex-shrink: 0;
+        display: inline-block;
       }
       .evt-swap {
         background: var(--c10);
@@ -408,11 +397,29 @@
         border: 1px solid var(--bdr);
       }
 
+      /* ── Stat row ── */
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 3px 0;
+        font-size: 10px;
+      }
+      .stat-k {
+        color: var(--td);
+      }
+      .stat-v {
+        color: var(--tb);
+        font-weight: 500;
+      }
+
       .glow-g {
         text-shadow: 0 0 8px rgba(0, 255, 136, 0.2);
       }
       .glow-c {
         text-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+      }
+      .glow-p {
+        text-shadow: 0 0 8px rgba(167, 139, 250, 0.25);
       }
 
       .ftr {
@@ -425,6 +432,22 @@
         letter-spacing: 2px;
         text-transform: uppercase;
       }
+
+      /* ── Legend ── */
+      .legend {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        font-size: 9px;
+        color: var(--td);
+      }
+      .legend-dot {
+        width: 8px;
+        height: 3px;
+        border-radius: 1px;
+        display: inline-block;
+        margin-right: 4px;
+      }
     </style>
   </head>
   <body>
@@ -432,36 +455,35 @@
     <script type="text/babel">
       const { useState, useEffect, useCallback, useMemo } = React;
 
-      // ── Utils ──
+      // ══════════════════ UTILS ══════════════════
       const fmt = (v, d = 2) => {
         if (v === undefined || v === null || v === "") return "—";
         const n = Number(v);
-        return isNaN(n)
-          ? v
-          : n >= 1e9
-            ? "$" + (n / 1e9).toFixed(d) + "B"
-            : n >= 1e6
-              ? "$" + (n / 1e6).toFixed(d) + "M"
-              : n >= 1e3
-                ? "$" +
-                  n.toLocaleString(undefined, {
-                    minimumFractionDigits: d,
-                    maximumFractionDigits: d,
-                  })
-                : "$" + n.toFixed(d);
+        if (isNaN(n)) return v;
+        if (Math.abs(n) >= 1e9) return "$" + (n / 1e9).toFixed(d) + "B";
+        if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(d) + "M";
+        if (Math.abs(n) >= 1e3)
+          return (
+            "$" +
+            n.toLocaleString(undefined, {
+              minimumFractionDigits: d,
+              maximumFractionDigits: d,
+            })
+          );
+        return "$" + n.toFixed(d);
       };
       const fmtN = (n, d = 2) => {
         if (n === undefined || n === null || n === "") return "—";
         const v = Number(n);
-        return isNaN(v)
-          ? n
-          : v >= 1e9
-            ? (v / 1e9).toFixed(d) + "B"
-            : v >= 1e6
-              ? (v / 1e6).toFixed(d) + "M"
-              : v >= 1e3
-                ? v.toLocaleString()
-                : v.toFixed(d);
+        if (isNaN(v)) return n;
+        if (v >= 1e9) return (v / 1e9).toFixed(d) + "B";
+        if (v >= 1e6) return (v / 1e6).toFixed(d) + "M";
+        if (v >= 1e3) return v.toLocaleString();
+        return v.toFixed(d);
+      };
+      const fmtPct = (v, d = 2) => {
+        if (v === undefined || v === null) return "—";
+        return (v >= 0 ? "+" : "") + Number(v).toFixed(d) + "%";
       };
       const fmtAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
       const fmtTs = (ts) => {
@@ -477,31 +499,56 @@
         if (!ts) return "—";
         const now = Date.now() / 1000;
         const d = Math.floor(now - ts);
-        return d < 60
-          ? `${d}s ago`
-          : d < 3600
-            ? `${Math.floor(d / 60)}m ago`
-            : `${Math.floor(d / 3600)}h ago`;
+        if (d < 60) return `${d}s ago`;
+        if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+        if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+        return `${Math.floor(d / 86400)}d ago`;
       };
-      const fmtTx = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : "—");
-
-      // Decode amounts from raw values (6 decimal USDC-like)
       const fromRaw = (v, decimals = 6) => {
-        if (!v) return 0;
+        if (!v && v !== 0) return 0;
         return Number(v) / Math.pow(10, decimals);
       };
-      // sqrtPriceX96 to human price
-      const sqrtToPrice = (sqrtP, d0 = 18, d1 = 6) => {
-        if (!sqrtP) return 0;
-        const p = (Number(BigInt(sqrtP)) * Number(BigInt(sqrtP))) / 2 ** 192;
-        return p * Math.pow(10, d0 - d1);
-      };
 
+      // ── Descriptive stats ──
+      function calcStats(arr) {
+        if (!arr || arr.length === 0) return null;
+        const n = arr.length;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const sum = arr.reduce((a, b) => a + b, 0);
+        const mean = sum / n;
+        const variance = arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
+        const std = Math.sqrt(variance);
+        const min = sorted[0];
+        const max = sorted[n - 1];
+        const median =
+          n % 2 === 0
+            ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+            : sorted[Math.floor(n / 2)];
+        const q1 = sorted[Math.floor(n * 0.25)];
+        const q3 = sorted[Math.floor(n * 0.75)];
+        const latest = arr[arr.length - 1];
+        const first = arr[0];
+        const change = first !== 0 ? ((latest - first) / first) * 100 : 0;
+        return {
+          n,
+          mean,
+          std,
+          min,
+          max,
+          median,
+          q1,
+          q3,
+          latest,
+          first,
+          change,
+        };
+      }
+
+      // ══════════════════ COMPONENTS ══════════════════
       const Badge = ({ text, type }) => (
         <span className={`badge b-${type}`}>{text}</span>
       );
       const Dot = ({ ok }) => <span className={`dot ${ok ? "dg" : "dr"}`} />;
-
       const Card = ({ title, badge, children, style, delay = 0 }) => (
         <div
           className="card"
@@ -515,43 +562,92 @@
         </div>
       );
 
-      // ── Price Sparkline SVG ──
-      const PriceChart = ({ data, color = "var(--c)" }) => {
+      // ── Dual-series SVG price chart ──
+      const PriceChart = ({ data }) => {
         if (!data || data.length < 2)
           return (
             <div
               style={{
-                height: 180,
+                height: 360,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 color: "var(--td)",
-                fontSize: 10,
+                fontSize: 11,
               }}
             >
-              Collecting price data...
+              <span style={{ animation: "pulse 1.5s ease infinite" }}>
+                Loading price history from indexer...
+              </span>
             </div>
           );
-        const prices = data.map((d) => d.price);
-        const mn = Math.min(...prices);
-        const mx = Math.max(...prices);
-        const range = mx - mn || 1;
-        const w = 800,
-          h = 180,
-          pad = 20;
-        const pts = data.map((d, i) => {
-          const x = pad + (i / (data.length - 1)) * (w - 2 * pad);
-          const y = h - pad - ((d.price - mn) / range) * (h - 2 * pad);
-          return { x, y, price: d.price, block: d.block };
+
+        const marks = data
+          .map((d) => d.mark_price)
+          .filter((v) => v != null && v > 0);
+        const idxs = data
+          .map((d) => d.index_price)
+          .filter((v) => v != null && v > 0);
+        const allPrices = [...marks, ...idxs];
+        const mn = Math.min(...allPrices);
+        const mx = Math.max(...allPrices);
+        const range = mx - mn || 0.01;
+
+        const w = 1200,
+          h = 360,
+          padL = 60,
+          padR = 20,
+          padT = 40,
+          padB = 30;
+        const cw = w - padL - padR,
+          ch = h - padT - padB;
+
+        const toX = (i) => padL + (i / (data.length - 1)) * cw;
+        const toY = (v) => padT + ch - ((v - mn) / range) * ch;
+
+        // Build path strings
+        let markPath = "";
+        let idxPath = "";
+        let markArea = "";
+        data.forEach((d, i) => {
+          const x = toX(i);
+          if (d.mark_price > 0) {
+            const y = toY(d.mark_price);
+            markPath += (markPath ? "L" : "M") + `${x},${y} `;
+          }
+          if (d.index_price > 0) {
+            const y = toY(d.index_price);
+            idxPath += (idxPath ? "L" : "M") + `${x},${y} `;
+          }
         });
-        const line = pts
-          .map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`)
-          .join(" ");
-        const area =
-          line + ` L${pts[pts.length - 1].x},${h} L${pts[0].x},${h} Z`;
-        const latest = prices[prices.length - 1];
-        const first = prices[0];
-        const chg = ((latest - first) / first) * 100;
+
+        // Y-axis labels
+        const ySteps = 5;
+        const yLabels = [];
+        for (let i = 0; i <= ySteps; i++) {
+          const v = mn + (range / ySteps) * i;
+          yLabels.push({ y: toY(v), label: "$" + v.toFixed(4) });
+        }
+
+        // X-axis labels (show ~5 timestamps)
+        const xLabels = [];
+        const step = Math.max(1, Math.floor(data.length / 5));
+        for (let i = 0; i < data.length; i += step) {
+          const d = data[i];
+          if (d.timestamp) {
+            const dt = new Date(d.timestamp * 1000);
+            xLabels.push({
+              x: toX(i),
+              label: dt.toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            });
+          }
+        }
+
+        const latestMark = marks[marks.length - 1];
+        const latestIdx = idxs[idxs.length - 1];
 
         return (
           <div className="chart-wrap">
@@ -561,37 +657,108 @@
               preserveAspectRatio="none"
             >
               <defs>
-                <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={color} stopOpacity="0.15" />
-                  <stop offset="100%" stopColor={color} stopOpacity="0" />
+                <linearGradient id="mark-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--c)" stopOpacity="0.08" />
+                  <stop offset="100%" stopColor="var(--c)" stopOpacity="0" />
+                </linearGradient>
+                <linearGradient id="idx-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--p)" stopOpacity="0.08" />
+                  <stop offset="100%" stopColor="var(--p)" stopOpacity="0" />
                 </linearGradient>
               </defs>
-              <path d={area} fill="url(#area-grad)" />
+              {/* Grid lines */}
+              {yLabels.map((yl, i) => (
+                <g key={i}>
+                  <line
+                    x1={padL}
+                    y1={yl.y}
+                    x2={w - padR}
+                    y2={yl.y}
+                    stroke="var(--bdr)"
+                    strokeWidth="0.5"
+                  />
+                  <text
+                    x={padL - 6}
+                    y={yl.y + 3}
+                    textAnchor="end"
+                    fill="var(--td)"
+                    fontSize="8"
+                    fontFamily="JetBrains Mono"
+                  >
+                    {yl.label}
+                  </text>
+                </g>
+              ))}
+              {xLabels.map((xl, i) => (
+                <text
+                  key={i}
+                  x={xl.x}
+                  y={h - 8}
+                  textAnchor="middle"
+                  fill="var(--td)"
+                  fontSize="8"
+                  fontFamily="JetBrains Mono"
+                >
+                  {xl.label}
+                </text>
+              ))}
+              {/* Index price (purple, behind) */}
               <path
-                d={line}
+                d={idxPath}
                 fill="none"
-                stroke={color}
+                stroke="var(--p)"
+                strokeWidth="1.5"
+                strokeOpacity="0.7"
+                vectorEffect="non-scaling-stroke"
+              />
+              {/* Mark price (cyan, front) */}
+              <path
+                d={markPath}
+                fill="none"
+                stroke="var(--c)"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
               />
-              {/* Latest price dot */}
-              <circle
-                cx={pts[pts.length - 1].x}
-                cy={pts[pts.length - 1].y}
-                r="3"
-                fill={color}
-              />
+              {/* Latest dots */}
+              {latestMark > 0 && (
+                <circle
+                  cx={toX(data.length - 1)}
+                  cy={toY(latestMark)}
+                  r="4"
+                  fill="var(--c)"
+                  stroke="var(--bg)"
+                  strokeWidth="1"
+                />
+              )}
+              {latestIdx > 0 && (
+                <circle
+                  cx={toX(data.length - 1)}
+                  cy={toY(latestIdx)}
+                  r="3"
+                  fill="var(--p)"
+                  stroke="var(--bg)"
+                  strokeWidth="1"
+                />
+              )}
             </svg>
-            <div
-              style={{
-                position: "absolute",
-                top: 8,
-                left: 12,
-                fontSize: 10,
-                color: "var(--td)",
-              }}
-            >
-              MARK PRICE
+            {/* Overlay labels */}
+            <div style={{ position: "absolute", top: 8, left: padL + 8 }}>
+              <div className="legend">
+                <span>
+                  <span
+                    className="legend-dot"
+                    style={{ background: "var(--c)" }}
+                  />
+                  MARK PRICE
+                </span>
+                <span>
+                  <span
+                    className="legend-dot"
+                    style={{ background: "var(--p)" }}
+                  />
+                  INDEX PRICE
+                </span>
+              </div>
             </div>
             <div
               style={{
@@ -601,73 +768,91 @@
                 textAlign: "right",
               }}
             >
-              <div
-                style={{ fontSize: 16, fontWeight: 600, color: "var(--tb)" }}
-              >
-                {fmt(latest)}
+              <div style={{ fontSize: 9, color: "var(--td)" }}>
+                MARK{" "}
+                <span
+                  style={{ color: "var(--c)", fontWeight: 600, fontSize: 14 }}
+                >
+                  ${latestMark?.toFixed(4)}
+                </span>
               </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: chg >= 0 ? "var(--g)" : "var(--r)",
-                }}
-              >
-                {chg >= 0 ? "▲" : "▼"} {Math.abs(chg).toFixed(2)}%
+              <div style={{ fontSize: 9, color: "var(--td)", marginTop: 2 }}>
+                INDEX{" "}
+                <span
+                  style={{ color: "var(--p)", fontWeight: 600, fontSize: 14 }}
+                >
+                  ${latestIdx?.toFixed(4)}
+                </span>
               </div>
             </div>
             <div
               style={{
                 position: "absolute",
-                bottom: 6,
-                left: 12,
+                bottom: padB + 6,
+                left: padL + 8,
                 fontSize: 9,
                 color: "var(--td)",
               }}
             >
-              L: {fmt(mn)} · H: {fmt(mx)}
+              {data.length} data points · blocks{" "}
+              {data[0].block_number?.toLocaleString()} →{" "}
+              {data[data.length - 1].block_number?.toLocaleString()}
             </div>
           </div>
         );
       };
 
+      // ══════════════════ MAIN APP ══════════════════
       function App() {
-        const [data, setData] = useState(null);
+        const [latest, setLatest] = useState(null);
+        const [chartData, setChartData] = useState(null);
         const [events, setEvents] = useState([]);
-        const [priceHistory, setPriceHistory] = useState([]);
         const [err, setErr] = useState(null);
         const [tick, setTick] = useState(0);
         const [now, setNow] = useState(new Date());
 
-        const load = useCallback(() => {
-          Promise.all([
-            fetch("/api/latest").then((r) => r.json()),
-            fetch("/api/events?limit=30").then((r) => r.json()),
-          ])
-            .then(([latest, evts]) => {
-              setData(latest);
-              setEvents(Array.isArray(evts) ? evts : []);
+        const loadLatest = useCallback(() => {
+          fetch("/api/latest")
+            .then((r) => r.json())
+            .then((d) => {
+              setLatest(d);
               setErr(null);
-              // Accumulate price history
-              if (latest.pool_states?.length > 0) {
-                const ps = latest.pool_states[0];
-                const price = ps.mark_price || sqrtToPrice(ps.sqrt_price_x96);
-                setPriceHistory((prev) => {
-                  const next = [
-                    ...prev,
-                    { price, block: latest.block_number, ts: Date.now() },
-                  ];
-                  return next.slice(-120);
-                });
-              }
             })
             .catch((e) => setErr(e.message));
         }, []);
 
+        const loadChart = useCallback(() => {
+          fetch("/api/chart/price?limit=1000")
+            .then((r) => r.json())
+            .then((d) => {
+              if (d && d.data) setChartData(d.data);
+            })
+            .catch(() => {});
+        }, []);
+
+        const loadEvents = useCallback(() => {
+          fetch("/api/events?limit=1000")
+            .then((r) => r.json())
+            .then((d) => {
+              if (Array.isArray(d)) setEvents(d);
+            })
+            .catch(() => {});
+        }, []);
+
         useEffect(() => {
-          load();
-          const iv = setInterval(load, 10000);
-          return () => clearInterval(iv);
-        }, [load]);
+          loadLatest();
+          loadChart();
+          loadEvents();
+          const iv1 = setInterval(loadLatest, 10000);
+          const iv2 = setInterval(loadChart, 60000);
+          const iv3 = setInterval(loadEvents, 30000);
+          return () => {
+            clearInterval(iv1);
+            clearInterval(iv2);
+            clearInterval(iv3);
+          };
+        }, [loadLatest, loadChart, loadEvents]);
+
         useEffect(() => {
           const iv = setInterval(() => {
             setTick((t) => t + 1);
@@ -676,7 +861,17 @@
           return () => clearInterval(iv);
         }, []);
 
-        if (err && !data)
+        // ── Mark price descriptive stats from chart data ──
+        // (Must be before conditional returns per Rules of Hooks)
+        const markStats = useMemo(() => {
+          if (!chartData) return null;
+          const prices = chartData
+            .filter((d) => d.mark_price > 0)
+            .map((d) => d.mark_price);
+          return calcStats(prices);
+        }, [chartData]);
+
+        if (err && !latest)
           return (
             <div className="wrap">
               <div style={{ padding: 60, textAlign: "center" }}>
@@ -690,7 +885,7 @@
             </div>
           );
 
-        if (!data)
+        if (!latest)
           return (
             <div className="wrap">
               <div style={{ padding: 60, textAlign: "center" }}>
@@ -707,40 +902,63 @@
             </div>
           );
 
-        const ms = data.market_states?.[0] || {};
-        const ps = data.pool_states?.[0] || {};
-        const bps = data.broker_positions || [];
+        // ── Parse latest data ──
+        const ms = latest.market_states?.[0] || latest.market_state || {};
+        const ps = latest.pool_states?.[0] || latest.pool_state || {};
+        const bps = latest.broker_positions || [];
 
-        // Derived values
-        const markPrice = ps.mark_price || sqrtToPrice(ps.sqrt_price_x96);
+        const markPrice = ps.mark_price || 0;
         const indexPrice = ms.index_price ? fromRaw(ms.index_price, 18) : 0;
         const normFactor = ms.normalization_factor
           ? Number(ms.normalization_factor) / 1e18
           : 1;
         const totalDebt = fromRaw(ms.total_debt, 6);
-        const liquidity = Number(ps.liquidity) || 0;
 
-        // Broker metrics
+        // ── TVL calculation ──
+        // Pool liquidity in TVL = needs reserve amounts. Approximate with liquidity * price range
+        // For now, use the raw liquidity value and convert conceptually
+        const liquidityRaw = Number(ps.liquidity) || 0;
+        // Better TVL: use broker collateral as proxy for TVL since it represents deposited value
         const totalCollateral = bps.reduce(
           (a, b) => a + fromRaw(b.collateral, 6),
           0,
         );
         const totalBrokerDebt = bps.reduce((a, b) => a + fromRaw(b.debt, 6), 0);
-        const avgHF = bps
-          .filter((b) => b.health_factor > 0)
-          .reduce((a, b, _, arr) => a + b.health_factor / arr.length, 0);
+        const totalCollateralValue = bps.reduce(
+          (a, b) => a + fromRaw(b.collateral_value, 6),
+          0,
+        );
+        const totalDebtValue = bps.reduce(
+          (a, b) => a + fromRaw(b.debt_value, 6),
+          0,
+        );
 
-        // Swap events
-        const swaps = events.filter((e) => e.event_name === "Swap");
-        const totalVol = swaps.reduce((a, e) => {
-          const a0 = Math.abs(fromRaw(e.event_data?.amount0 || "0", 18));
-          const a1 = Math.abs(fromRaw(e.event_data?.amount1 || "0", 6));
-          return a + Math.max(a0 * markPrice, a1);
-        }, 0);
+        // ── Over-collateralization ratio ──
+        const overCollat =
+          totalDebtValue > 0
+            ? totalCollateralValue / totalDebtValue
+            : totalCollateralValue > 0
+              ? Infinity
+              : 0;
+        const overCollatDisplay =
+          overCollat === Infinity
+            ? "∞"
+            : overCollat > 0
+              ? (overCollat * 100).toFixed(1) + "%"
+              : "—";
 
-        // Peg deviation
+        // ── Peg deviation ──
         const pegDev =
           indexPrice > 0 ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
+
+        // (markStats computed above, before conditional returns)
+
+        // ── Swap stats ──
+        const swaps = events.filter((e) => e.event_name === "Swap");
+        const totalVol = swaps.reduce((a, e) => {
+          const a1 = Math.abs(fromRaw(e.event_data?.amount1 || "0", 6));
+          return a + a1;
+        }, 0);
 
         return (
           <div className="wrap">
@@ -754,7 +972,7 @@
                 <span style={{ fontSize: 10, color: "var(--td)" }}>
                   block{" "}
                   <span style={{ color: "var(--c)" }} className="glow-c">
-                    {data.block_number?.toLocaleString()}
+                    {latest.block_number?.toLocaleString()}
                   </span>
                 </span>
                 <span style={{ color: "var(--td)", fontSize: 10 }}>
@@ -782,19 +1000,19 @@
               </a>
             </div>
 
-            {/* ═══ ROW 1: Key Financial Metrics ═══ */}
+            {/* ═══ ROW 1: Key Financial Metrics (5 cols) ═══ */}
             <div className="grid g5" style={{ marginBottom: 1 }}>
               <Card title="MARK PRICE" delay={0}>
                 <div className="mv" style={{ color: "var(--c)" }}>
                   {fmt(markPrice, 4)}
                 </div>
-                <div className="ml">wRLP / USDC</div>
+                <div className="ml">wRLP / aUSDC</div>
               </Card>
               <Card
                 title="INDEX PRICE"
                 badge={
                   <Badge
-                    text={`${pegDev >= 0 ? "+" : ""}${pegDev.toFixed(2)}%`}
+                    text={fmtPct(pegDev)}
                     type={
                       Math.abs(pegDev) < 1
                         ? "g"
@@ -809,7 +1027,7 @@
                 <div className="mv" style={{ color: "var(--p)" }}>
                   {fmt(indexPrice, 4)}
                 </div>
-                <div className="ml">oracle price</div>
+                <div className="ml">oracle reference</div>
               </Card>
               <Card title="TOTAL DEBT" delay={2}>
                 <div
@@ -818,35 +1036,171 @@
                 >
                   {fmt(totalDebt)}
                 </div>
-                <div className="ml">outstanding</div>
+                <div className="ml">outstanding borrows</div>
               </Card>
-              <Card title="LIQUIDITY" delay={3}>
+              <Card title="SYSTEM TVL" delay={3}>
                 <div className="mv" style={{ color: "var(--g)" }}>
-                  {fmtN(liquidity)}
+                  {fmt(totalCollateralValue)}
                 </div>
-                <div className="ml">pool liquidity</div>
+                <div className="ml">total collateral value</div>
               </Card>
-              <Card title="NORM FACTOR" delay={4}>
-                <div className="mv-sm" style={{ color: "var(--tb)" }}>
-                  {normFactor.toFixed(6)}
+              <Card
+                title="OVER-COLLAT"
+                badge={
+                  <Badge
+                    text={
+                      overCollat === Infinity || overCollat === 0
+                        ? "NO DEBT"
+                        : overCollat >= 1.5
+                          ? "SAFE"
+                          : overCollat >= 1.2
+                            ? "WATCH"
+                            : "DANGER"
+                    }
+                    type={
+                      overCollat === Infinity ||
+                      overCollat === 0 ||
+                      overCollat >= 1.5
+                        ? "g"
+                        : overCollat >= 1.2
+                          ? "a"
+                          : "r"
+                    }
+                  />
+                }
+                delay={4}
+              >
+                <div
+                  className="mv"
+                  style={{
+                    color:
+                      overCollat === Infinity
+                        ? "var(--g)"
+                        : overCollat >= 1.5
+                          ? "var(--g)"
+                          : overCollat >= 1.2
+                            ? "var(--a)"
+                            : "var(--r)",
+                  }}
+                >
+                  {overCollatDisplay}
                 </div>
-                <div className="ml">interest accrual</div>
+                <div className="ml">collateral / debt ratio</div>
               </Card>
             </div>
 
-            {/* ═══ ROW 2: Price Chart + Pool Stats ═══ */}
-            <div className="grid g32" style={{ marginBottom: 1 }}>
+            {/* ═══ ROW 2: Price Chart (full width, 2x height) ═══ */}
+            <Card
+              title="MARK vs INDEX PRICE"
+              badge={
+                chartData ? (
+                  <Badge text={`${chartData.length} BLOCKS`} type="c" />
+                ) : null
+              }
+              style={{ marginBottom: 1 }}
+              delay={5}
+            >
+              <PriceChart data={chartData} />
+            </Card>
+
+            {/* ═══ ROW 3: Price Stats + Pool State ═══ */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
               <Card
-                title="PRICE ACTION"
+                title="MARK PRICE STATISTICS"
                 badge={
-                  <Badge text={`${priceHistory.length} SAMPLES`} type="c" />
+                  markStats ? (
+                    <Badge text={`N=${markStats.n}`} type="c" />
+                  ) : null
                 }
-                delay={5}
+                delay={6}
               >
-                <PriceChart data={priceHistory} color="#38bdf8" />
+                {markStats ? (
+                  <div>
+                    <div className="stat-row">
+                      <span className="stat-k">Mean</span>
+                      <span className="stat-v">{fmt(markStats.mean, 4)}</span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Std Dev (σ)</span>
+                      <span className="stat-v">{markStats.std.toFixed(6)}</span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Min</span>
+                      <span className="stat-v" style={{ color: "var(--r)" }}>
+                        {fmt(markStats.min, 4)}
+                      </span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Max</span>
+                      <span className="stat-v" style={{ color: "var(--g)" }}>
+                        {fmt(markStats.max, 4)}
+                      </span>
+                    </div>
+                    <div
+                      className="stat-row"
+                      style={{
+                        borderTop: "1px solid var(--bdr)",
+                        paddingTop: 4,
+                        marginTop: 2,
+                      }}
+                    >
+                      <span className="stat-k">Median (P50)</span>
+                      <span className="stat-v">{fmt(markStats.median, 4)}</span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Q1 (P25)</span>
+                      <span className="stat-v">{fmt(markStats.q1, 4)}</span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Q3 (P75)</span>
+                      <span className="stat-v">{fmt(markStats.q3, 4)}</span>
+                    </div>
+                    <div
+                      className="stat-row"
+                      style={{
+                        borderTop: "1px solid var(--bdr)",
+                        paddingTop: 4,
+                        marginTop: 2,
+                      }}
+                    >
+                      <span className="stat-k">Range</span>
+                      <span className="stat-v">
+                        {(markStats.max - markStats.min).toFixed(6)}
+                      </span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">CV (σ/μ)</span>
+                      <span className="stat-v">
+                        {((markStats.std / markStats.mean) * 100).toFixed(4)}%
+                      </span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Δ Start→End</span>
+                      <span
+                        className="stat-v"
+                        style={{
+                          color:
+                            markStats.change >= 0 ? "var(--g)" : "var(--r)",
+                        }}
+                      >
+                        {fmtPct(markStats.change, 3)}
+                      </span>
+                    </div>
+                    <div className="stat-row">
+                      <span className="stat-k">Latest</span>
+                      <span className="stat-v" style={{ color: "var(--c)" }}>
+                        {fmt(markStats.latest, 4)}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: "var(--td)", fontSize: 10 }}>
+                    Loading chart data...
+                  </div>
+                )}
               </Card>
 
-              <Card title="POOL STATE" delay={6}>
+              <Card title="POOL STATE" delay={7}>
                 <table className="tbl">
                   <tbody>
                     <tr>
@@ -862,14 +1216,6 @@
                       </td>
                     </tr>
                     <tr>
-                      <td style={{ color: "var(--td)" }}>sqrtPriceX96</td>
-                      <td style={{ fontSize: 9, color: "var(--td)" }}>
-                        {ps.sqrt_price_x96
-                          ? fmtN(Number(BigInt(ps.sqrt_price_x96)), 0)
-                          : "-"}
-                      </td>
-                    </tr>
-                    <tr>
                       <td style={{ color: "var(--td)" }}>Token0 (wRLP)</td>
                       <td style={{ fontSize: 10 }}>{fmtAddr(ps.token0)}</td>
                     </tr>
@@ -879,27 +1225,69 @@
                     </tr>
                     <tr>
                       <td style={{ color: "var(--td)" }}>Fee Growth 0</td>
-                      <td style={{ fontSize: 10 }}>
-                        {ps.fee_growth_global0 || "0"}
-                      </td>
+                      <td>{ps.fee_growth_global0 || "0"}</td>
                     </tr>
                     <tr>
                       <td style={{ color: "var(--td)" }}>Fee Growth 1</td>
-                      <td style={{ fontSize: 10 }}>
-                        {ps.fee_growth_global1 || "0"}
-                      </td>
+                      <td>{ps.fee_growth_global1 || "0"}</td>
                     </tr>
                   </tbody>
                 </table>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--bdr)",
+                    marginTop: 8,
+                    paddingTop: 8,
+                  }}
+                >
+                  <div className="stat-row">
+                    <span className="stat-k">Mark Price</span>
+                    <span className="stat-v" style={{ color: "var(--c)" }}>
+                      {fmt(markPrice, 4)}
+                    </span>
+                  </div>
+                  <div className="stat-row">
+                    <span className="stat-k">Index Price</span>
+                    <span className="stat-v" style={{ color: "var(--p)" }}>
+                      {fmt(indexPrice, 4)}
+                    </span>
+                  </div>
+                  <div className="stat-row">
+                    <span className="stat-k">Peg Deviation</span>
+                    <span
+                      className="stat-v"
+                      style={{
+                        color:
+                          Math.abs(pegDev) < 1
+                            ? "var(--g)"
+                            : Math.abs(pegDev) < 5
+                              ? "var(--a)"
+                              : "var(--r)",
+                      }}
+                    >
+                      {fmtPct(pegDev, 3)}
+                    </span>
+                  </div>
+                  <div className="stat-row">
+                    <span className="stat-k">Norm Factor</span>
+                    <span className="stat-v">{normFactor.toFixed(8)}</span>
+                  </div>
+                  <div className="stat-row">
+                    <span className="stat-k">Last Update</span>
+                    <span className="stat-v">
+                      {fmtAgo(ms.last_update_timestamp)}
+                    </span>
+                  </div>
+                </div>
               </Card>
             </div>
 
-            {/* ═══ ROW 3: Broker Positions ═══ */}
+            {/* ═══ ROW 4: Broker Positions ═══ */}
             <Card
               title="BROKER POSITIONS"
               badge={<Badge text={`${bps.length} BROKERS`} type="p" />}
               style={{ marginBottom: 1 }}
-              delay={7}
+              delay={8}
             >
               <table className="tbl">
                 <thead>
@@ -920,14 +1308,14 @@
                     const collVal = fromRaw(b.collateral_value, 6);
                     const debtVal = fromRaw(b.debt_value, 6);
                     const hf = b.health_factor;
-                    const status =
-                      debt === 0
-                        ? "idle"
-                        : hf > 2
-                          ? "safe"
-                          : hf > 1.2
-                            ? "watch"
-                            : "danger";
+                    const hasDebt = debt > 0 || debtVal > 0;
+                    const status = !hasDebt
+                      ? "idle"
+                      : hf > 2
+                        ? "safe"
+                        : hf > 1.2
+                          ? "watch"
+                          : "danger";
                     return (
                       <tr key={i}>
                         <td style={{ color: "var(--c)", fontSize: 10 }}>
@@ -938,9 +1326,9 @@
                         </td>
                         <td
                           className="r"
-                          style={{ color: debt > 0 ? "var(--a)" : "var(--td)" }}
+                          style={{ color: hasDebt ? "var(--a)" : "var(--td)" }}
                         >
-                          {debt > 0 ? fmt(debt) : "—"}
+                          {hasDebt ? fmt(debt) : "—"}
                         </td>
                         <td className="r" style={{ fontSize: 10 }}>
                           {fmt(collVal)}
@@ -957,18 +1345,17 @@
                         <td
                           className="r"
                           style={{
-                            color:
-                              debt === 0
-                                ? "var(--td)"
-                                : hf > 2
-                                  ? "var(--g)"
-                                  : hf > 1.2
-                                    ? "var(--a)"
-                                    : "var(--r)",
+                            color: !hasDebt
+                              ? "var(--td)"
+                              : hf > 2
+                                ? "var(--g)"
+                                : hf > 1.2
+                                  ? "var(--a)"
+                                  : "var(--r)",
                             fontWeight: 600,
                           }}
                         >
-                          {debt === 0 ? "∞" : hf.toFixed(2)}
+                          {!hasDebt ? "∞" : hf.toFixed(2)}
                         </td>
                         <td>
                           <Badge
@@ -1015,51 +1402,53 @@
                   </span>
                 </span>
                 <span>
-                  utilization:{" "}
-                  <span
-                    style={{
-                      color:
-                        totalCollateral > 0 &&
-                        totalBrokerDebt / totalCollateral > 0.7
-                          ? "var(--r)"
-                          : "var(--g)",
-                    }}
-                  >
-                    {totalCollateral > 0
-                      ? ((totalBrokerDebt / totalCollateral) * 100).toFixed(1)
-                      : 0}
-                    %
-                  </span>
+                  over-collateralization:{" "}
+                  <span style={{ color: "var(--g)" }}>{overCollatDisplay}</span>
                 </span>
               </div>
             </Card>
 
-            {/* ═══ ROW 4: Events Feed + Market Summary ═══ */}
+            {/* ═══ ROW 5: Events Feed + Market Summary ═══ */}
             <div className="grid g2" style={{ marginBottom: 1 }}>
               <Card
-                title="RECENT EVENTS"
-                badge={<Badge text={`${events.length} EVENTS`} type="c" />}
-                delay={8}
+                title="EVENT FEED"
+                badge={<Badge text={`${events.length} TOTAL`} type="c" />}
+                delay={9}
               >
-                <div style={{ maxHeight: 280, overflowY: "auto" }}>
-                  {events.slice(0, 20).map((e, i) => {
+                <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                  {events.map((e, i) => {
                     const isSwap = e.event_name === "Swap";
                     const isTransfer = e.event_name === "Transfer";
+                    const evtClass = isSwap
+                      ? "evt-swap"
+                      : isTransfer
+                        ? "evt-transfer"
+                        : "evt-other";
                     return (
                       <div
                         key={i}
                         className="evt"
-                        style={{ animationDelay: `${i * 20}ms` }}
+                        style={{ animationDelay: `${Math.min(i, 20) * 15}ms` }}
                       >
-                        <span
-                          className={`evt-type ${isSwap ? "evt-swap" : isTransfer ? "evt-transfer" : "evt-other"}`}
-                        >
+                        <span className={`evt-type ${evtClass}`}>
                           {e.event_name}
                         </span>
-                        <span style={{ color: "var(--td)", fontSize: 9 }}>
+                        <span
+                          style={{
+                            color: "var(--td)",
+                            fontSize: 9,
+                            minWidth: 52,
+                          }}
+                        >
                           {fmtTs(e.block_timestamp)}
                         </span>
-                        <span style={{ color: "var(--td)", fontSize: 9 }}>
+                        <span
+                          style={{
+                            color: "var(--td)",
+                            fontSize: 9,
+                            minWidth: 80,
+                          }}
+                        >
                           blk {e.block_number?.toLocaleString()}
                         </span>
                         {isSwap && (
@@ -1070,20 +1459,22 @@
                                   Number(e.event_data?.amount0) > 0
                                     ? "var(--g)"
                                     : "var(--r)",
+                                fontWeight: 600,
                                 fontSize: 10,
+                                minWidth: 32,
                               }}
                             >
                               {Number(e.event_data?.amount0) > 0
                                 ? "BUY"
                                 : "SELL"}
                             </span>
-                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                            <span style={{ fontSize: 9, color: "var(--tb)" }}>
                               {fmtN(
                                 Math.abs(
                                   fromRaw(e.event_data?.amount1 || "0", 6),
                                 ),
                               )}{" "}
-                              USDC
+                              aUSDC
                             </span>
                           </>
                         )}
@@ -1094,9 +1485,19 @@
                               {fmtAddr(e.event_data?.to)}
                             </span>
                             <span style={{ fontSize: 9, color: "var(--tb)" }}>
-                              {fmtN(fromRaw(e.event_data?.value || "0", 18), 4)}
+                              {fmtN(
+                                Math.abs(
+                                  fromRaw(e.event_data?.value || "0", 18),
+                                ),
+                                4,
+                              )}
                             </span>
                           </>
+                        )}
+                        {!isSwap && !isTransfer && (
+                          <span style={{ fontSize: 9, color: "var(--td)" }}>
+                            {JSON.stringify(e.event_data).slice(0, 60)}…
+                          </span>
                         )}
                       </div>
                     );
@@ -1104,106 +1505,135 @@
                 </div>
               </Card>
 
-              <Card title="MARKET SUMMARY" delay={9}>
-                <table className="tbl" style={{ marginBottom: 8 }}>
-                  <tbody>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Market ID</td>
-                      <td style={{ color: "var(--c)", fontSize: 9 }}>
-                        {fmtAddr(ms.market_id)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Mark Price</td>
-                      <td style={{ color: "var(--c)", fontWeight: 600 }}>
-                        {fmt(markPrice, 4)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Index Price</td>
-                      <td style={{ color: "var(--p)", fontWeight: 600 }}>
-                        {fmt(indexPrice, 4)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Peg Deviation</td>
-                      <td
-                        style={{
-                          color:
-                            Math.abs(pegDev) < 1
-                              ? "var(--g)"
-                              : Math.abs(pegDev) < 5
-                                ? "var(--a)"
-                                : "var(--r)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {pegDev >= 0 ? "+" : ""}
-                        {pegDev.toFixed(3)}%
-                      </td>
-                    </tr>
-                    <tr style={{ borderTop: "1px solid var(--bdr)" }}>
-                      <td style={{ color: "var(--td)" }}>Total Debt</td>
-                      <td
-                        style={{
-                          color: totalDebt > 0 ? "var(--a)" : "var(--g)",
-                        }}
-                      >
-                        {fmt(totalDebt)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Total Collateral</td>
-                      <td style={{ color: "var(--g)" }}>
-                        {fmt(totalCollateral)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Utilization</td>
-                      <td>
-                        {totalCollateral > 0
-                          ? ((totalBrokerDebt / totalCollateral) * 100).toFixed(
-                              1,
-                            )
-                          : 0}
-                        %
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Norm Factor</td>
-                      <td>{normFactor.toFixed(8)}</td>
-                    </tr>
-                    <tr style={{ borderTop: "1px solid var(--bdr)" }}>
-                      <td style={{ color: "var(--td)" }}>Swap Volume</td>
-                      <td style={{ color: "var(--tb)" }}>
-                        {fmt(totalVol)}{" "}
-                        <span style={{ fontSize: 9, color: "var(--td)" }}>
-                          ({swaps.length} swaps)
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Pool Tick</td>
-                      <td>{ps.tick?.toLocaleString()}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Liquidity</td>
-                      <td>{fmtN(liquidity)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Last Update</td>
-                      <td style={{ fontSize: 10 }}>
-                        {fmtAgo(ms.last_update_timestamp)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <Card title="MARKET SUMMARY" delay={10}>
+                <div className="stat-row">
+                  <span className="stat-k">Market ID</span>
+                  <span
+                    className="stat-v"
+                    style={{ color: "var(--c)", fontSize: 10 }}
+                  >
+                    {fmtAddr(ms.market_id)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Mark Price</span>
+                  <span
+                    className="stat-v"
+                    style={{ color: "var(--c)", fontWeight: 600 }}
+                  >
+                    {fmt(markPrice, 4)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Index Price</span>
+                  <span
+                    className="stat-v"
+                    style={{ color: "var(--p)", fontWeight: 600 }}
+                  >
+                    {fmt(indexPrice, 4)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Peg Deviation</span>
+                  <span
+                    className="stat-v"
+                    style={{
+                      color:
+                        Math.abs(pegDev) < 1
+                          ? "var(--g)"
+                          : Math.abs(pegDev) < 5
+                            ? "var(--a)"
+                            : "var(--r)",
+                    }}
+                  >
+                    {fmtPct(pegDev, 3)}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--bdr)",
+                    marginTop: 4,
+                    paddingTop: 4,
+                  }}
+                />
+                <div className="stat-row">
+                  <span className="stat-k">Total Debt</span>
+                  <span
+                    className="stat-v"
+                    style={{ color: totalDebt > 0 ? "var(--a)" : "var(--g)" }}
+                  >
+                    {fmt(totalDebt)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">System Collateral</span>
+                  <span className="stat-v" style={{ color: "var(--g)" }}>
+                    {fmt(totalCollateralValue)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Over-Collateralization</span>
+                  <span className="stat-v" style={{ color: "var(--g)" }}>
+                    {overCollatDisplay}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Norm Factor</span>
+                  <span className="stat-v">{normFactor.toFixed(8)}</span>
+                </div>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--bdr)",
+                    marginTop: 4,
+                    paddingTop: 4,
+                  }}
+                />
+                <div className="stat-row">
+                  <span className="stat-k">Swap Volume</span>
+                  <span className="stat-v" style={{ color: "var(--tb)" }}>
+                    {fmt(totalVol)}
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Total Swaps</span>
+                  <span className="stat-v">{swaps.length}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Total Events</span>
+                  <span className="stat-v">{events.length}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Pool Tick</span>
+                  <span className="stat-v">{ps.tick?.toLocaleString()}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Brokers</span>
+                  <span className="stat-v">{bps.length}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Active Borrowers</span>
+                  <span className="stat-v">
+                    {
+                      bps.filter(
+                        (b) =>
+                          fromRaw(b.debt, 6) > 0 ||
+                          fromRaw(b.debt_value, 6) > 0,
+                      ).length
+                    }
+                  </span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-k">Last Update</span>
+                  <span className="stat-v">
+                    {fmtAgo(ms.last_update_timestamp)}
+                  </span>
+                </div>
               </Card>
             </div>
 
             {/* ═══ FOOTER ═══ */}
             <div className="ftr">
-              RLD Protocol · Simulation Monitor v1.0 · auto-refresh 10s · next
+              RLD Protocol · Simulation Monitor v2.0 · auto-refresh 10s · next
               update in{" "}
               <span style={{ color: "var(--c)" }}>{10 - (tick % 10)}s</span>
             </div>
