@@ -17,7 +17,7 @@ import {
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
 import axios from "axios";
-import { API_BASE, authHeaders, fetcher } from "../utils/helpers";
+import { API_BASE, fetcher } from "../utils/helpers";
 import RLDPerformanceChart from "./RLDChart";
 import SettingsButton from "./SettingsButton";
 import MobileDropdown from "./MobileDropdown";
@@ -273,11 +273,8 @@ export default function Markets() {
         const promises = ASSETS.map(async (asset) => {
           let apy = 0;
           try {
-            const API_BASE =
-              import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
             const apiRes = await fetch(
               `${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
-              { headers: authHeaders },
             );
             const apiData = await apiRes.json();
             if (apiData && apiData.length > 0)
@@ -318,8 +315,6 @@ export default function Markets() {
 
   // --- Chart Data Fetching (USDC History) ---
   const getHistoryUrl = (symbol) => {
-    const API_BASE =
-      import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
     return `${API_BASE}/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   };
 
@@ -329,8 +324,6 @@ export default function Markets() {
   const { data: sofrHistory } = useSWR(getHistoryUrl("SOFR"), fetcher);
 
   const { data: ethPrices } = useSWR(() => {
-    const API_BASE =
-      import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
     return `${API_BASE}/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   }, fetcher);
 

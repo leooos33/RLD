@@ -1,13 +1,14 @@
 import axios from "axios";
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+export const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
 // Backwards compatibility alias if needed, but better to refactor consumers
-export const API_URL = API_BASE; 
+export const API_URL = API_BASE;
 
-export const API_KEY = import.meta.env.VITE_API_KEY;
-export const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
+// API auth is handled server-side by Nginx proxy — no client-side key needed
+export const authHeaders = {};
 
-export const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
+export const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 export const getPastDate = (days) => {
   const d = new Date();
