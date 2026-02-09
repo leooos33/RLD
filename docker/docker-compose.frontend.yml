@@ -1,0 +1,28 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Frontend (containerized)
+# ═══════════════════════════════════════════════════════════════
+# Builds and serves the Vite React frontend via Nginx.
+#
+#  Usage:
+#    docker compose -f docker/docker-compose.frontend.yml up -d --build
+#
+#  Access:
+#    http://localhost:3000
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-https://rld.fi/api}
+        - VITE_MAINNET_RPC_URL=${VITE_MAINNET_RPC_URL:-https://eth.llamarpc.com}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

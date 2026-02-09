@@ -1,0 +1,100 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "docker/**"
+  workflow_dispatch:
+
+env:
+  DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+  DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Build & test frontend
+  # ──────────────────────────────────────────────
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: https://rld.fi/api
+          VITE_MAINNET_RPC_URL: ${{ secrets.VITE_MAINNET_RPC_URL }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  # ──────────────────────────────────────────────
+  # 2. Deploy to server
+  # ──────────────────────────────────────────────
+  deploy:
+    needs: frontend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Deploy frontend to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "dist/*"
+          target: "/home/ubuntu/RLD/frontend/"
+          strip_components: 0
+
+      - name: Restart services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/RLD
+            git pull --ff-only
+
+            # Rebuild backend containers if backend changed
+            if git diff HEAD~1 --name-only | grep -q "^backend/"; then
+              echo "🔄 Backend changed — rebuilding indexer + bot..."
+              docker compose -f docker/docker-compose.yml build indexer
+              docker compose -f docker/docker-compose.yml up -d --no-deps indexer
+              docker compose -f docker/docker-compose.bot.yml up -d --force-recreate
+            fi
+
+            echo "✅ Deploy complete"

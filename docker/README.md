@@ -53,6 +53,10 @@ docker compose -f docker/docker-compose.yml up --build
 ### 3. Frontend (containerized)
 
 ```bash
+# One-command deploy (recommended)
+docker compose -f docker/docker-compose.frontend.yml up -d --build
+
+# Or manual build
 docker build \
   --build-arg VITE_API_BASE_URL=https://rld.fi/api \
   --build-arg VITE_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY \
@@ -67,11 +71,12 @@ docker run -p 3000:80 rld-frontend
 
 ### Compose Files
 
-| File                       | Services                                   | Lifecycle      |
-| -------------------------- | ------------------------------------------ | -------------- |
-| `docker-compose.yml`       | deployer, indexer, mm-daemon, chaos-trader | Per simulation |
-| `docker-compose.rates.yml` | rates-indexer                              | Persistent     |
-| `docker-compose.bot.yml`   | monitor-bot                                | Persistent     |
+| File                          | Services                                   | Lifecycle      |
+| ----------------------------- | ------------------------------------------ | -------------- |
+| `docker-compose.yml`          | deployer, indexer, mm-daemon, chaos-trader | Per simulation |
+| `docker-compose.rates.yml`    | rates-indexer                              | Persistent     |
+| `docker-compose.bot.yml`      | monitor-bot                                | Persistent     |
+| `docker-compose.frontend.yml` | frontend                                   | Persistent     |
 
 ### Container Details
 
@@ -226,3 +231,50 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 # Check indexer lag
 curl -s http://localhost:8080/api/status | python3 -m json.tool
 ```
+
+---
+
+## CI/CD (GitHub Actions)
+
+Auto-builds frontend and deploys on push to `main` (`.github/workflows/deploy.yml`).
+
+**Required GitHub Secrets:**
+
+| Secret                 | Description                        |
+| ---------------------- | ---------------------------------- |
+| `DEPLOY_HOST`          | Server IP/hostname                 |
+| `DEPLOY_USER`          | SSH user (e.g., `ubuntu`)          |
+| `DEPLOY_SSH_KEY`       | Private SSH key for deployment     |
+| `VITE_MAINNET_RPC_URL` | Alchemy RPC URL for frontend build |
+
+**Flow:** `push to main` → build frontend → SCP `dist/` to server → `git pull` → rebuild backend containers if changed.
+
+---
+
+## Log Aggregation
+
+Hourly cron collects logs from all containers into daily files:
+
+```bash
+# Setup (already installed via crontab)
+0 * * * * /home/ubuntu/RLD/docker/scripts/collect-logs.sh
+
+# Manual run
+./docker/scripts/collect-logs.sh
+
+# View today's logs
+ls -la logs/
+cat logs/indexer_$(date +%Y-%m-%d).log
+cat logs/health_$(date +%Y-%m-%d).log
+```
+
+Logs are rotated automatically after 7 days.
+
+---
+
+## Rate Limiting
+
+| Zone   | Rate     | Burst | Scope               |
+| ------ | -------- | ----- | ------------------- |
+| `site` | 30 req/s | 60    | All pages (`/`)     |
+| `api`  | 10 req/s | 20    | API proxy (`/api/`) |
