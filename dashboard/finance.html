@@ -1034,8 +1034,19 @@
                   className="mv"
                   style={{ color: totalDebt > 0 ? "var(--a)" : "var(--tb)" }}
                 >
-                  {fmt(totalDebt)}
+                  {fmtN(totalDebt)} wRLP
                 </div>
+                {totalDebtValue > 0 && (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "var(--td)",
+                      marginBottom: 2,
+                    }}
+                  >
+                    ≈ {fmt(totalDebtValue)}
+                  </div>
+                )}
                 <div className="ml">outstanding borrows</div>
               </Card>
               <Card title="SYSTEM TVL" delay={3}>
@@ -1294,7 +1305,7 @@
                   <tr>
                     <th>broker</th>
                     <th className="r">collateral</th>
-                    <th className="r">debt</th>
+                    <th className="r">debt (wRLP)</th>
                     <th className="r">collateral value</th>
                     <th className="r">debt value</th>
                     <th className="r">health factor</th>
@@ -1328,7 +1339,7 @@
                           className="r"
                           style={{ color: hasDebt ? "var(--a)" : "var(--td)" }}
                         >
-                          {hasDebt ? fmt(debt) : "—"}
+                          {hasDebt ? fmtN(debt) + " wRLP" : "—"}
                         </td>
                         <td className="r" style={{ fontSize: 10 }}>
                           {fmt(collVal)}
@@ -1398,8 +1409,13 @@
                       color: totalBrokerDebt > 0 ? "var(--a)" : "var(--gd)",
                     }}
                   >
-                    {fmt(totalBrokerDebt)}
+                    {fmtN(totalBrokerDebt)} wRLP
                   </span>
+                  {totalDebtValue > 0 && (
+                    <span style={{ color: "var(--td)", marginLeft: 4 }}>
+                      ({fmt(totalDebtValue)})
+                    </span>
+                  )}
                 </span>
                 <span>
                   over-collateralization:{" "}
@@ -1562,7 +1578,8 @@
                     className="stat-v"
                     style={{ color: totalDebt > 0 ? "var(--a)" : "var(--g)" }}
                   >
-                    {fmt(totalDebt)}
+                    {fmtN(totalDebt)} wRLP
+                    {totalDebtValue > 0 && ` (${fmt(totalDebtValue)})`}
                   </span>
                 </div>
                 <div className="stat-row">
