@@ -64,7 +64,9 @@ RLD_CORE_ABI = [
      "stateMutability": "view", "type": "function"},
     {"inputs": [{"name": "id", "type": "bytes32"}, {"name": "user", "type": "address"}],
      "name": "getPosition",
-     "outputs": [{"name": "collateral", "type": "int256"}, {"name": "debtPrincipal", "type": "int256"}],
+     "outputs": [{"components": [
+         {"name": "debtPrincipal", "type": "uint128"}
+     ], "name": "", "type": "tuple"}],
      "stateMutability": "view", "type": "function"},
     {"anonymous": False, "inputs": [
         {"indexed": True, "name": "id", "type": "bytes32"},
@@ -110,6 +112,23 @@ ORACLE_ABI = [
 ERC20_ABI = [
     {"inputs": [{"name": "account", "type": "address"}],
      "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"}
+]
+
+PRIME_BROKER_ABI = [
+    {"inputs": [], "name": "getFullState",
+     "outputs": [{"components": [
+         {"name": "collateralBalance", "type": "uint256"},
+         {"name": "positionBalance", "type": "uint256"},
+         {"name": "debtPrincipal", "type": "uint128"},
+         {"name": "debtValue", "type": "uint256"},
+         {"name": "twammSellOwed", "type": "uint256"},
+         {"name": "twammBuyOwed", "type": "uint256"},
+         {"name": "v4LPValue", "type": "uint256"},
+         {"name": "netAccountValue", "type": "uint256"},
+         {"name": "healthFactor", "type": "uint256"},
+         {"name": "isSolvent", "type": "bool"}
+     ], "name": "", "type": "tuple"}],
      "stateMutability": "view", "type": "function"}
 ]
 
@@ -346,58 +365,51 @@ class ComprehensiveIndexer:
             return {}
     
     def get_broker_position(self, broker_address: str) -> Dict:
-        """Get position for a specific broker."""
+        """Get position for a specific broker via PrimeBroker.getFullState().
+        
+        Uses the on-chain BrokerState struct which returns all data in one call:
+        - collateralBalance, positionBalance, debtPrincipal, debtValue
+        - twammSellOwed, twammBuyOwed, v4LPValue
+        - netAccountValue, healthFactor, isSolvent
+        """
         try:
-            position = self.rld_core.functions.getPosition(
-                self.market_id_bytes,
-                Web3.to_checksum_address(broker_address)
-            ).call()
+            broker_contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(broker_address),
+                abi=PRIME_BROKER_ABI
+            )
+            state = broker_contract.functions.getFullState().call()
             
-            collateral = position[0]
-            debt_principal = position[1]
+            # BrokerState struct fields (in order):
+            collateral_balance = state[0]  # uint256 - collateral token balance
+            position_balance = state[1]    # uint256 - wRLP balance
+            debt_principal = state[2]      # uint128 - raw debt principal
+            debt_value = state[3]          # uint256 - principal × NF × indexPrice
+            twamm_sell_owed = state[4]     # uint256
+            twamm_buy_owed = state[5]      # uint256
+            v4_lp_value = state[6]         # uint256
+            net_account_value = state[7]   # uint256 - total assets
+            health_factor_raw = state[8]   # uint256 - nav / debtValue (1e18 scale)
+            is_solvent = state[9]          # bool
             
-            # Get market state for debt calculation
-            state = self.get_market_state()
-            nf = state.get('normalization_factor', 1e18)
-            
-            # Actual debt = principal * NF
-            actual_debt = (debt_principal * nf) // (10**18) if nf > 0 else 0
-            
-            # Health factor calculation would need oracle prices
-            # Simplified: collateral / debt if debt > 0
-            health_factor = 0.0
-            if actual_debt > 0 and collateral > 0:
-                health_factor = collateral / actual_debt
+            # Health factor as float (on-chain is 1e18 scaled, max = type(uint256).max)
+            health_factor = health_factor_raw / 1e18 if health_factor_raw < 2**255 else float('inf')
             
             return {
-                'collateral': collateral,
-                'debt': actual_debt,
+                'collateral': net_account_value,
+                'debt': debt_value,
                 'debt_principal': debt_principal,
-                'collateral_value': collateral,  # In collateral token units
-                'debt_value': actual_debt,
-                'health_factor': health_factor
+                'collateral_value': net_account_value,
+                'debt_value': debt_value,
+                'health_factor': health_factor,
+                # Extended fields from BrokerState
+                'collateral_balance': collateral_balance,
+                'position_balance': position_balance,
+                'twamm_sell_owed': twamm_sell_owed,
+                'twamm_buy_owed': twamm_buy_owed,
+                'v4_lp_value': v4_lp_value,
+                'is_solvent': is_solvent
             }
         except Exception as e:
-            # Fallback: try raw call and decode single value (some brokers return only collateral)
-            try:
-                fn_selector = self.w3.keccak(text="getPosition(bytes32,address)")[:4]
-                call_data = fn_selector + self.market_id_bytes + bytes(12) + bytes.fromhex(broker_address[2:])
-                raw = self.w3.eth.call({
-                    'to': self.rld_core.address,
-                    'data': call_data
-                })
-                if len(raw) == 32:
-                    collateral = int.from_bytes(raw, 'big', signed=True)
-                    return {
-                        'collateral': collateral,
-                        'debt': 0,
-                        'debt_principal': 0,
-                        'collateral_value': collateral,
-                        'debt_value': 0,
-                        'health_factor': 0.0
-                    }
-            except Exception:
-                pass
             logger.debug(f"Could not get broker position for {broker_address}: {e}")
             return {}
     
