@@ -1,5 +1,11 @@
 import React, { useMemo } from "react";
-import { Shield, Percent, Terminal, Calendar, AlertTriangle } from "lucide-react";
+import {
+  Shield,
+  Percent,
+  Terminal,
+  Calendar,
+  AlertTriangle,
+} from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import Header from "./Header";
 import { formatNum } from "../utils/helpers";
@@ -18,31 +24,38 @@ import SettingsButton from "./SettingsButton";
 
 export default function BondsPage() {
   const { account, connectWallet, usdcBalance } = useWallet();
-  const { rates, error, isLoading, stats, dailyChange, latest, isCappedRaw } =
-    useMarketData();
+  const {
+    rates,
+    error,
+    isLoading,
+    stats,
+    dailyChange,
+    latest,
+    isCappedRaw: _isCappedRaw,
+  } = useMarketData();
   const tradeLogic = useTradeLogic(latest.apy);
   const {
-      activeProduct,
-      activeTab,
-      notional,
-      maturityDays,
-      maturityDate,
-      slippage,
-    } = tradeLogic.state;
+    activeProduct,
+    activeTab,
+    notional,
+    maturityDays,
+    maturityDate,
+    slippage,
+  } = tradeLogic.state;
   const {
-      setActiveTab,
-      setNotional,
-      handleDaysChange,
-      handleDateChange,
-      setSlippage,
-    } = tradeLogic.actions;
+    setActiveTab,
+    setNotional,
+    handleDaysChange,
+    handleDateChange,
+    setSlippage,
+  } = tradeLogic.actions;
 
   const projectionData = useWealthProjection(
     tradeLogic.state.notional,
     latest.apy,
-    tradeLogic.state.maturityDays
+    tradeLogic.state.maturityDays,
   );
-  
+
   // Logic for Close View Mock
   const accruedYield = useMemo(() => {
     // Mock: Assume held for 30 days at current rate
@@ -114,25 +127,37 @@ export default function BondsPage() {
               </div>
             </div>
           </div>
-          
+
           <TradingTerminal
             account={account}
             connectWallet={connectWallet}
             title={activeProduct}
-            subTitle={activeProduct === "FIXED_YIELD" ? "SHORT RLP" : "LONG RLP"}
+            subTitle={
+              activeProduct === "FIXED_YIELD" ? "SHORT RLP" : "LONG RLP"
+            }
             Icon={Terminal}
             tabs={[
-                { id: "OPEN", label: "OPEN", onClick: () => setActiveTab("OPEN"), isActive: activeTab === "OPEN" },
-                { id: "CLOSE", label: "CLOSE", onClick: () => setActiveTab("CLOSE"), isActive: activeTab === "CLOSE" }
+              {
+                id: "OPEN",
+                label: "OPEN",
+                onClick: () => setActiveTab("OPEN"),
+                isActive: activeTab === "OPEN",
+              },
+              {
+                id: "CLOSE",
+                label: "CLOSE",
+                onClick: () => setActiveTab("CLOSE"),
+                isActive: activeTab === "CLOSE",
+              },
             ]}
             actionButton={{
-                label: `${activeTab} POSITION`,
-                onClick: () => {}, // Placeholder
-                variant: activeProduct === "FIXED_BORROW" ? "pink" : "cyan",
+              label: `${activeTab} POSITION`,
+              onClick: () => {}, // Placeholder
+              variant: activeProduct === "FIXED_BORROW" ? "pink" : "cyan",
             }}
           >
-             {/* Wraps the specific content for Bonds */}
-             {activeTab === "OPEN" && (
+            {/* Wraps the specific content for Bonds */}
+            {activeTab === "OPEN" && (
               <>
                 <InputGroup
                   label="Notional_Amount"
@@ -262,8 +287,8 @@ export default function BondsPage() {
                       Early Exit Notice
                     </div>
                     <p className="text-[11px] text-gray-400 leading-relaxed font-mono">
-                      You can exit position at any time. However, early exits are
-                      subject to slippage based on liquidity availability.
+                      You can exit position at any time. However, early exits
+                      are subject to slippage based on liquidity availability.
                     </p>
                   </div>
                 </div>

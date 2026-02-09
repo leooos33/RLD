@@ -332,7 +332,6 @@ const Portfolio = () => {
     direction: "asc",
   });
   const [filters, setFilters] = React.useState({ status: "ALL", asset: "ALL" });
-  const [useStateTrigger, setUseStateTrigger] = React.useState(0);
 
   const handleSort = (key) => {
     let direction = "asc";

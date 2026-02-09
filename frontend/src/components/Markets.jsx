@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
-import axios from "axios";
 import { API_BASE, fetcher } from "../utils/helpers";
 import RLDPerformanceChart from "./RLDChart";
 import SettingsButton from "./SettingsButton";
@@ -59,7 +58,13 @@ const ASSETS = [
   },
 ];
 
-function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
+function MarketMetricBox({
+  label,
+  value,
+  sub,
+  dimmed,
+  Icon: _Icon = Activity,
+}) {
   return (
     <div
       className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[160px] ${
@@ -67,7 +72,7 @@ function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
       }`}
     >
       <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-        {label} <Icon size={15} className="opacity-90" />
+        {label} <_Icon size={15} className="opacity-90" />
       </div>
       <div>
         <div className="text-xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">

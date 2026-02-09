@@ -4,7 +4,7 @@ import { useWallet } from "../context/WalletContext";
 import WalletModal from "./WalletModal";
 import { Menu, X } from "lucide-react";
 
-export default function Header({ latest, isCapped, ratesLoaded }) {
+export default function Header({ isCapped, ratesLoaded }) {
   const { account, connectWallet, disconnect } = useWallet();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);

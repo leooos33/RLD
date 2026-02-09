@@ -54,7 +54,7 @@ const calculateCorrelation = (x, y) => {
 
   const numerator = n * sumXY - sumX * sumY;
   const denominator = Math.sqrt(
-    (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY)
+    (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY),
   );
 
   if (denominator === 0) return 0;
@@ -93,7 +93,7 @@ function App() {
 
   const toggleSeries = (key) => {
     setHiddenSeries((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
   };
 
@@ -110,9 +110,12 @@ function App() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days);
-    if (days <= 3) setResolution("1H"); // 24H - 3D -> 1H
-    else if (days <= 14) setResolution("1H"); // 1W - 2W -> 1H (High Res)
-    else if (days <= 90) setResolution("4H"); // 1M - 3M -> 4H (Medium Res)
+    if (days <= 3)
+      setResolution("1H"); // 24H - 3D -> 1H
+    else if (days <= 14)
+      setResolution("1H"); // 1W - 2W -> 1H (High Res)
+    else if (days <= 90)
+      setResolution("4H"); // 1M - 3M -> 4H (Medium Res)
     else setResolution("1D"); // 1Y - ALL -> 1D (Low Res)
     setTempStart(start.toISOString().split("T")[0]);
     setTempEnd(end.toISOString().split("T")[0]);
@@ -178,7 +181,7 @@ function App() {
             .replace("Z", "");
           const price = row.eth_price ? row.eth_price.toFixed(2) : "";
           return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(
-            4
+            4,
           )},${price}`;
         })
         .join("\n");
@@ -191,7 +194,7 @@ function App() {
       link.setAttribute("href", urlObj);
       link.setAttribute(
         "download",
-        `aave_usdc_rates_full_history_${getToday()}.csv`
+        `aave_usdc_rates_full_history_${getToday()}.csv`,
       );
       link.style.visibility = "hidden";
       document.body.appendChild(link);
@@ -253,10 +256,10 @@ function App() {
       resolution === "1W"
         ? 604800
         : resolution === "4H"
-        ? 14400
-        : resolution === "1D"
-        ? 86400
-        : 3600;
+          ? 14400
+          : resolution === "1D"
+            ? 86400
+            : 3600;
 
     for (let i = 0; i < rates.length; i++) {
       const current = rates[i];
@@ -363,16 +366,16 @@ function App() {
     rates && rates.length > 0
       ? rates[rates.length - 1]
       : { apy: 0, block_number: 0, timestamp: 0 };
-  const latestTwar =
+  const _latestTwar =
     processedData.length > 0 ? processedData[processedData.length - 1].twar : 0;
 
   // --- TRADING CALCULATIONS ---
   const currentRate = latest.apy;
 
-  let leverage, liqRate, notional;
+  let _leverage, liqRate, notional;
 
   if (tradeSide === "LONG") {
-    leverage = 1;
+    _leverage = 1;
     notional = collateral;
     liqRate = null;
   } else {
@@ -533,7 +536,7 @@ function App() {
                     <StatItem
                       label="RANGE[MIN - MAX]"
                       value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(
-                        2
+                        2,
                       )}`}
                     />
                     <StatItem

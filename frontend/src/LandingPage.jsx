@@ -41,7 +41,7 @@ const LandingPage = () => {
       {/* Global Borders Container */}
       <div className="w-full max-w-[1400px] border-x border-white/10 min-h-screen relative flex flex-col">
         {/* Standard App Header */}
-        <Header latest={{}} isCapped={false} ratesLoaded={true} />
+        <Header isCapped={false} ratesLoaded={true} />
 
         {/* HERO WRAPPER (Hero + Stats = Full Screen minus Header) */}
         <div className="min-h-[calc(100vh-80px)] flex flex-col border-t border-white/10">

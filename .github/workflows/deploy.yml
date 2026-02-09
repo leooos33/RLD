@@ -9,19 +9,12 @@ on:
       - "docker/**"
   workflow_dispatch:
 
-env:
-  DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-  DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-
 jobs:
   # ──────────────────────────────────────────────
   # 1. Build & test frontend
   # ──────────────────────────────────────────────
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
 
     steps:
       - uses: actions/checkout@v4
@@ -33,13 +26,15 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
+        working-directory: frontend
         run: npm ci
 
       - name: Lint
+        working-directory: frontend
         run: npm run lint
-        continue-on-error: true
 
       - name: Build
+        working-directory: frontend
         run: npm run build
         env:
           VITE_API_BASE_URL: https://rld.fi/api
@@ -61,8 +56,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
