@@ -236,18 +236,81 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 ## CI/CD (GitHub Actions)
 
-Auto-builds frontend and deploys on push to `main` (`.github/workflows/deploy.yml`).
+Automated build & deploy pipeline via `.github/workflows/deploy.yml`.
 
-**Required GitHub Secrets:**
+### Triggers
 
-| Secret                 | Description                        |
-| ---------------------- | ---------------------------------- |
-| `DEPLOY_HOST`          | Server IP/hostname                 |
-| `DEPLOY_USER`          | SSH user (e.g., `ubuntu`)          |
-| `DEPLOY_SSH_KEY`       | Private SSH key for deployment     |
-| `VITE_MAINNET_RPC_URL` | Alchemy RPC URL for frontend build |
+| Trigger             | Condition                                                          |
+| ------------------- | ------------------------------------------------------------------ |
+| `push` to `main`    | Only when `frontend/**`, `backend/**`, or `docker/**` files change |
+| `workflow_dispatch` | Manual trigger from GitHub Actions UI                              |
 
-**Flow:** `push to main` → build frontend → SCP `dist/` to server → `git pull` → rebuild backend containers if changed.
+> **Note:** Changes to `.github/workflows/` alone won't auto-trigger — use manual dispatch.
+
+### Pipeline Jobs
+
+```
+push to main ──► frontend (34s) ──► deploy (29s)
+                   │                    │
+                   ├─ Checkout          ├─ Download build artifact
+                   ├─ Node 20 + cache  ├─ SCP dist/ to server
+                   ├─ npm ci           ├─ git pull --ff-only
+                   ├─ npm run lint     └─ Rebuild backend if changed
+                   ├─ npm run build
+                   └─ Upload artifact
+```
+
+**Job 1: `frontend`** — Lint & build on `ubuntu-latest`
+
+- Installs Node 20 with npm cache (keyed on `package-lock.json`)
+- Runs ESLint (`npm run lint`) — **fails the pipeline on any error**
+- Builds with Vite, injecting `VITE_API_BASE_URL` and `VITE_MAINNET_RPC_URL`
+- Uploads `frontend/dist` as artifact (7-day retention)
+
+**Job 2: `deploy`** — SCP + SSH to production (only on `main`)
+
+- Downloads the `frontend-dist` artifact
+- SCPs `dist/*` to `/home/ubuntu/RLD/frontend/` via `appleboy/scp-action@v0.1.7`
+- SSHs into the server via `appleboy/ssh-action@v1.2.5`:
+  - `git pull --ff-only` to sync config/backend changes
+  - If `backend/` changed: rebuilds `indexer` + `monitor-bot` containers
+
+### Required GitHub Secrets
+
+Set these in **Settings → Secrets and variables → Actions**:
+
+| Secret                 | Value                  | Notes                             |
+| ---------------------- | ---------------------- | --------------------------------- |
+| `DEPLOY_HOST`          | Server IP or hostname  | e.g., `203.0.113.42`              |
+| `DEPLOY_USER`          | SSH username           | e.g., `ubuntu`                    |
+| `DEPLOY_SSH_KEY`       | Full SSH private key   | Must include BEGIN/END lines      |
+| `VITE_MAINNET_RPC_URL` | Alchemy/Infura RPC URL | Baked into frontend at build time |
+
+### Deploy Key Setup
+
+The deploy key is stored at `~/.ssh/deploy_key` on the server:
+
+```bash
+# Generate (already done)
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/deploy_key -N ""
+
+# Public key is in authorized_keys
+cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys
+
+# Copy the PRIVATE key into DEPLOY_SSH_KEY secret
+cat ~/.ssh/deploy_key
+# Copy entire output including -----BEGIN/END----- lines
+```
+
+### Troubleshooting
+
+| Error                                | Cause                                  | Fix                                        |
+| ------------------------------------ | -------------------------------------- | ------------------------------------------ |
+| `exit code 128` (warning)            | npm cache git operation                | Harmless, ignore                           |
+| `ssh: no key found`                  | `DEPLOY_SSH_KEY` empty or wrong format | Re-paste the full private key with headers |
+| `unable to authenticate [publickey]` | Key mismatch                           | Use `~/.ssh/deploy_key`, not `id_ed25519`  |
+| `Unable to resolve action`           | Invalid action version tag             | Check tags at github.com/appleboy/\*       |
+| Pipeline not triggered on push       | Changed files outside `paths` filter   | Use manual `workflow_dispatch` or add path |
 
 ---
 
