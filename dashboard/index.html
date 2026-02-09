@@ -24,47 +24,64 @@
         box-sizing: border-box;
       }
       :root {
-        --bg: #08090a;
-        --s1: #0d0f10;
-        --s2: #131517;
-        --bdr: #1a1d20;
+        --bg: #06080a;
+        --s1: #0c0e12;
+        --s2: #12151a;
+        --s3: #181c22;
+        --bdr: #1c2028;
+        --bdr2: #252a33;
         --g: #00ff88;
-        --gd: #00994d;
-        --g2: rgba(0, 255, 136, 0.08);
-        --a: #ffaa00;
-        --ad: #996600;
-        --a2: rgba(255, 170, 0, 0.08);
-        --r: #ff3344;
-        --rd: #991a22;
-        --r2: rgba(255, 51, 68, 0.08);
-        --c: #00ccff;
-        --cd: #006680;
-        --t: #8a8f98;
-        --td: #3a3f48;
-        --tb: #cdd0d6;
+        --gd: #00cc6a;
+        --g10: rgba(0, 255, 136, 0.06);
+        --g20: rgba(0, 255, 136, 0.12);
+        --a: #ffb020;
+        --ad: #cc8800;
+        --a10: rgba(255, 176, 32, 0.06);
+        --a20: rgba(255, 176, 32, 0.12);
+        --r: #ff4455;
+        --rd: #cc2233;
+        --r10: rgba(255, 68, 85, 0.06);
+        --r20: rgba(255, 68, 85, 0.12);
+        --c: #38bdf8;
+        --cd: #0ea5e9;
+        --c10: rgba(56, 189, 248, 0.06);
+        --p: #a78bfa;
+        --p10: rgba(167, 139, 250, 0.06);
+        --t: #8892a0;
+        --td: #4a5260;
+        --tb: #d0d5dd;
+        --tw: #f0f2f5;
+      }
+      html {
+        font-size: 13px;
       }
       body {
         font-family: "JetBrains Mono", monospace;
         background: var(--bg);
         color: var(--t);
         min-height: 100vh;
-        font-size: 12px;
         line-height: 1.5;
+        overflow-x: hidden;
       }
-      body::after {
+      body::before {
         content: "";
         position: fixed;
         inset: 0;
         background: repeating-linear-gradient(
           0deg,
           transparent,
-          transparent 3px,
-          rgba(0, 255, 136, 0.006) 3px,
-          rgba(0, 255, 136, 0.006) 4px
+          transparent 2px,
+          rgba(0, 255, 136, 0.004) 2px,
+          rgba(0, 255, 136, 0.004) 4px
         );
         pointer-events: none;
         z-index: 9999;
       }
+      ::selection {
+        background: var(--g20);
+        color: var(--g);
+      }
+
       @keyframes blink {
         0%,
         100% {
@@ -77,11 +94,21 @@
       @keyframes fadeUp {
         from {
           opacity: 0;
-          transform: translateY(6px);
+          transform: translateY(8px);
         }
         to {
           opacity: 1;
           transform: translateY(0);
+        }
+      }
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(-8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
         }
       }
       @keyframes pulse {
@@ -90,32 +117,49 @@
           opacity: 1;
         }
         50% {
-          opacity: 0.4;
+          opacity: 0.3;
         }
-      }
-      .blink {
-        animation: blink 1.2s step-end infinite;
-      }
-      .pulse {
-        animation: pulse 2s ease-in-out infinite;
-      }
-      .fade {
-        animation: fadeUp 0.3s ease both;
       }
 
       .wrap {
-        max-width: 1280px;
+        max-width: 1440px;
         margin: 0 auto;
-        padding: 16px;
+        padding: 12px 16px;
       }
+
+      /* ── Header ── */
       .hdr {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 0 16px;
+        padding: 10px 0 14px;
         border-bottom: 1px solid var(--bdr);
-        margin-bottom: 16px;
+        margin-bottom: 12px;
       }
+      .hdr-l {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .hdr-r {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .logo {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--g);
+        text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+      }
+      .subtitle {
+        font-size: 10px;
+        color: var(--td);
+        letter-spacing: 3px;
+        text-transform: uppercase;
+      }
+
+      /* ── Grid ── */
       .grid {
         display: grid;
         gap: 1px;
@@ -127,55 +171,82 @@
         grid-template-columns: 1fr 1fr 1fr;
       }
       .g4 {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: 1fr 1fr 1fr 1fr;
       }
-      @media (max-width: 900px) {
+      .g5 {
+        grid-template-columns: repeat(5, 1fr);
+      }
+      .g23 {
+        grid-template-columns: 2fr 3fr;
+      }
+      .g32 {
+        grid-template-columns: 3fr 2fr;
+      }
+      @media (max-width: 600px) {
         .g2,
         .g3,
-        .g4 {
+        .g4,
+        .g5,
+        .g23,
+        .g32 {
           grid-template-columns: 1fr;
         }
       }
 
+      /* ── Card ── */
       .card {
         background: var(--s1);
         border: 1px solid var(--bdr);
-        padding: 14px 16px;
+        padding: 12px 14px;
+        animation: fadeUp 0.35s ease both;
       }
-      .card-t {
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 2.5px;
-        color: var(--td);
-        margin-bottom: 10px;
+      .card-hdr {
         display: flex;
         align-items: center;
-        gap: 6px;
-      }
-      .badge {
+        justify-content: space-between;
+        margin-bottom: 8px;
         font-size: 9px;
-        padding: 2px 8px;
-        border-radius: 2px;
-        letter-spacing: 1.5px;
-        font-weight: 600;
-        margin-left: auto;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--td);
       }
-      .b-green {
-        background: var(--g2);
-        color: var(--g);
-        border: 1px solid rgba(0, 255, 136, 0.15);
-      }
-      .b-amber {
-        background: var(--a2);
-        color: var(--a);
-        border: 1px solid rgba(255, 170, 0, 0.15);
-      }
-      .b-red {
-        background: var(--r2);
-        color: var(--r);
-        border: 1px solid rgba(255, 51, 68, 0.15);
+      .card-hdr .label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
       }
 
+      /* ── Badge ── */
+      .badge {
+        font-size: 8px;
+        padding: 2px 7px;
+        border-radius: 2px;
+        letter-spacing: 1.2px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .b-g {
+        background: var(--g10);
+        color: var(--g);
+        border: 1px solid var(--g20);
+      }
+      .b-a {
+        background: var(--a10);
+        color: var(--a);
+        border: 1px solid var(--a20);
+      }
+      .b-r {
+        background: var(--r10);
+        color: var(--r);
+        border: 1px solid var(--r20);
+      }
+      .b-c {
+        background: var(--c10);
+        color: var(--c);
+        border: 1px solid rgba(56, 189, 248, 0.15);
+      }
+
+      /* ── Status Indicator ── */
       .dot {
         width: 5px;
         height: 5px;
@@ -183,19 +254,20 @@
         display: inline-block;
         flex-shrink: 0;
       }
-      .d-g {
+      .dg {
         background: var(--g);
-        box-shadow: 0 0 6px var(--g);
+        box-shadow: 0 0 5px var(--g);
       }
-      .d-a {
+      .da {
         background: var(--a);
-        box-shadow: 0 0 6px var(--a);
+        box-shadow: 0 0 5px var(--a);
       }
-      .d-r {
+      .dr {
         background: var(--r);
-        box-shadow: 0 0 6px var(--r);
+        box-shadow: 0 0 5px var(--r);
       }
 
+      /* ── Table ── */
       .tbl {
         width: 100%;
         border-collapse: collapse;
@@ -203,87 +275,134 @@
       .tbl th {
         text-align: left;
         color: var(--td);
-        font-size: 9px;
+        font-size: 8px;
         text-transform: uppercase;
         letter-spacing: 1.5px;
-        padding: 5px 8px;
+        padding: 4px 6px;
         border-bottom: 1px solid var(--bdr);
         font-weight: 400;
       }
       .tbl td {
-        padding: 5px 8px;
-        border-bottom: 1px solid #0e0f11;
+        padding: 4px 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
         font-size: 11px;
+        white-space: nowrap;
       }
       .tbl tr:hover td {
-        background: rgba(0, 255, 136, 0.015);
+        background: rgba(0, 255, 136, 0.01);
+      }
+      .tbl .r {
+        text-align: right;
       }
 
+      /* ── Bar ── */
       .bar-bg {
-        height: 4px;
+        height: 3px;
         background: var(--bdr);
         border-radius: 1px;
         overflow: hidden;
+        flex: 1;
       }
       .bar-fg {
         height: 100%;
         border-radius: 1px;
-        transition: width 0.6s ease;
+        transition: width 0.5s ease;
       }
 
-      .metric-val {
-        font-size: 20px;
+      /* ── Metric ── */
+      .mv {
+        font-size: 22px;
         font-weight: 600;
         letter-spacing: -0.5px;
+        line-height: 1.2;
       }
-      .metric-lbl {
-        font-size: 9px;
+      .ml {
+        font-size: 8px;
         color: var(--td);
         text-transform: uppercase;
         letter-spacing: 1.5px;
         margin-top: 2px;
       }
-
-      .log-line {
+      .ms {
         font-size: 10px;
-        padding: 3px 0;
-        border-bottom: 1px solid #0b0c0d;
+        color: var(--td);
+        margin-left: 2px;
+        font-weight: 300;
+      }
+
+      /* ── Sparkline ── */
+      .spark {
         display: flex;
-        gap: 10px;
+        align-items: flex-end;
+        gap: 1px;
+        height: 24px;
+      }
+      .spark-bar {
+        width: 3px;
+        min-height: 1px;
+        background: var(--g);
+        opacity: 0.6;
+        border-radius: 1px 1px 0 0;
+        transition: height 0.3s ease;
+      }
+      .spark-bar:last-child {
+        opacity: 1;
+      }
+
+      /* ── Log ── */
+      .log {
+        font-size: 10px;
+        padding: 2px 0;
+        display: flex;
+        gap: 8px;
+        animation: slideIn 0.2s ease both;
       }
       .log-ts {
         color: var(--td);
         flex-shrink: 0;
-        width: 60px;
+        font-size: 9px;
+        min-width: 52px;
       }
-      .log-ok {
-        color: var(--g);
+
+      /* ── Footer ── */
+      .ftr {
+        text-align: center;
+        padding: 10px 0;
+        color: var(--td);
+        font-size: 8px;
+        border-top: 1px solid var(--bdr);
+        margin-top: 10px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
       }
-      .log-warn {
-        color: var(--a);
+
+      /* ── Tooltip ── */
+      .tip {
+        position: relative;
+        cursor: default;
       }
-      .log-err {
-        color: var(--r);
+      .tip:hover::after {
+        content: attr(data-tip);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--s3);
+        border: 1px solid var(--bdr2);
+        color: var(--tb);
+        padding: 3px 8px;
+        font-size: 9px;
+        white-space: nowrap;
+        border-radius: 2px;
+        z-index: 10;
+        pointer-events: none;
       }
 
       .glow-g {
-        text-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
-      }
-      .glow-c {
-        text-shadow: 0 0 8px rgba(0, 204, 255, 0.3);
+        text-shadow: 0 0 8px rgba(0, 255, 136, 0.2);
       }
       .glow-r {
-        text-shadow: 0 0 8px rgba(255, 51, 68, 0.4);
-      }
-
-      .ftr {
-        text-align: center;
-        padding: 14px 0;
-        color: var(--td);
-        font-size: 9px;
-        border-top: 1px solid var(--bdr);
-        margin-top: 12px;
-        letter-spacing: 1.5px;
+        text-shadow: 0 0 8px rgba(255, 68, 85, 0.3);
       }
     </style>
   </head>
@@ -292,11 +411,13 @@
     <script type="text/babel">
       const { useState, useEffect, useCallback } = React;
 
+      // ── Utils ──
       const fmtUp = (s) => {
+        if (!s) return "—";
         const d = Math.floor(s / 86400),
           h = Math.floor((s % 86400) / 3600),
           m = Math.floor((s % 3600) / 60);
-        return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+        return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
       };
       const fmtAgo = (ts) => {
         if (!ts) return "—";
@@ -307,52 +428,118 @@
             ? `${Math.floor(d / 60)}m ago`
             : `${Math.floor(d / 3600)}h ago`;
       };
-      const pct = (u, t) => (t > 0 ? Math.round((u / t) * 100) : 0);
+      const fmtN = (n) => {
+        if (n === undefined || n === null || n === "") return "—";
+        const v = Number(n);
+        return isNaN(v)
+          ? n
+          : v >= 1e6
+            ? (v / 1e6).toFixed(2) + "M"
+            : v >= 1e3
+              ? v.toLocaleString()
+              : String(v);
+      };
+      const fmtBytes = (s) => {
+        if (!s) return "—";
+        const m = s.match(/([\d.]+)\s*(B|kB|KB|MiB|GiB|MB|GB)/i);
+        if (!m) return s;
+        const v = parseFloat(m[1]),
+          u = m[2];
+        return `${v}${u}`;
+      };
+      const barColor = (p) =>
+        p > 90 ? "var(--r)" : p > 75 ? "var(--a)" : "var(--g)";
+      const rtColor = (ms) =>
+        ms < 0
+          ? "var(--r)"
+          : ms < 50
+            ? "var(--g)"
+            : ms < 200
+              ? "var(--a)"
+              : "var(--r)";
 
-      const Dot = ({ s }) => (
+      // ── Components ──
+      const Dot = ({ ok }) => (
         <span
-          className={`dot d-${s === "healthy" || s === "running" || s === true ? "g" : s === "stopped" || s === false ? "r" : "a"}`}
+          className={`dot ${ok === true || ok === "healthy" || ok === "running" ? "dg" : ok === "stopped" || ok === false ? "dr" : "da"}`}
         />
       );
+      const Badge = ({ text, type }) => (
+        <span className={`badge b-${type}`}>{text}</span>
+      );
 
-      const Bar = ({ v, mx, label }) => {
-        const p = pct(v, mx),
-          c = p > 90 ? "var(--r)" : p > 75 ? "var(--a)" : "var(--g)";
+      const Bar = ({ value, max, color }) => {
+        const p = max ? Math.min(100, Math.round((value / max) * 100)) : 0;
         return (
-          <div style={{ marginBottom: 8 }}>
+          <div className="bar-bg">
             <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: 3,
-              }}
-            >
-              <span style={{ fontSize: 10, color: "var(--t)" }}>{label}</span>
-              <span style={{ fontSize: 10, color: c }}>{p}%</span>
-            </div>
-            <div className="bar-bg">
-              <div
-                className="bar-fg"
-                style={{ width: `${p}%`, background: c }}
-              />
-            </div>
+              className="bar-fg"
+              style={{ width: `${p}%`, background: color || barColor(p) }}
+            />
           </div>
         );
       };
 
-      function App() {
+      const Spark = ({ data, color = "var(--g)" }) => {
+        if (!data || !data.length) return null;
+        const mx = Math.max(...data, 1);
+        return (
+          <div className="spark">
+            {data.slice(-30).map((v, i) => (
+              <div
+                key={i}
+                className="spark-bar"
+                style={{
+                  height: `${Math.max(4, (v / mx) * 100)}%`,
+                  background: color,
+                }}
+              />
+            ))}
+          </div>
+        );
+      };
+
+      const Metric = ({ value, unit, label, color }) => (
+        <div>
+          <div className="mv" style={{ color: color || "var(--tb)" }}>
+            {value}
+            <span className="ms">{unit}</span>
+          </div>
+          {label && <div className="ml">{label}</div>}
+        </div>
+      );
+
+      const Card = ({ title, badge, children, style, delay = 0 }) => (
+        <div
+          className="card"
+          style={{ ...style, animationDelay: `${delay * 40}ms` }}
+        >
+          <div className="card-hdr">
+            <span className="label">{title}</span>
+            {badge}
+          </div>
+          {children}
+        </div>
+      );
+
+      // ── Dashboard ──
+      function Dashboard() {
         const [d, setD] = useState(null);
         const [err, setErr] = useState(null);
         const [logs, setLogs] = useState([]);
         const [tick, setTick] = useState(0);
+        const [now, setNow] = useState(new Date());
 
         const load = useCallback(() => {
           fetch("/status.json?_=" + Date.now())
-            .then((r) => r.json())
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
             .then((j) => {
               setD(j);
               setErr(null);
-              const now = new Date().toLocaleTimeString("en-GB", {
+              const ts = new Date().toLocaleTimeString("en-GB", {
                 hour: "2-digit",
                 minute: "2-digit",
                 second: "2-digit",
@@ -360,27 +547,51 @@
               const up = j.containers.filter(
                 (c) => c.status === "healthy" || c.status === "running",
               ).length;
+              const total = j.containers.length;
+              const msgs = [
+                {
+                  ts,
+                  msg: `health check complete — ${up}/${total} services ok`,
+                  cls: up === total ? "ok" : "warn",
+                },
+                j.services.rates_indexer.last_block
+                  ? {
+                      ts,
+                      msg: `rates-indexer block: ${fmtN(j.services.rates_indexer.last_block)}`,
+                      cls: "ok",
+                    }
+                  : null,
+                j.services.anvil.block
+                  ? {
+                      ts,
+                      msg: `anvil block: ${fmtN(j.services.anvil.block)}`,
+                      cls: "ok",
+                    }
+                  : null,
+                j.system.errors_today > 0
+                  ? {
+                      ts,
+                      msg: `⚠ ${j.system.errors_today} errors in today's logs`,
+                      cls: "warn",
+                    }
+                  : null,
+              ].filter(Boolean);
+              setLogs((prev) => [...msgs, ...prev].slice(0, 50));
+            })
+            .catch((e) => {
+              setErr(e.message);
+              const ts = new Date().toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              });
               setLogs((prev) =>
                 [
-                  {
-                    ts: now,
-                    msg: `health check — ${up}/${j.containers.length} services ok`,
-                    cls: up === j.containers.length ? "log-ok" : "log-warn",
-                  },
-                  j.services.rates_indexer.last_block
-                    ? {
-                        ts: now,
-                        msg: `rates-indexer block: ${Number(j.services.rates_indexer.last_block).toLocaleString()}`,
-                        cls: "log-ok",
-                      }
-                    : null,
+                  { ts, msg: `fetch failed: ${e.message}`, cls: "err" },
                   ...prev,
-                ]
-                  .filter(Boolean)
-                  .slice(0, 30),
+                ].slice(0, 50),
               );
-            })
-            .catch((e) => setErr(e.message));
+            });
         }, []);
 
         useEffect(() => {
@@ -389,15 +600,18 @@
           return () => clearInterval(iv);
         }, [load]);
         useEffect(() => {
-          const iv = setInterval(() => setTick((t) => t + 1), 1000);
+          const iv = setInterval(() => {
+            setTick((t) => t + 1);
+            setNow(new Date());
+          }, 1000);
           return () => clearInterval(iv);
         }, []);
 
-        if (err)
+        if (!d && err)
           return (
-            <div style={{ padding: 60, textAlign: "center" }}>
+            <div style={{ padding: 80, textAlign: "center" }}>
               <div
-                style={{ color: "var(--r)", fontSize: 13 }}
+                style={{ color: "var(--r)", fontSize: 14 }}
                 className="glow-r"
               >
                 ✗ STATUS UNAVAILABLE
@@ -409,9 +623,13 @@
           );
         if (!d)
           return (
-            <div style={{ padding: 60, textAlign: "center" }}>
-              <span style={{ color: "var(--g)" }} className="pulse glow-g">
-                ▌ LOADING...
+            <div style={{ padding: 80, textAlign: "center" }}>
+              <span
+                style={{ color: "var(--g)", fontSize: 12 }}
+                className="glow-g"
+                style={{ animation: "pulse 1.5s ease infinite" }}
+              >
+                ▌ INITIALIZING...
               </span>
             </div>
           );
@@ -423,421 +641,702 @@
           ssl,
           git,
           docker: dk,
+          history: hist,
         } = d;
-        const up = cts.filter(
+        const running = cts.filter(
           (c) => c.status === "healthy" || c.status === "running",
-        ).length;
-        const allUp = up === cts.length;
+        );
+        const stopped = cts.filter((c) => c.status === "stopped");
+        const allUp =
+          stopped.length === 0 ||
+          (stopped.length === 1 && stopped[0].name.includes("deployer"));
+        const svcList = [
+          {
+            n: "Nginx",
+            ok: svc.nginx.healthy,
+            ms: svc.nginx.response_ms,
+            port: "443",
+          },
+          {
+            n: "Rates Indexer",
+            ok: svc.rates_indexer.healthy,
+            ms: svc.rates_indexer.response_ms,
+            port: "8081",
+            extra: svc.rates_indexer.last_block
+              ? `blk ${fmtN(svc.rates_indexer.last_block)}`
+              : "",
+          },
+          {
+            n: "Sim Indexer",
+            ok: svc.sim_indexer.healthy,
+            ms: svc.sim_indexer.response_ms,
+            port: "8080",
+          },
+          {
+            n: "Monitor Bot",
+            ok: svc.monitor_bot.healthy,
+            ms: svc.monitor_bot.response_ms,
+            port: "8082",
+          },
+          {
+            n: "Anvil (fork)",
+            ok: svc.anvil.healthy,
+            ms: null,
+            port: "8545",
+            extra: svc.anvil.block ? `blk ${fmtN(svc.anvil.block)}` : "",
+          },
+        ];
+        const memPct = Math.round(
+          (sys.memory.used_mb / sys.memory.total_mb) * 100,
+        );
+        const secChecks = [
+          { n: "HSTS", v: "preload" },
+          { n: "CSP", v: "active" },
+          { n: "X-Frame-Options", v: "sameorigin" },
+          { n: "X-Content-Type", v: "nosniff" },
+          { n: ".env/.git blocked", v: "404" },
+          { n: "UFW firewall", v: "active" },
+          { n: "SSH deploy key", v: "ed25519" },
+          { n: "SSL cert", v: `${ssl.days_remaining}d` },
+        ];
+        const totalResp = svcList
+          .filter((s) => s.ms && s.ms > 0)
+          .reduce((a, s) => a + s.ms, 0);
+        const avgResp = svcList.filter((s) => s.ms && s.ms > 0).length
+          ? Math.round(
+              totalResp / svcList.filter((s) => s.ms && s.ms > 0).length,
+            )
+          : 0;
 
         return (
           <div className="wrap">
-            {/* Header */}
+            {/* ══ HEADER ══ */}
             <div className="hdr">
-              <div>
-                <span
-                  style={{ color: "var(--g)", fontSize: 15, fontWeight: 700 }}
-                  className="glow-g"
-                >
-                  RLD
-                </span>
-                <span
-                  style={{ color: "var(--td)", fontSize: 11, marginLeft: 10 }}
-                >
-                  // INFRA STATUS
-                </span>
+              <div className="hdr-l">
+                <span className="logo">RLD</span>
+                <span className="subtitle">infrastructure monitor</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Dot s={allUp ? "healthy" : "stopped"} />
+              <div className="hdr-r">
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Dot ok={allUp} />
+                  <span
+                    style={{
+                      color: allUp ? "var(--g)" : "var(--r)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                    }}
+                    className={allUp ? "glow-g" : "glow-r"}
+                  >
+                    {allUp ? "ALL SYSTEMS OPERATIONAL" : "DEGRADED"}
+                  </span>
+                </div>
+                <span style={{ color: "var(--td)", fontSize: 10 }}>
+                  {now.toLocaleTimeString("en-GB")}
+                </span>
                 <span
                   style={{
-                    color: allUp ? "var(--g)" : "var(--r)",
-                    fontSize: 11,
+                    color: "var(--g)",
+                    fontSize: 9,
+                    animation: "blink 1.2s step-end infinite",
                   }}
-                  className={allUp ? "glow-g" : "glow-r"}
-                >
-                  {allUp ? "ALL SYSTEMS OPERATIONAL" : "DEGRADED"}
-                </span>
-                <span
-                  style={{ color: "var(--td)", fontSize: 10, marginLeft: 8 }}
-                >
-                  {fmtAgo(d.timestamp)}
-                </span>
-                <span
-                  className="blink"
-                  style={{ color: "var(--g)", fontSize: 10 }}
                 >
                   ▌
                 </span>
               </div>
             </div>
 
-            {/* Top metrics */}
-            <div className="grid g4" style={{ marginBottom: 1 }}>
-              <div className="card fade">
-                <div className="card-t">
-                  Services
-                  <span className="badge b-green">
-                    {up}/{cts.length}
-                  </span>
+            {/* ══ ROW 1: Key Metrics ══ */}
+            <div className="grid g5" style={{ marginBottom: 1 }}>
+              <Card title="UPTIME" delay={0}>
+                <Metric value={fmtUp(sys.uptime_secs)} color="var(--g)" />
+              </Card>
+              <Card
+                title="CPU LOAD"
+                badge={<Badge text={`${sys.cpu_cores} CORES`} type="c" />}
+                delay={1}
+              >
+                <Metric
+                  value={sys.load[0]}
+                  unit={`/ ${sys.cpu_cores}`}
+                  color={
+                    sys.load[0] > sys.cpu_cores * 0.7 ? "var(--a)" : "var(--tb)"
+                  }
+                />
+                <div style={{ fontSize: 9, color: "var(--td)", marginTop: 4 }}>
+                  5m: {sys.load[1]} · 15m: {sys.load[2]}
                 </div>
-                <div className="metric-val" style={{ color: "var(--g)" }}>
-                  {up}/{cts.length}
-                </div>
-                <div className="metric-lbl">containers up</div>
-              </div>
-              <div className="card fade">
-                <div className="card-t">Uptime</div>
-                <div className="metric-val" style={{ color: "var(--tb)" }}>
-                  {fmtUp(sys.uptime_secs)}
-                </div>
-                <div className="metric-lbl">server uptime</div>
-              </div>
-              <div className="card fade">
-                <div className="card-t">
-                  SSL
-                  <span
-                    className={`badge ${ssl.days_remaining > 30 ? "b-green" : ssl.days_remaining > 7 ? "b-amber" : "b-red"}`}
-                  >
-                    {ssl.days_remaining}d
-                  </span>
-                </div>
-                <div
-                  className="metric-val"
-                  style={{
-                    color:
+              </Card>
+              <Card
+                title="MEMORY"
+                badge={
+                  <Badge
+                    text={`${memPct}%`}
+                    type={memPct > 85 ? "r" : memPct > 70 ? "a" : "g"}
+                  />
+                }
+                delay={2}
+              >
+                <Metric
+                  value={(sys.memory.used_mb / 1024).toFixed(1)}
+                  unit="G"
+                  label={`of ${(sys.memory.total_mb / 1024).toFixed(0)}G`}
+                />
+              </Card>
+              <Card
+                title="DISK"
+                badge={
+                  <Badge
+                    text={`${sys.disk.percent}%`}
+                    type={
+                      sys.disk.percent > 85
+                        ? "r"
+                        : sys.disk.percent > 70
+                          ? "a"
+                          : "g"
+                    }
+                  />
+                }
+                delay={3}
+              >
+                <Metric
+                  value={sys.disk.used_gb}
+                  unit="G"
+                  label={`${sys.disk.free_gb}G free of ${sys.disk.total_gb}G`}
+                />
+              </Card>
+              <Card
+                title="SSL CERT"
+                badge={
+                  <Badge
+                    text={ssl.days_remaining > 30 ? "VALID" : "EXPIRING"}
+                    type={
                       ssl.days_remaining > 30
-                        ? "var(--g)"
+                        ? "g"
                         : ssl.days_remaining > 7
-                          ? "var(--a)"
-                          : "var(--r)",
-                  }}
-                >
-                  {ssl.days_remaining}
-                </div>
-                <div className="metric-lbl">days remaining</div>
-              </div>
-              <div className="card fade">
-                <div className="card-t">Load</div>
-                <div
-                  className="metric-val"
-                  style={{
-                    color:
-                      sys.load > sys.cpu_cores * 0.8 ? "var(--a)" : "var(--tb)",
-                  }}
-                >
-                  {sys.load}
-                </div>
-                <div className="metric-lbl">{sys.cpu_cores} cores</div>
-              </div>
-            </div>
-
-            {/* Resources + Containers */}
-            <div className="grid g2" style={{ marginBottom: 1 }}>
-              <div className="card fade">
-                <div className="card-t">
-                  Resources
-                  <span
-                    className={`badge ${sys.disk.percent > 85 ? "b-red" : sys.disk.percent > 70 ? "b-amber" : "b-green"}`}
-                  >
-                    {sys.disk.percent}% DISK
-                  </span>
-                </div>
-                <Bar
-                  v={sys.disk.used_gb}
-                  mx={sys.disk.total_gb}
-                  label={`disk — ${sys.disk.used_gb}G / ${sys.disk.total_gb}G (${sys.disk.free_gb}G free)`}
+                          ? "a"
+                          : "r"
+                    }
+                  />
+                }
+                delay={4}
+              >
+                <Metric
+                  value={ssl.days_remaining}
+                  unit="days"
+                  color={
+                    ssl.days_remaining > 30
+                      ? "var(--g)"
+                      : ssl.days_remaining > 7
+                        ? "var(--a)"
+                        : "var(--r)"
+                  }
                 />
-                <Bar
-                  v={sys.memory.used_mb}
-                  mx={sys.memory.total_mb}
-                  label={`memory — ${(sys.memory.used_mb / 1024).toFixed(1)}G / ${(sys.memory.total_mb / 1024).toFixed(1)}G`}
-                />
+              </Card>
+            </div>
+
+            {/* ══ ROW 2: Resource Bars + History ══ */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <Card title="RESOURCE UTILIZATION" delay={5}>
                 <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginTop: 6,
-                  }}
+                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
                 >
-                  <span style={{ fontSize: 10 }}>docker images</span>
-                  <span style={{ fontSize: 10, color: "var(--tb)" }}>
-                    {dk.images_size}
-                    {dk.dangling_images > 5 ? (
-                      <span style={{ color: "var(--a)", marginLeft: 6 }}>
-                        ({dk.dangling_images} dangling)
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-              </div>
-
-              <div className="card fade">
-                <div className="card-t">Containers</div>
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>name</th>
-                      <th>status</th>
-                      <th>uptime</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cts.map((c, i) => {
-                      const nm = c.name
-                        .replace(/^docker-/, "")
-                        .replace(/-1$/, "");
-                      return (
-                        <tr key={i}>
-                          <td>
-                            <Dot s={c.status} />
-                          </td>
-                          <td style={{ color: "var(--tb)" }}>{nm}</td>
-                          <td
-                            style={{
-                              color:
-                                c.status === "healthy"
-                                  ? "var(--g)"
-                                  : c.status === "running"
-                                    ? "var(--gd)"
-                                    : "var(--r)",
-                              fontSize: 10,
-                            }}
-                          >
-                            {c.status}
-                          </td>
-                          <td style={{ fontSize: 10 }}>{c.uptime}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Services + Security */}
-            <div className="grid g2" style={{ marginBottom: 1 }}>
-              <div className="card fade">
-                <div className="card-t">Services</div>
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>service</th>
-                      <th>status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      {
-                        n: "Nginx / HTTPS",
-                        ok: svc.nginx.healthy,
-                        port: ":443",
-                      },
-                      {
-                        n: "Rates Indexer",
-                        ok: svc.rates_indexer.healthy,
-                        port: ":8081",
-                        extra: svc.rates_indexer.last_block
-                          ? `blk ${Number(svc.rates_indexer.last_block).toLocaleString()}`
-                          : "",
-                      },
-                      {
-                        n: "Sim Indexer",
-                        ok: svc.sim_indexer.healthy,
-                        port: ":8080",
-                      },
-                      {
-                        n: "Monitor Bot",
-                        ok: svc.monitor_bot.healthy,
-                        port: ":8082",
-                      },
-                    ].map((s, i) => (
-                      <tr key={i}>
-                        <td>
-                          <Dot s={s.ok} />
-                        </td>
-                        <td style={{ color: "var(--tb)" }}>
-                          {s.n}
-                          <span
-                            style={{
-                              color: "var(--td)",
-                              marginLeft: 6,
-                              fontSize: 9,
-                            }}
-                          >
-                            {s.port}
-                          </span>
-                        </td>
-                        <td>
-                          {s.ok ? (
-                            <span style={{ color: "var(--g)", fontSize: 10 }}>
-                              online
-                            </span>
-                          ) : (
-                            <span style={{ color: "var(--r)", fontSize: 10 }}>
-                              offline
-                            </span>
-                          )}
-                          {s.extra ? (
-                            <span
-                              style={{
-                                color: "var(--td)",
-                                fontSize: 9,
-                                marginLeft: 8,
-                              }}
-                            >
-                              {s.extra}
-                            </span>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="card fade">
-                <div className="card-t">
-                  Security<span className="badge b-green">HARDENED</span>
-                </div>
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>check</th>
-                      <th>status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      { n: "HSTS", ok: true, d: "preload" },
-                      { n: "CSP", ok: true, d: "active" },
-                      { n: "X-Frame", ok: true, d: "SAMEORIGIN" },
-                      { n: "X-Content-Type", ok: true, d: "nosniff" },
-                      { n: ".env blocked", ok: true, d: "404" },
-                      { n: ".git blocked", ok: true, d: "404" },
-                      { n: "UFW active", ok: true, d: "3 ports" },
-                      { n: "SSH key deploy", ok: true, d: "ed25519" },
-                    ].map((s, i) => (
-                      <tr key={i}>
-                        <td style={{ color: "var(--g)", fontSize: 10 }}>✓</td>
-                        <td style={{ color: "var(--tb)" }}>{s.n}</td>
-                        <td style={{ color: "var(--gd)", fontSize: 10 }}>
-                          {s.d}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* CI/CD + Activity */}
-            <div className="grid g2" style={{ marginBottom: 1 }}>
-              <div className="card fade">
-                <div className="card-t">
-                  CI/CD Pipeline<span className="badge b-green">PASSING</span>
-                </div>
-                <table className="tbl">
-                  <tbody>
-                    <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        pipeline
-                      </td>
-                      <td
-                        style={{ color: "var(--c)", fontWeight: 500 }}
-                        className="glow-c"
+                  <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 3,
+                      }}
+                    >
+                      <span style={{ fontSize: 10 }}>disk</span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: barColor(sys.disk.percent),
+                        }}
                       >
-                        Build & Deploy #9
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        status
-                      </td>
-                      <td>
-                        <Dot s={true} />
-                        <span
+                        {sys.disk.used_gb}G / {sys.disk.total_gb}G
+                      </span>
+                    </div>
+                    <Bar value={sys.disk.used_gb} max={sys.disk.total_gb} />
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 3,
+                      }}
+                    >
+                      <span style={{ fontSize: 10 }}>memory</span>
+                      <span style={{ fontSize: 10, color: barColor(memPct) }}>
+                        {(sys.memory.used_mb / 1024).toFixed(1)}G /{" "}
+                        {(sys.memory.total_mb / 1024).toFixed(1)}G
+                      </span>
+                    </div>
+                    <Bar value={sys.memory.used_mb} max={sys.memory.total_mb} />
+                  </div>
+                  {sys.swap.total_mb > 0 && (
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: 3,
+                        }}
+                      >
+                        <span style={{ fontSize: 10 }}>swap</span>
+                        <span style={{ fontSize: 10, color: "var(--td)" }}>
+                          {sys.swap.used_mb}M / {sys.swap.total_mb}M
+                        </span>
+                      </div>
+                      <Bar
+                        value={sys.swap.used_mb}
+                        max={sys.swap.total_mb}
+                        color="var(--p)"
+                      />
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 10,
+                      color: "var(--td)",
+                      borderTop: "1px solid var(--bdr)",
+                      paddingTop: 6,
+                    }}
+                  >
+                    <span>
+                      connections: {sys.connections.established} est /{" "}
+                      {sys.connections.listening} listen
+                    </span>
+                    <span>
+                      errors today:{" "}
+                      <span
+                        style={{
+                          color:
+                            sys.errors_today > 0 ? "var(--a)" : "var(--gd)",
+                        }}
+                      >
+                        {sys.errors_today}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card
+                title="LOAD HISTORY"
+                badge={
+                  hist?.load ? (
+                    <Badge text={`${hist.load.length} SAMPLES`} type="c" />
+                  ) : null
+                }
+                delay={6}
+              >
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: "var(--td)",
+                        marginBottom: 4,
+                        letterSpacing: "1px",
+                      }}
+                    >
+                      CPU LOAD (1m avg)
+                    </div>
+                    <Spark data={hist?.load} color="var(--c)" />
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: "var(--td)",
+                        marginBottom: 4,
+                        letterSpacing: "1px",
+                      }}
+                    >
+                      MEMORY %
+                    </div>
+                    <Spark data={hist?.mem} color="var(--p)" />
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: "var(--td)",
+                        marginBottom: 4,
+                        letterSpacing: "1px",
+                      }}
+                    >
+                      INDEXED BLOCKS
+                    </div>
+                    <Spark data={hist?.block} color="var(--g)" />
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* ══ ROW 3: Containers ══ */}
+            <Card
+              title="CONTAINERS"
+              badge={
+                <Badge
+                  text={`${running.length} RUNNING`}
+                  type={
+                    running.length === cts.length ||
+                    (cts.length - running.length === 1 &&
+                      stopped.some((s) => s.name.includes("deployer")))
+                      ? "g"
+                      : "a"
+                  }
+                />
+              }
+              style={{ marginBottom: 1 }}
+              delay={7}
+            >
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 16 }}></th>
+                    <th>name</th>
+                    <th>status</th>
+                    <th>cpu</th>
+                    <th>memory</th>
+                    <th>network</th>
+                    <th className="r">restarts</th>
+                    <th>uptime</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cts.map((c, i) => {
+                    const nm = c.name
+                      .replace(/^docker-/, "")
+                      .replace(/-1$/, "");
+                    const isDeployer = nm === "deployer";
+                    return (
+                      <tr key={i} style={{ opacity: isDeployer ? 0.5 : 1 }}>
+                        <td>
+                          <Dot ok={c.status} />
+                        </td>
+                        <td style={{ color: "var(--tb)", fontWeight: 500 }}>
+                          {nm}
+                        </td>
+                        <td
                           style={{
-                            color: "var(--g)",
-                            marginLeft: 6,
+                            color:
+                              c.status === "healthy"
+                                ? "var(--g)"
+                                : c.status === "running"
+                                  ? "var(--gd)"
+                                  : "var(--td)",
                             fontSize: 10,
                           }}
                         >
-                          PASSING
-                        </span>
-                      </td>
-                    </tr>
+                          {c.status}
+                          {isDeployer && (
+                            <span
+                              style={{
+                                color: "var(--td)",
+                                marginLeft: 4,
+                                fontSize: 9,
+                              }}
+                            >
+                              (one-shot)
+                            </span>
+                          )}
+                        </td>
+                        <td
+                          style={{
+                            color:
+                              parseFloat(c.cpu) > 50 ? "var(--a)" : "var(--t)",
+                            fontSize: 10,
+                          }}
+                        >
+                          {c.cpu > 0 ? c.cpu + "%" : "—"}
+                        </td>
+                        <td style={{ fontSize: 10 }}>
+                          {c.memory !== "0B / 0B" ? c.memory : "—"}
+                        </td>
+                        <td style={{ fontSize: 10, color: "var(--td)" }}>
+                          {c.network !== "0B / 0B" ? c.network : "—"}
+                        </td>
+                        <td
+                          className="r"
+                          style={{
+                            color: c.restarts > 0 ? "var(--a)" : "var(--td)",
+                            fontSize: 10,
+                          }}
+                        >
+                          {c.restarts}
+                        </td>
+                        <td style={{ fontSize: 10, color: "var(--td)" }}>
+                          {c.uptime}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+
+            {/* ══ ROW 4: Services + Security ══ */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <Card
+                title="SERVICES"
+                badge={
+                  <Badge
+                    text={`AVG ${avgResp}ms`}
+                    type={avgResp < 50 ? "g" : avgResp < 200 ? "a" : "r"}
+                  />
+                }
+                delay={8}
+              >
+                <table className="tbl">
+                  <thead>
                     <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        frontend
-                      </td>
-                      <td style={{ fontSize: 10 }}>34s — lint + build</td>
+                      <th style={{ width: 16 }}></th>
+                      <th>service</th>
+                      <th className="r">port</th>
+                      <th className="r">response</th>
+                      <th>info</th>
                     </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        deploy
-                      </td>
-                      <td style={{ fontSize: 10 }}>29s — scp + ssh</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        trigger
-                      </td>
-                      <td style={{ fontSize: 10 }}>
-                        push to main (frontend/**, backend/**, docker/**)
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)", fontSize: 10 }}>
-                        last commit
-                      </td>
-                      <td style={{ fontSize: 10 }}>
-                        <span style={{ color: "var(--c)" }}>{git.commit}</span>
-                        <span style={{ color: "var(--td)", marginLeft: 8 }}>
-                          {git.message}
-                        </span>
-                      </td>
-                    </tr>
+                  </thead>
+                  <tbody>
+                    {svcList.map((s, i) => (
+                      <tr key={i}>
+                        <td>
+                          <Dot ok={s.ok} />
+                        </td>
+                        <td style={{ color: "var(--tb)" }}>{s.n}</td>
+                        <td
+                          className="r"
+                          style={{ color: "var(--td)", fontSize: 10 }}
+                        >
+                          {s.port}
+                        </td>
+                        <td
+                          className="r"
+                          style={{
+                            color: s.ms ? rtColor(s.ms) : "var(--td)",
+                            fontSize: 10,
+                          }}
+                        >
+                          {s.ms && s.ms > 0 ? s.ms + "ms" : s.ok ? "ok" : "—"}
+                        </td>
+                        <td style={{ color: "var(--td)", fontSize: 9 }}>
+                          {s.extra || ""}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              </div>
+              </Card>
 
-              <div className="card fade">
-                <div className="card-t">
-                  Activity Log<span className="badge b-green">LIVE</span>
-                </div>
-                <div style={{ maxHeight: 180, overflowY: "auto" }}>
-                  {logs.map((l, i) => (
-                    <div key={i} className="log-line">
-                      <span className="log-ts">{l.ts}</span>
-                      <span className={l.cls}>{l.msg}</span>
+              <Card
+                title="SECURITY"
+                badge={<Badge text="HARDENED" type="g" />}
+                delay={9}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "2px 16px",
+                  }}
+                >
+                  {secChecks.map((s, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "3px 0",
+                        borderBottom: "1px solid rgba(255,255,255,0.02)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <span style={{ color: "var(--g)", fontSize: 10 }}>
+                          ✓
+                        </span>
+                        {s.n}
+                      </span>
+                      <span style={{ fontSize: 10, color: "var(--gd)" }}>
+                        {s.v}
+                      </span>
                     </div>
                   ))}
-                  {logs.length === 0 && (
-                    <div
-                      style={{ color: "var(--td)", fontSize: 10, padding: 8 }}
-                    >
-                      waiting for first check...
-                    </div>
-                  )}
                 </div>
-              </div>
+              </Card>
             </div>
 
-            {/* Footer */}
+            {/* ══ ROW 5: Git + Docker + Activity ══ */}
+            <div className="grid g3" style={{ marginBottom: 1 }}>
+              <Card title="LAST DEPLOY" delay={10}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <span
+                      style={{
+                        color: "var(--c)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                      }}
+                      className="glow-g"
+                    >
+                      {git.commit}
+                    </span>
+                    <span style={{ fontSize: 9, color: "var(--td)" }}>
+                      {fmtAgo(git.time)}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--tb)",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {git.message}
+                  </div>
+                  <div style={{ fontSize: 9, color: "var(--td)" }}>
+                    by {git.author}
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="DOCKER" delay={11}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-around",
+                    textAlign: "center",
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: "var(--tb)",
+                      }}
+                    >
+                      {dk.active}
+                    </div>
+                    <div className="ml">active images</div>
+                  </div>
+                  <div
+                    style={{
+                      borderLeft: "1px solid var(--bdr)",
+                      paddingLeft: 16,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color:
+                          dk.dangling_images > 10 ? "var(--a)" : "var(--tb)",
+                      }}
+                    >
+                      {dk.dangling_images}
+                    </div>
+                    <div className="ml">dangling</div>
+                  </div>
+                  <div
+                    style={{
+                      borderLeft: "1px solid var(--bdr)",
+                      paddingLeft: 16,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: "var(--tb)",
+                      }}
+                    >
+                      {dk.images_size}
+                    </div>
+                    <div className="ml">total size</div>
+                  </div>
+                </div>
+              </Card>
+
+              <Card
+                title="ACTIVITY LOG"
+                badge={<Badge text="LIVE" type="g" />}
+                delay={12}
+              >
+                <div
+                  style={{
+                    maxHeight: 100,
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                  }}
+                >
+                  {logs.length === 0 ? (
+                    <div style={{ color: "var(--td)", fontSize: 10 }}>
+                      waiting for first check...
+                    </div>
+                  ) : (
+                    logs.slice(0, 15).map((l, i) => (
+                      <div
+                        key={i}
+                        className="log"
+                        style={{ animationDelay: `${i * 30}ms` }}
+                      >
+                        <span className="log-ts">{l.ts}</span>
+                        <span
+                          style={{
+                            color:
+                              l.cls === "ok"
+                                ? "var(--g)"
+                                : l.cls === "warn"
+                                  ? "var(--a)"
+                                  : "var(--r)",
+                            fontSize: 10,
+                          }}
+                        >
+                          {l.msg}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
+            </div>
+
+            {/* ══ FOOTER ══ */}
             <div className="ftr">
-              RLD PROTOCOL // INFRASTRUCTURE MONITOR v1.0
-              <span style={{ float: "right" }}>
-                NEXT REFRESH IN {30 - (tick % 30)}s
-              </span>
+              RLD Protocol · Infrastructure Monitor v2.0 · auto-refresh 30s ·
+              next update in{" "}
+              <span style={{ color: "var(--c)" }}>{30 - (tick % 30)}s</span>
             </div>
           </div>
         );
       }
 
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+      ReactDOM.createRoot(document.getElementById("root")).render(
+        <Dashboard />,
+      );
     </script>
   </body>
 </html>
