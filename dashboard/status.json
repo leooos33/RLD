@@ -1,25 +1,25 @@
 {
-  "timestamp": "2026-02-09T20:19:01Z",
+  "timestamp": "2026-02-09T20:28:01Z",
   "system": {
-    "uptime_secs": 155526,
-    "load": [0.60, 0.39, 0.38],
+    "uptime_secs": 156067,
+    "load": [0.65, 0.42, 0.40],
     "cpu_cores": 8,
     "disk": {"total_gb":193,"used_gb":141,"free_gb":53,"percent":73},
-    "memory": {"total_mb":23463,"used_mb":7536,"available_mb":15926},
+    "memory": {"total_mb":23463,"used_mb":7889,"available_mb":15574},
     "swap": {"total_mb":4095,"used_mb":0},
-    "connections": {"established":54,"listening":25},
+    "connections": {"established":57,"listening":25},
     "errors_today": 0
   },
-  "containers": [{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (1) 2 hours ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""}],
+  "containers": [{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (1) 3 hours ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""}],
   "services": {
-    "nginx": {"healthy":true,"response_ms":36},
-    "rates_indexer": {"healthy":true,"response_ms":3,"last_block":"24421551"},
+    "nginx": {"healthy":true,"response_ms":38},
+    "rates_indexer": {"healthy":true,"response_ms":3,"last_block":"24421596"},
     "sim_indexer": {"healthy":true,"response_ms":2},
     "monitor_bot": {"healthy":true,"response_ms":1},
-    "anvil": {"healthy":true,"block":"21704464"}
+    "anvil": {"healthy":true,"block":"21704578"}
   },
   "ssl": {"expiry":"2026-05-10","days_remaining":89},
-  "git": {"commit":"25f6743","message":"feat: move infra dashboard to internal port 8090, remove from rld.fi","time":"2026-02-09T20:05:54+00:00","author":"Yevhen VPS"},
+  "git": {"commit":"f4a470e","message":"feat: redesign infra dashboard v2 — richer metrics + sparklines","time":"2026-02-09T20:20:01+00:00","author":"Yevhen VPS"},
   "docker": {"dangling_images":25,"images_size":"3.293GB","active":13,"total":38},
-  "history": {"load": [0.61, 0.5, 0.5, 0.46, 0.36, 0.23, 0.45, 0.2, 0.19, 0.6], "mem": [30.8, 31.3, 31.2, 31.4, 31.4, 31.4, 27.0, 27.8, 28.7, 32.1], "disk": [73, 73, 73, 73, 73, 73, 73, 73, 73, 73], "block": [24421517, 24421520, 24421520, 24421524, 24421526, 24421530, 24421536, 24421540, 24421545, 24421551]}
+  "history": {"load": [0.61, 0.5, 0.5, 0.46, 0.36, 0.23, 0.45, 0.2, 0.19, 0.6, 1.52, 0.68, 0.41, 0.33, 0.16, 0.2, 0.33, 0.45, 0.65], "mem": [30.8, 31.3, 31.2, 31.4, 31.4, 31.4, 27.0, 27.8, 28.7, 32.1, 32.2, 31.8, 31.8, 31.7, 31.7, 28.6, 31.5, 31.1, 33.6], "disk": [73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73, 73], "block": [24421517, 24421520, 24421520, 24421524, 24421526, 24421530, 24421536, 24421540, 24421545, 24421551, 24421555, 24421561, 24421565, 24421571, 24421575, 24421582, 24421586, 24421591, 24421596]}
 }

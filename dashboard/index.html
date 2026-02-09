@@ -404,6 +404,34 @@
       .glow-r {
         text-shadow: 0 0 8px rgba(255, 68, 85, 0.3);
       }
+
+      /* ── Tabs ── */
+      .tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 12px;
+        border-bottom: 1px solid var(--bdr);
+      }
+      .tab {
+        padding: 8px 20px;
+        font-size: 10px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--td);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        text-decoration: none;
+      }
+      .tab:hover {
+        color: var(--tb);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .tab.active {
+        color: var(--g);
+        border-bottom-color: var(--g);
+        background: rgba(0, 255, 136, 0.06);
+      }
     </style>
   </head>
   <body>
@@ -743,6 +771,16 @@
                   ▌
                 </span>
               </div>
+            </div>
+
+            {/* ══ TABS ══ */}
+            <div className="tabs">
+              <a className="tab active" href="/">
+                INFRA STATUS
+              </a>
+              <a className="tab" href="/finance.html">
+                SIMULATION
+              </a>
             </div>
 
             {/* ══ ROW 1: Key Metrics ══ */}

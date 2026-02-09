@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RLD // SIMULATION</title>
+    <script
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+      crossorigin
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+      crossorigin
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #06080a;
+        --s1: #0c0e12;
+        --s2: #12151a;
+        --s3: #181c22;
+        --bdr: #1c2028;
+        --bdr2: #252a33;
+        --g: #00ff88;
+        --gd: #00cc6a;
+        --g10: rgba(0, 255, 136, 0.06);
+        --g20: rgba(0, 255, 136, 0.12);
+        --a: #ffb020;
+        --ad: #cc8800;
+        --a10: rgba(255, 176, 32, 0.06);
+        --a20: rgba(255, 176, 32, 0.12);
+        --r: #ff4455;
+        --rd: #cc2233;
+        --r10: rgba(255, 68, 85, 0.06);
+        --r20: rgba(255, 68, 85, 0.12);
+        --c: #38bdf8;
+        --cd: #0ea5e9;
+        --c10: rgba(56, 189, 248, 0.06);
+        --p: #a78bfa;
+        --pd: #8b5cf6;
+        --p10: rgba(167, 139, 250, 0.06);
+        --t: #8892a0;
+        --td: #4a5260;
+        --tb: #d0d5dd;
+        --tw: #f0f2f5;
+      }
+      html {
+        font-size: 13px;
+      }
+      body {
+        font-family: "JetBrains Mono", monospace;
+        background: var(--bg);
+        color: var(--t);
+        min-height: 100vh;
+        line-height: 1.5;
+        overflow-x: hidden;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 255, 136, 0.004) 2px,
+          rgba(0, 255, 136, 0.004) 4px
+        );
+        pointer-events: none;
+        z-index: 9999;
+      }
+      ::selection {
+        background: var(--g20);
+        color: var(--g);
+      }
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      .wrap {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 12px 16px;
+      }
+
+      /* ── Header ── */
+      .hdr {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0 14px;
+        border-bottom: 1px solid var(--bdr);
+        margin-bottom: 12px;
+      }
+      .hdr-l {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .hdr-r {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .logo {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--g);
+        text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+      }
+      .subtitle {
+        font-size: 10px;
+        color: var(--td);
+        letter-spacing: 3px;
+        text-transform: uppercase;
+      }
+
+      /* ── Tabs ── */
+      .tabs {
+        display: flex;
+        gap: 0;
+        margin-bottom: 12px;
+        border-bottom: 1px solid var(--bdr);
+      }
+      .tab {
+        padding: 8px 20px;
+        font-size: 10px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--td);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        text-decoration: none;
+      }
+      .tab:hover {
+        color: var(--tb);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .tab.active {
+        color: var(--g);
+        border-bottom-color: var(--g);
+        background: var(--g10);
+      }
+
+      /* ── Grid ── */
+      .grid {
+        display: grid;
+        gap: 1px;
+      }
+      .g2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .g3 {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+      .g4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .g5 {
+        grid-template-columns: repeat(5, 1fr);
+      }
+      .g32 {
+        grid-template-columns: 3fr 2fr;
+      }
+      .g23 {
+        grid-template-columns: 2fr 3fr;
+      }
+      @media (max-width: 600px) {
+        .g2,
+        .g3,
+        .g4,
+        .g5,
+        .g32,
+        .g23 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ── Card ── */
+      .card {
+        background: var(--s1);
+        border: 1px solid var(--bdr);
+        padding: 12px 14px;
+        animation: fadeUp 0.35s ease both;
+      }
+      .card-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--td);
+      }
+      .card-hdr .label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      /* ── Badge ── */
+      .badge {
+        font-size: 8px;
+        padding: 2px 7px;
+        border-radius: 2px;
+        letter-spacing: 1.2px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .b-g {
+        background: var(--g10);
+        color: var(--g);
+        border: 1px solid var(--g20);
+      }
+      .b-a {
+        background: var(--a10);
+        color: var(--a);
+        border: 1px solid var(--a20);
+      }
+      .b-r {
+        background: var(--r10);
+        color: var(--r);
+        border: 1px solid var(--r20);
+      }
+      .b-c {
+        background: var(--c10);
+        color: var(--c);
+        border: 1px solid rgba(56, 189, 248, 0.15);
+      }
+      .b-p {
+        background: var(--p10);
+        color: var(--p);
+        border: 1px solid rgba(167, 139, 250, 0.15);
+      }
+
+      /* ── Dot ── */
+      .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+      }
+      .dg {
+        background: var(--g);
+        box-shadow: 0 0 5px var(--g);
+      }
+      .da {
+        background: var(--a);
+        box-shadow: 0 0 5px var(--a);
+      }
+      .dr {
+        background: var(--r);
+        box-shadow: 0 0 5px var(--r);
+      }
+
+      /* ── Table ── */
+      .tbl {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .tbl th {
+        text-align: left;
+        color: var(--td);
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--bdr);
+        font-weight: 400;
+      }
+      .tbl td {
+        padding: 4px 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .tbl tr:hover td {
+        background: rgba(0, 255, 136, 0.01);
+      }
+      .tbl .r {
+        text-align: right;
+      }
+
+      /* ── Metric ── */
+      .mv {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        line-height: 1.2;
+      }
+      .mv-sm {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+        line-height: 1.2;
+      }
+      .ml {
+        font-size: 8px;
+        color: var(--td);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-top: 2px;
+      }
+      .ms {
+        font-size: 10px;
+        color: var(--td);
+        margin-left: 2px;
+        font-weight: 300;
+      }
+
+      /* ── Price chart ── */
+      .chart-wrap {
+        position: relative;
+        height: 180px;
+        border: 1px solid var(--bdr);
+        background: var(--s2);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .chart-svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      /* ── Bar ── */
+      .bar-bg {
+        height: 3px;
+        background: var(--bdr);
+        border-radius: 1px;
+        overflow: hidden;
+        flex: 1;
+      }
+      .bar-fg {
+        height: 100%;
+        border-radius: 1px;
+        transition: width 0.5s ease;
+      }
+
+      /* ── Event pill ── */
+      .evt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+        font-size: 10px;
+        animation: fadeUp 0.2s ease both;
+      }
+      .evt-type {
+        font-size: 8px;
+        padding: 1px 6px;
+        border-radius: 1px;
+        letter-spacing: 1px;
+        font-weight: 600;
+        min-width: 52px;
+        text-align: center;
+      }
+      .evt-swap {
+        background: var(--c10);
+        color: var(--c);
+        border: 1px solid rgba(56, 189, 248, 0.15);
+      }
+      .evt-transfer {
+        background: var(--p10);
+        color: var(--p);
+        border: 1px solid rgba(167, 139, 250, 0.15);
+      }
+      .evt-other {
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--td);
+        border: 1px solid var(--bdr);
+      }
+
+      .glow-g {
+        text-shadow: 0 0 8px rgba(0, 255, 136, 0.2);
+      }
+      .glow-c {
+        text-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+      }
+
+      .ftr {
+        text-align: center;
+        padding: 10px 0;
+        color: var(--td);
+        font-size: 8px;
+        border-top: 1px solid var(--bdr);
+        margin-top: 10px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      const { useState, useEffect, useCallback, useMemo } = React;
+
+      // ── Utils ──
+      const fmt = (v, d = 2) => {
+        if (v === undefined || v === null || v === "") return "—";
+        const n = Number(v);
+        return isNaN(n)
+          ? v
+          : n >= 1e9
+            ? "$" + (n / 1e9).toFixed(d) + "B"
+            : n >= 1e6
+              ? "$" + (n / 1e6).toFixed(d) + "M"
+              : n >= 1e3
+                ? "$" +
+                  n.toLocaleString(undefined, {
+                    minimumFractionDigits: d,
+                    maximumFractionDigits: d,
+                  })
+                : "$" + n.toFixed(d);
+      };
+      const fmtN = (n, d = 2) => {
+        if (n === undefined || n === null || n === "") return "—";
+        const v = Number(n);
+        return isNaN(v)
+          ? n
+          : v >= 1e9
+            ? (v / 1e9).toFixed(d) + "B"
+            : v >= 1e6
+              ? (v / 1e6).toFixed(d) + "M"
+              : v >= 1e3
+                ? v.toLocaleString()
+                : v.toFixed(d);
+      };
+      const fmtAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
+      const fmtTs = (ts) => {
+        if (!ts) return "—";
+        const d = new Date(ts * 1000);
+        return d.toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      };
+      const fmtAgo = (ts) => {
+        if (!ts) return "—";
+        const now = Date.now() / 1000;
+        const d = Math.floor(now - ts);
+        return d < 60
+          ? `${d}s ago`
+          : d < 3600
+            ? `${Math.floor(d / 60)}m ago`
+            : `${Math.floor(d / 3600)}h ago`;
+      };
+      const fmtTx = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : "—");
+
+      // Decode amounts from raw values (6 decimal USDC-like)
+      const fromRaw = (v, decimals = 6) => {
+        if (!v) return 0;
+        return Number(v) / Math.pow(10, decimals);
+      };
+      // sqrtPriceX96 to human price
+      const sqrtToPrice = (sqrtP, d0 = 18, d1 = 6) => {
+        if (!sqrtP) return 0;
+        const p = (Number(BigInt(sqrtP)) * Number(BigInt(sqrtP))) / 2 ** 192;
+        return p * Math.pow(10, d0 - d1);
+      };
+
+      const Badge = ({ text, type }) => (
+        <span className={`badge b-${type}`}>{text}</span>
+      );
+      const Dot = ({ ok }) => <span className={`dot ${ok ? "dg" : "dr"}`} />;
+
+      const Card = ({ title, badge, children, style, delay = 0 }) => (
+        <div
+          className="card"
+          style={{ ...style, animationDelay: `${delay * 40}ms` }}
+        >
+          <div className="card-hdr">
+            <span className="label">{title}</span>
+            {badge}
+          </div>
+          {children}
+        </div>
+      );
+
+      // ── Price Sparkline SVG ──
+      const PriceChart = ({ data, color = "var(--c)" }) => {
+        if (!data || data.length < 2)
+          return (
+            <div
+              style={{
+                height: 180,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--td)",
+                fontSize: 10,
+              }}
+            >
+              Collecting price data...
+            </div>
+          );
+        const prices = data.map((d) => d.price);
+        const mn = Math.min(...prices);
+        const mx = Math.max(...prices);
+        const range = mx - mn || 1;
+        const w = 800,
+          h = 180,
+          pad = 20;
+        const pts = data.map((d, i) => {
+          const x = pad + (i / (data.length - 1)) * (w - 2 * pad);
+          const y = h - pad - ((d.price - mn) / range) * (h - 2 * pad);
+          return { x, y, price: d.price, block: d.block };
+        });
+        const line = pts
+          .map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`)
+          .join(" ");
+        const area =
+          line + ` L${pts[pts.length - 1].x},${h} L${pts[0].x},${h} Z`;
+        const latest = prices[prices.length - 1];
+        const first = prices[0];
+        const chg = ((latest - first) / first) * 100;
+
+        return (
+          <div className="chart-wrap">
+            <svg
+              className="chart-svg"
+              viewBox={`0 0 ${w} ${h}`}
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity="0.15" />
+                  <stop offset="100%" stopColor={color} stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <path d={area} fill="url(#area-grad)" />
+              <path
+                d={line}
+                fill="none"
+                stroke={color}
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+              {/* Latest price dot */}
+              <circle
+                cx={pts[pts.length - 1].x}
+                cy={pts[pts.length - 1].y}
+                r="3"
+                fill={color}
+              />
+            </svg>
+            <div
+              style={{
+                position: "absolute",
+                top: 8,
+                left: 12,
+                fontSize: 10,
+                color: "var(--td)",
+              }}
+            >
+              MARK PRICE
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 12,
+                textAlign: "right",
+              }}
+            >
+              <div
+                style={{ fontSize: 16, fontWeight: 600, color: "var(--tb)" }}
+              >
+                {fmt(latest)}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: chg >= 0 ? "var(--g)" : "var(--r)",
+                }}
+              >
+                {chg >= 0 ? "▲" : "▼"} {Math.abs(chg).toFixed(2)}%
+              </div>
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                bottom: 6,
+                left: 12,
+                fontSize: 9,
+                color: "var(--td)",
+              }}
+            >
+              L: {fmt(mn)} · H: {fmt(mx)}
+            </div>
+          </div>
+        );
+      };
+
+      function App() {
+        const [data, setData] = useState(null);
+        const [events, setEvents] = useState([]);
+        const [priceHistory, setPriceHistory] = useState([]);
+        const [err, setErr] = useState(null);
+        const [tick, setTick] = useState(0);
+        const [now, setNow] = useState(new Date());
+
+        const load = useCallback(() => {
+          Promise.all([
+            fetch("/api/latest").then((r) => r.json()),
+            fetch("/api/events?limit=30").then((r) => r.json()),
+          ])
+            .then(([latest, evts]) => {
+              setData(latest);
+              setEvents(Array.isArray(evts) ? evts : []);
+              setErr(null);
+              // Accumulate price history
+              if (latest.pool_states?.length > 0) {
+                const ps = latest.pool_states[0];
+                const price = ps.mark_price || sqrtToPrice(ps.sqrt_price_x96);
+                setPriceHistory((prev) => {
+                  const next = [
+                    ...prev,
+                    { price, block: latest.block_number, ts: Date.now() },
+                  ];
+                  return next.slice(-120);
+                });
+              }
+            })
+            .catch((e) => setErr(e.message));
+        }, []);
+
+        useEffect(() => {
+          load();
+          const iv = setInterval(load, 10000);
+          return () => clearInterval(iv);
+        }, [load]);
+        useEffect(() => {
+          const iv = setInterval(() => {
+            setTick((t) => t + 1);
+            setNow(new Date());
+          }, 1000);
+          return () => clearInterval(iv);
+        }, []);
+
+        if (err && !data)
+          return (
+            <div className="wrap">
+              <div style={{ padding: 60, textAlign: "center" }}>
+                <div style={{ color: "var(--r)", fontSize: 14 }}>
+                  ✗ SIM INDEXER UNAVAILABLE
+                </div>
+                <div style={{ color: "var(--td)", marginTop: 8, fontSize: 11 }}>
+                  {err}
+                </div>
+              </div>
+            </div>
+          );
+
+        if (!data)
+          return (
+            <div className="wrap">
+              <div style={{ padding: 60, textAlign: "center" }}>
+                <span
+                  style={{
+                    color: "var(--g)",
+                    fontSize: 12,
+                    animation: "pulse 1.5s ease infinite",
+                  }}
+                >
+                  ▌ LOADING SIMULATION DATA...
+                </span>
+              </div>
+            </div>
+          );
+
+        const ms = data.market_states?.[0] || {};
+        const ps = data.pool_states?.[0] || {};
+        const bps = data.broker_positions || [];
+
+        // Derived values
+        const markPrice = ps.mark_price || sqrtToPrice(ps.sqrt_price_x96);
+        const indexPrice = ms.index_price ? fromRaw(ms.index_price, 18) : 0;
+        const normFactor = ms.normalization_factor
+          ? Number(ms.normalization_factor) / 1e18
+          : 1;
+        const totalDebt = fromRaw(ms.total_debt, 6);
+        const liquidity = Number(ps.liquidity) || 0;
+
+        // Broker metrics
+        const totalCollateral = bps.reduce(
+          (a, b) => a + fromRaw(b.collateral, 6),
+          0,
+        );
+        const totalBrokerDebt = bps.reduce((a, b) => a + fromRaw(b.debt, 6), 0);
+        const avgHF = bps
+          .filter((b) => b.health_factor > 0)
+          .reduce((a, b, _, arr) => a + b.health_factor / arr.length, 0);
+
+        // Swap events
+        const swaps = events.filter((e) => e.event_name === "Swap");
+        const totalVol = swaps.reduce((a, e) => {
+          const a0 = Math.abs(fromRaw(e.event_data?.amount0 || "0", 18));
+          const a1 = Math.abs(fromRaw(e.event_data?.amount1 || "0", 6));
+          return a + Math.max(a0 * markPrice, a1);
+        }, 0);
+
+        // Peg deviation
+        const pegDev =
+          indexPrice > 0 ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
+
+        return (
+          <div className="wrap">
+            {/* ═══ HEADER ═══ */}
+            <div className="hdr">
+              <div className="hdr-l">
+                <span className="logo">RLD</span>
+                <span className="subtitle">simulation monitor</span>
+              </div>
+              <div className="hdr-r">
+                <span style={{ fontSize: 10, color: "var(--td)" }}>
+                  block{" "}
+                  <span style={{ color: "var(--c)" }} className="glow-c">
+                    {data.block_number?.toLocaleString()}
+                  </span>
+                </span>
+                <span style={{ color: "var(--td)", fontSize: 10 }}>
+                  {now.toLocaleTimeString("en-GB")}
+                </span>
+                <span
+                  style={{
+                    color: "var(--g)",
+                    fontSize: 9,
+                    animation: "blink 1.2s step-end infinite",
+                  }}
+                >
+                  ▌
+                </span>
+              </div>
+            </div>
+
+            {/* ═══ TABS ═══ */}
+            <div className="tabs">
+              <a className="tab" href="/">
+                INFRA STATUS
+              </a>
+              <a className="tab active" href="/finance.html">
+                SIMULATION
+              </a>
+            </div>
+
+            {/* ═══ ROW 1: Key Financial Metrics ═══ */}
+            <div className="grid g5" style={{ marginBottom: 1 }}>
+              <Card title="MARK PRICE" delay={0}>
+                <div className="mv" style={{ color: "var(--c)" }}>
+                  {fmt(markPrice, 4)}
+                </div>
+                <div className="ml">wRLP / USDC</div>
+              </Card>
+              <Card
+                title="INDEX PRICE"
+                badge={
+                  <Badge
+                    text={`${pegDev >= 0 ? "+" : ""}${pegDev.toFixed(2)}%`}
+                    type={
+                      Math.abs(pegDev) < 1
+                        ? "g"
+                        : Math.abs(pegDev) < 5
+                          ? "a"
+                          : "r"
+                    }
+                  />
+                }
+                delay={1}
+              >
+                <div className="mv" style={{ color: "var(--p)" }}>
+                  {fmt(indexPrice, 4)}
+                </div>
+                <div className="ml">oracle price</div>
+              </Card>
+              <Card title="TOTAL DEBT" delay={2}>
+                <div
+                  className="mv"
+                  style={{ color: totalDebt > 0 ? "var(--a)" : "var(--tb)" }}
+                >
+                  {fmt(totalDebt)}
+                </div>
+                <div className="ml">outstanding</div>
+              </Card>
+              <Card title="LIQUIDITY" delay={3}>
+                <div className="mv" style={{ color: "var(--g)" }}>
+                  {fmtN(liquidity)}
+                </div>
+                <div className="ml">pool liquidity</div>
+              </Card>
+              <Card title="NORM FACTOR" delay={4}>
+                <div className="mv-sm" style={{ color: "var(--tb)" }}>
+                  {normFactor.toFixed(6)}
+                </div>
+                <div className="ml">interest accrual</div>
+              </Card>
+            </div>
+
+            {/* ═══ ROW 2: Price Chart + Pool Stats ═══ */}
+            <div className="grid g32" style={{ marginBottom: 1 }}>
+              <Card
+                title="PRICE ACTION"
+                badge={
+                  <Badge text={`${priceHistory.length} SAMPLES`} type="c" />
+                }
+                delay={5}
+              >
+                <PriceChart data={priceHistory} color="#38bdf8" />
+              </Card>
+
+              <Card title="POOL STATE" delay={6}>
+                <table className="tbl">
+                  <tbody>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Pool ID</td>
+                      <td style={{ color: "var(--c)", fontSize: 10 }}>
+                        {fmtAddr(ps.pool_id)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Current Tick</td>
+                      <td style={{ color: "var(--tb)", fontWeight: 500 }}>
+                        {ps.tick?.toLocaleString()}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>sqrtPriceX96</td>
+                      <td style={{ fontSize: 9, color: "var(--td)" }}>
+                        {ps.sqrt_price_x96
+                          ? fmtN(Number(BigInt(ps.sqrt_price_x96)), 0)
+                          : "-"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Token0 (wRLP)</td>
+                      <td style={{ fontSize: 10 }}>{fmtAddr(ps.token0)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Token1 (aUSDC)</td>
+                      <td style={{ fontSize: 10 }}>{fmtAddr(ps.token1)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Fee Growth 0</td>
+                      <td style={{ fontSize: 10 }}>
+                        {ps.fee_growth_global0 || "0"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Fee Growth 1</td>
+                      <td style={{ fontSize: 10 }}>
+                        {ps.fee_growth_global1 || "0"}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+
+            {/* ═══ ROW 3: Broker Positions ═══ */}
+            <Card
+              title="BROKER POSITIONS"
+              badge={<Badge text={`${bps.length} BROKERS`} type="p" />}
+              style={{ marginBottom: 1 }}
+              delay={7}
+            >
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>broker</th>
+                    <th className="r">collateral</th>
+                    <th className="r">debt</th>
+                    <th className="r">collateral value</th>
+                    <th className="r">debt value</th>
+                    <th className="r">health factor</th>
+                    <th>status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bps.map((b, i) => {
+                    const coll = fromRaw(b.collateral, 6);
+                    const debt = fromRaw(b.debt, 6);
+                    const collVal = fromRaw(b.collateral_value, 6);
+                    const debtVal = fromRaw(b.debt_value, 6);
+                    const hf = b.health_factor;
+                    const status =
+                      debt === 0
+                        ? "idle"
+                        : hf > 2
+                          ? "safe"
+                          : hf > 1.2
+                            ? "watch"
+                            : "danger";
+                    return (
+                      <tr key={i}>
+                        <td style={{ color: "var(--c)", fontSize: 10 }}>
+                          {fmtAddr(b.broker_address)}
+                        </td>
+                        <td className="r" style={{ color: "var(--tb)" }}>
+                          {fmt(coll)}
+                        </td>
+                        <td
+                          className="r"
+                          style={{ color: debt > 0 ? "var(--a)" : "var(--td)" }}
+                        >
+                          {debt > 0 ? fmt(debt) : "—"}
+                        </td>
+                        <td className="r" style={{ fontSize: 10 }}>
+                          {fmt(collVal)}
+                        </td>
+                        <td
+                          className="r"
+                          style={{
+                            fontSize: 10,
+                            color: debtVal > 0 ? "var(--a)" : "var(--td)",
+                          }}
+                        >
+                          {debtVal > 0 ? fmt(debtVal) : "—"}
+                        </td>
+                        <td
+                          className="r"
+                          style={{
+                            color:
+                              debt === 0
+                                ? "var(--td)"
+                                : hf > 2
+                                  ? "var(--g)"
+                                  : hf > 1.2
+                                    ? "var(--a)"
+                                    : "var(--r)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {debt === 0 ? "∞" : hf.toFixed(2)}
+                        </td>
+                        <td>
+                          <Badge
+                            text={status.toUpperCase()}
+                            type={
+                              status === "safe" || status === "idle"
+                                ? "g"
+                                : status === "watch"
+                                  ? "a"
+                                  : "r"
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginTop: 8,
+                  paddingTop: 6,
+                  borderTop: "1px solid var(--bdr)",
+                  fontSize: 10,
+                  color: "var(--td)",
+                }}
+              >
+                <span>
+                  total collateral:{" "}
+                  <span style={{ color: "var(--g)" }}>
+                    {fmt(totalCollateral)}
+                  </span>
+                </span>
+                <span>
+                  total debt:{" "}
+                  <span
+                    style={{
+                      color: totalBrokerDebt > 0 ? "var(--a)" : "var(--gd)",
+                    }}
+                  >
+                    {fmt(totalBrokerDebt)}
+                  </span>
+                </span>
+                <span>
+                  utilization:{" "}
+                  <span
+                    style={{
+                      color:
+                        totalCollateral > 0 &&
+                        totalBrokerDebt / totalCollateral > 0.7
+                          ? "var(--r)"
+                          : "var(--g)",
+                    }}
+                  >
+                    {totalCollateral > 0
+                      ? ((totalBrokerDebt / totalCollateral) * 100).toFixed(1)
+                      : 0}
+                    %
+                  </span>
+                </span>
+              </div>
+            </Card>
+
+            {/* ═══ ROW 4: Events Feed + Market Summary ═══ */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <Card
+                title="RECENT EVENTS"
+                badge={<Badge text={`${events.length} EVENTS`} type="c" />}
+                delay={8}
+              >
+                <div style={{ maxHeight: 280, overflowY: "auto" }}>
+                  {events.slice(0, 20).map((e, i) => {
+                    const isSwap = e.event_name === "Swap";
+                    const isTransfer = e.event_name === "Transfer";
+                    return (
+                      <div
+                        key={i}
+                        className="evt"
+                        style={{ animationDelay: `${i * 20}ms` }}
+                      >
+                        <span
+                          className={`evt-type ${isSwap ? "evt-swap" : isTransfer ? "evt-transfer" : "evt-other"}`}
+                        >
+                          {e.event_name}
+                        </span>
+                        <span style={{ color: "var(--td)", fontSize: 9 }}>
+                          {fmtTs(e.block_timestamp)}
+                        </span>
+                        <span style={{ color: "var(--td)", fontSize: 9 }}>
+                          blk {e.block_number?.toLocaleString()}
+                        </span>
+                        {isSwap && (
+                          <>
+                            <span
+                              style={{
+                                color:
+                                  Number(e.event_data?.amount0) > 0
+                                    ? "var(--g)"
+                                    : "var(--r)",
+                                fontSize: 10,
+                              }}
+                            >
+                              {Number(e.event_data?.amount0) > 0
+                                ? "BUY"
+                                : "SELL"}
+                            </span>
+                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                              {fmtN(
+                                Math.abs(
+                                  fromRaw(e.event_data?.amount1 || "0", 6),
+                                ),
+                              )}{" "}
+                              USDC
+                            </span>
+                          </>
+                        )}
+                        {isTransfer && (
+                          <>
+                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                              {fmtAddr(e.event_data?.from)} →{" "}
+                              {fmtAddr(e.event_data?.to)}
+                            </span>
+                            <span style={{ fontSize: 9, color: "var(--tb)" }}>
+                              {fmtN(fromRaw(e.event_data?.value || "0", 18), 4)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+
+              <Card title="MARKET SUMMARY" delay={9}>
+                <table className="tbl" style={{ marginBottom: 8 }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Market ID</td>
+                      <td style={{ color: "var(--c)", fontSize: 9 }}>
+                        {fmtAddr(ms.market_id)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Mark Price</td>
+                      <td style={{ color: "var(--c)", fontWeight: 600 }}>
+                        {fmt(markPrice, 4)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Index Price</td>
+                      <td style={{ color: "var(--p)", fontWeight: 600 }}>
+                        {fmt(indexPrice, 4)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Peg Deviation</td>
+                      <td
+                        style={{
+                          color:
+                            Math.abs(pegDev) < 1
+                              ? "var(--g)"
+                              : Math.abs(pegDev) < 5
+                                ? "var(--a)"
+                                : "var(--r)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {pegDev >= 0 ? "+" : ""}
+                        {pegDev.toFixed(3)}%
+                      </td>
+                    </tr>
+                    <tr style={{ borderTop: "1px solid var(--bdr)" }}>
+                      <td style={{ color: "var(--td)" }}>Total Debt</td>
+                      <td
+                        style={{
+                          color: totalDebt > 0 ? "var(--a)" : "var(--g)",
+                        }}
+                      >
+                        {fmt(totalDebt)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Total Collateral</td>
+                      <td style={{ color: "var(--g)" }}>
+                        {fmt(totalCollateral)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Utilization</td>
+                      <td>
+                        {totalCollateral > 0
+                          ? ((totalBrokerDebt / totalCollateral) * 100).toFixed(
+                              1,
+                            )
+                          : 0}
+                        %
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Norm Factor</td>
+                      <td>{normFactor.toFixed(8)}</td>
+                    </tr>
+                    <tr style={{ borderTop: "1px solid var(--bdr)" }}>
+                      <td style={{ color: "var(--td)" }}>Swap Volume</td>
+                      <td style={{ color: "var(--tb)" }}>
+                        {fmt(totalVol)}{" "}
+                        <span style={{ fontSize: 9, color: "var(--td)" }}>
+                          ({swaps.length} swaps)
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Pool Tick</td>
+                      <td>{ps.tick?.toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Liquidity</td>
+                      <td>{fmtN(liquidity)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)" }}>Last Update</td>
+                      <td style={{ fontSize: 10 }}>
+                        {fmtAgo(ms.last_update_timestamp)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+
+            {/* ═══ FOOTER ═══ */}
+            <div className="ftr">
+              RLD Protocol · Simulation Monitor v1.0 · auto-refresh 10s · next
+              update in{" "}
+              <span style={{ color: "var(--c)" }}>{10 - (tick % 10)}s</span>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
