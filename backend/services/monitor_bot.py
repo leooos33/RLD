@@ -127,6 +127,12 @@ def get_asset_stats(symbol, endpoint="/rates"):
         # Sort DESC (Newest First) to ensure data[0] is current
         data.sort(key=lambda x: x['timestamp'], reverse=True)
 
+        # Filter out entries with null values (incomplete hourly buckets)
+        value_key = 'price' if endpoint == "/eth-prices" else 'apy'
+        data = [d for d in data if d.get(value_key) is not None]
+        if not data:
+            return None, None
+
         current = data[0]
         target_ts = current['timestamp'] - 86400
         past = None
