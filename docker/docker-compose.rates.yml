@@ -36,7 +36,7 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/", "||", "exit", "1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
 
 volumes:
   rates-data: # Persistent SQLite DB for Aave rates
