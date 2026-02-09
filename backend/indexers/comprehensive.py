@@ -396,7 +396,7 @@ class ComprehensiveIndexer:
             
             return {
                 'collateral': net_account_value,
-                'debt': debt_value,
+                'debt': debt_principal,
                 'debt_principal': debt_principal,
                 'collateral_value': net_account_value,
                 'debt_value': debt_value,
