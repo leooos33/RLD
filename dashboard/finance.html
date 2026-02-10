@@ -55,7 +55,7 @@
         --tw: #f0f2f5;
       }
       html {
-        font-size: 13px;
+        font-size: 15px;
       }
       body {
         font-family: "JetBrains Mono", monospace;
@@ -138,13 +138,13 @@
         gap: 14px;
       }
       .logo {
-        font-size: 16px;
+        font-size: 18px;
         font-weight: 700;
         color: var(--g);
         text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
       }
       .subtitle {
-        font-size: 10px;
+        font-size: 12px;
         color: var(--td);
         letter-spacing: 3px;
         text-transform: uppercase;
@@ -309,7 +309,7 @@
       .tbl td {
         padding: 4px 6px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-        font-size: 11px;
+        font-size: 13px;
         white-space: nowrap;
       }
       .tbl tr:hover td {
@@ -321,26 +321,26 @@
 
       /* ── Metric ── */
       .mv {
-        font-size: 22px;
+        font-size: 28px;
         font-weight: 600;
         letter-spacing: -0.5px;
         line-height: 1.2;
       }
       .mv-sm {
-        font-size: 16px;
+        font-size: 20px;
         font-weight: 600;
         letter-spacing: -0.3px;
         line-height: 1.2;
       }
       .ml {
-        font-size: 8px;
+        font-size: 11px;
         color: var(--td);
         text-transform: uppercase;
         letter-spacing: 1.5px;
         margin-top: 2px;
       }
       .ms {
-        font-size: 10px;
+        font-size: 12px;
         color: var(--td);
         margin-left: 2px;
         font-weight: 300;
@@ -376,7 +376,7 @@
         border-radius: 1px;
         letter-spacing: 1px;
         font-weight: 600;
-        width: 72px;
+        width: 80px;
         text-align: center;
         flex-shrink: 0;
         display: inline-block;
@@ -1252,34 +1252,6 @@
                   }}
                 >
                   <div className="stat-row">
-                    <span className="stat-k">Mark Price</span>
-                    <span className="stat-v" style={{ color: "var(--c)" }}>
-                      {fmt(markPrice, 4)}
-                    </span>
-                  </div>
-                  <div className="stat-row">
-                    <span className="stat-k">Index Price</span>
-                    <span className="stat-v" style={{ color: "var(--p)" }}>
-                      {fmt(indexPrice, 4)}
-                    </span>
-                  </div>
-                  <div className="stat-row">
-                    <span className="stat-k">Peg Deviation</span>
-                    <span
-                      className="stat-v"
-                      style={{
-                        color:
-                          Math.abs(pegDev) < 1
-                            ? "var(--g)"
-                            : Math.abs(pegDev) < 5
-                              ? "var(--a)"
-                              : "var(--r)",
-                      }}
-                    >
-                      {fmtPct(pegDev, 3)}
-                    </span>
-                  </div>
-                  <div className="stat-row">
                     <span className="stat-k">Norm Factor</span>
                     <span className="stat-v">{normFactor.toFixed(8)}</span>
                   </div>
@@ -1521,90 +1493,7 @@
                 </div>
               </Card>
 
-              <Card title="MARKET SUMMARY" delay={10}>
-                <div className="stat-row">
-                  <span className="stat-k">Market ID</span>
-                  <span
-                    className="stat-v"
-                    style={{ color: "var(--c)", fontSize: 10 }}
-                  >
-                    {fmtAddr(ms.market_id)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Mark Price</span>
-                  <span
-                    className="stat-v"
-                    style={{ color: "var(--c)", fontWeight: 600 }}
-                  >
-                    {fmt(markPrice, 4)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Index Price</span>
-                  <span
-                    className="stat-v"
-                    style={{ color: "var(--p)", fontWeight: 600 }}
-                  >
-                    {fmt(indexPrice, 4)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Peg Deviation</span>
-                  <span
-                    className="stat-v"
-                    style={{
-                      color:
-                        Math.abs(pegDev) < 1
-                          ? "var(--g)"
-                          : Math.abs(pegDev) < 5
-                            ? "var(--a)"
-                            : "var(--r)",
-                    }}
-                  >
-                    {fmtPct(pegDev, 3)}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--bdr)",
-                    marginTop: 4,
-                    paddingTop: 4,
-                  }}
-                />
-                <div className="stat-row">
-                  <span className="stat-k">Total Debt</span>
-                  <span
-                    className="stat-v"
-                    style={{ color: totalDebt > 0 ? "var(--a)" : "var(--g)" }}
-                  >
-                    {fmtN(totalDebt)} wRLP
-                    {totalDebtValue > 0 && ` (${fmt(totalDebtValue)})`}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">System Collateral</span>
-                  <span className="stat-v" style={{ color: "var(--g)" }}>
-                    {fmt(totalCollateralValue)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Over-Collateralization</span>
-                  <span className="stat-v" style={{ color: "var(--g)" }}>
-                    {overCollatDisplay}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Norm Factor</span>
-                  <span className="stat-v">{normFactor.toFixed(8)}</span>
-                </div>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--bdr)",
-                    marginTop: 4,
-                    paddingTop: 4,
-                  }}
-                />
+              <Card title="ACTIVITY" delay={10}>
                 <div className="stat-row">
                   <span className="stat-k">Swap Volume</span>
                   <span className="stat-v" style={{ color: "var(--tb)" }}>
@@ -1620,14 +1509,6 @@
                   <span className="stat-v">{events.length}</span>
                 </div>
                 <div className="stat-row">
-                  <span className="stat-k">Pool Tick</span>
-                  <span className="stat-v">{ps.tick?.toLocaleString()}</span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Brokers</span>
-                  <span className="stat-v">{bps.length}</span>
-                </div>
-                <div className="stat-row">
                   <span className="stat-k">Active Borrowers</span>
                   <span className="stat-v">
                     {
@@ -1637,6 +1518,24 @@
                           fromRaw(b.debt_value, 6) > 0,
                       ).length
                     }
+                    {" / "}
+                    {bps.length}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--bdr)",
+                    marginTop: 4,
+                    paddingTop: 4,
+                  }}
+                />
+                <div className="stat-row">
+                  <span className="stat-k">Market ID</span>
+                  <span
+                    className="stat-v"
+                    style={{ color: "var(--c)", fontSize: 11 }}
+                  >
+                    {fmtAddr(ms.market_id)}
                   </span>
                 </div>
                 <div className="stat-row">
