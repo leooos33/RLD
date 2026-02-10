@@ -1,74 +1,455 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# RLD Simulation — Clean Restart
+# RLD Simulation — Full Stack Restart
 # ═══════════════════════════════════════════════════════════════
-# Tears down everything, restarts Anvil from a clean fork,
-# and relaunches the full Docker Compose stack.
+# Cleanly tears down EVERYTHING (Anvil + all containers),
+# restarts from a clean fork, and waits for full health.
 #
-# Usage:  ./docker/restart.sh
+# Usage:
+#   ./docker/restart.sh              # Full restart (default)
+#   ./docker/restart.sh --sim-only   # Only restart simulation stack (keep rates + bot)
+#   ./docker/restart.sh --no-build   # Skip Docker image rebuilds
+#   ./docker/restart.sh --keep-data  # Keep indexer data volume
+#
+# Requirements:
+#   - docker, docker compose, anvil, cast must be in PATH
+#   - docker/.env must exist with MAINNET_RPC_URL set
 # ═══════════════════════════════════════════════════════════════
 
-set -e
+set -euo pipefail
 
+# ─── Configuration ────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RLD_ROOT="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+DOCKER_DIR="$SCRIPT_DIR"
 
-# Load ETH_RPC_URL from contracts/.env (needed for Anvil fork)
-if [ -f "$RLD_ROOT/contracts/.env" ]; then
-    export $(grep -E '^ETH_RPC_URL=' "$RLD_ROOT/contracts/.env" | xargs)
-fi
-: "${ETH_RPC_URL:?ETH_RPC_URL not set — add it to contracts/.env}"
+COMPOSE_MAIN="$DOCKER_DIR/docker-compose.yml"
+COMPOSE_RATES="$DOCKER_DIR/docker-compose.rates.yml"
+COMPOSE_BOT="$DOCKER_DIR/docker-compose.bot.yml"
+ENV_FILE="$DOCKER_DIR/.env"
 
-FORK_BLOCK="${FORK_BLOCK:-21698573}"
-BLUE='\033[0;34m'
+ANVIL_LOG="/tmp/anvil.log"
+ANVIL_HOST="0.0.0.0"
+ANVIL_PORT=8545
+ANVIL_RPC="http://localhost:$ANVIL_PORT"
+
+# Timeouts
+ANVIL_TIMEOUT=60
+DEPLOYER_TIMEOUT=600     # 10 minutes — deployment takes ~5-8 min
+HEALTH_TIMEOUT=120       # 2 minutes for containers to become healthy
+
+# ─── Parse args ───────────────────────────────────────────────
+SIM_ONLY=false
+NO_BUILD=false
+KEEP_DATA=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --sim-only)  SIM_ONLY=true ;;
+        --no-build)  NO_BUILD=true ;;
+        --keep-data) KEEP_DATA=true ;;
+        --help|-h)
+            echo "Usage: $0 [--sim-only] [--no-build] [--keep-data]"
+            echo ""
+            echo "  --sim-only   Only restart sim stack (keep rates-indexer + telegram bot)"
+            echo "  --no-build   Skip Docker image rebuilds (faster if no code changes)"
+            echo "  --keep-data  Preserve indexer data volume across restart"
+            exit 0
+            ;;
+        *) echo "Unknown option: $arg"; exit 1 ;;
+    esac
+done
+
+# ─── Colors ───────────────────────────────────────────────────
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+DIM='\033[2m'
 NC='\033[0m'
 
-echo -e "${BLUE}═══ RLD Simulation — Clean Restart ═══${NC}\n"
+header()  { echo -e "\n${BLUE}═══ $1 ═══${NC}\n"; }
+step()    { echo -e "${YELLOW}[$1] $2${NC}"; }
+ok()      { echo -e "${GREEN}  ✓ $1${NC}"; }
+fail()    { echo -e "${RED}  ✗ $1${NC}"; }
+info()    { echo -e "${CYAN}  ℹ $1${NC}"; }
+warn()    { echo -e "${YELLOW}  ⚠ $1${NC}"; }
+dim()     { echo -e "${DIM}    $1${NC}"; }
 
-# ─── Step 1: Tear down containers + volumes ───────────────────
-echo -e "${YELLOW}[1/3] Tearing down Docker Compose stack...${NC}"
-sudo docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
-echo -e "${GREEN}  ✓ Containers and volumes removed${NC}"
+# ─── Preflight checks ────────────────────────────────────────
+header "PREFLIGHT CHECKS"
 
-# ─── Step 2: Restart Anvil from clean fork ────────────────────
-echo -e "${YELLOW}[2/3] Restarting Anvil (fork block $FORK_BLOCK)...${NC}"
+# Check required tools
+for cmd in docker anvil cast; do
+    if ! command -v "$cmd" &>/dev/null; then
+        fail "$cmd not found in PATH"
+        exit 1
+    fi
+done
+ok "Required tools found (docker, anvil, cast)"
+
+# Check docker compose (v2)
+if ! docker compose version &>/dev/null; then
+    fail "docker compose v2 not available"
+    exit 1
+fi
+ok "Docker compose v2 available"
+
+# Check .env file
+if [ ! -f "$ENV_FILE" ]; then
+    fail "$ENV_FILE not found — run: cp $DOCKER_DIR/.env.example $DOCKER_DIR/.env"
+    exit 1
+fi
+
+# Load config from env files
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|RATES_PORT|BOT_PORT|INDEXER_PORT|API_KEY)=' "$ENV_FILE" | sed 's/^/export /')
+
+# Also load FORK_BLOCK from root .env if not in docker/.env
+if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
+    FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
+fi
+FORK_BLOCK="${FORK_BLOCK:-21698573}"
+
+if [ -z "${MAINNET_RPC_URL:-}" ]; then
+    fail "MAINNET_RPC_URL not set in $ENV_FILE"
+    exit 1
+fi
+ok "Environment loaded (fork block: $FORK_BLOCK)"
+
+# Check if port 8545 is available (or already Anvil)
+ANVIL_PID=$(pgrep -f "anvil.*--host" || true)
+if [ -n "$ANVIL_PID" ]; then
+    info "Existing Anvil process found (PID: $ANVIL_PID) — will be killed"
+fi
+
+# ═════════════════════════════════════════════════════════════
+# STEP 1: Tear down everything
+# ═════════════════════════════════════════════════════════════
+header "STEP 1: TEAR DOWN"
+
+# 1a. Stop main simulation stack
+step "1a" "Stopping simulation stack..."
+DOWN_FLAGS=""
+if [ "$KEEP_DATA" = false ]; then
+    DOWN_FLAGS="-v"
+fi
+docker compose -f "$COMPOSE_MAIN" --env-file "$ENV_FILE" down $DOWN_FLAGS 2>/dev/null || true
+ok "Simulation stack stopped"
+
+# 1b. Stop rates + bot if full restart
+if [ "$SIM_ONLY" = false ]; then
+    step "1b" "Stopping rates-indexer and bot..."
+    docker compose -f "$COMPOSE_RATES" --env-file "$ENV_FILE" down 2>/dev/null || true
+    docker compose -f "$COMPOSE_BOT" --env-file "$ENV_FILE" down 2>/dev/null || true
+    ok "Rates-indexer and bot stopped"
+else
+    info "Skipping rates/bot (--sim-only mode)"
+fi
+
+# 1c. Kill any orphaned standalone containers that may hold ports
+step "1c" "Cleaning orphaned containers..."
+ORPHANS=("rld-indexer-fixed")
+for c in "${ORPHANS[@]}"; do
+    if docker ps -a --format '{{.Names}}' | grep -q "^${c}$"; then
+        docker stop "$c" 2>/dev/null || true
+        docker rm "$c" 2>/dev/null || true
+        ok "Removed orphan: $c"
+    fi
+done
+
+# 1d. Verify ports are free
+step "1d" "Checking port availability..."
+PORTS_TO_CHECK=("$ANVIL_PORT:Anvil")
+PORTS_TO_CHECK+=("${INDEXER_PORT:-8080}:Indexer")
+if [ "$SIM_ONLY" = false ]; then
+    PORTS_TO_CHECK+=("${RATES_PORT:-8081}:Rates")
+    PORTS_TO_CHECK+=("${BOT_PORT:-8082}:Bot")
+fi
+
+ALL_PORTS_FREE=true
+for port_entry in "${PORTS_TO_CHECK[@]}"; do
+    PORT="${port_entry%%:*}"
+    NAME="${port_entry##*:}"
+    # Skip Anvil port since we're about to start it
+    if [ "$PORT" = "$ANVIL_PORT" ]; then continue; fi
+    if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
+        PID=$(ss -tlnp 2>/dev/null | grep ":${PORT} " | grep -oP 'pid=\K\d+' | head -1)
+        PROC=$(ps -p "$PID" -o comm= 2>/dev/null || echo "unknown")
+        fail "Port $PORT ($NAME) is in use by $PROC (PID $PID)"
+        ALL_PORTS_FREE=false
+    fi
+done
+if [ "$ALL_PORTS_FREE" = true ]; then
+    ok "All required ports are free"
+fi
+
+# ═════════════════════════════════════════════════════════════
+# STEP 2: Start Anvil
+# ═════════════════════════════════════════════════════════════
+header "STEP 2: START ANVIL"
+
+step "2a" "Killing existing Anvil process..."
 pkill -f "anvil" 2>/dev/null || true
 sleep 2
+ok "Anvil processes killed"
+
+step "2b" "Starting Anvil (fork block $FORK_BLOCK)..."
+dim "Fork URL: ${MAINNET_RPC_URL%%\?*}..."
+dim "Log file: $ANVIL_LOG"
 
 nohup anvil \
-    --fork-url "$ETH_RPC_URL" \
+    --fork-url "$MAINNET_RPC_URL" \
     --fork-block-number "$FORK_BLOCK" \
     --block-time 1 \
-    --host 0.0.0.0 \
-    > /tmp/anvil.log 2>&1 &
+    --host "$ANVIL_HOST" \
+    > "$ANVIL_LOG" 2>&1 &
+
+ANVIL_PID=$!
+dim "PID: $ANVIL_PID"
 
 # Wait for Anvil to be ready
-for i in $(seq 1 30); do
-    if cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1; then
-        BLOCK=$(cast block-number --rpc-url http://localhost:8545)
-        echo -e "${GREEN}  ✓ Anvil ready at block $BLOCK${NC}"
+step "2c" "Waiting for Anvil to respond..."
+for i in $(seq 1 "$ANVIL_TIMEOUT"); do
+    if cast block-number --rpc-url "$ANVIL_RPC" > /dev/null 2>&1; then
+        BLOCK=$(cast block-number --rpc-url "$ANVIL_RPC")
+        ok "Anvil ready at block $BLOCK (took ${i}s)"
         break
+    fi
+    if [ $((i % 10)) -eq 0 ]; then
+        dim "Still waiting... (${i}/${ANVIL_TIMEOUT}s)"
     fi
     sleep 1
 done
-cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1 || {
-    echo "  ✗ Anvil failed to start — check /tmp/anvil.log"
+
+# Verify it's actually working
+if ! cast block-number --rpc-url "$ANVIL_RPC" > /dev/null 2>&1; then
+    fail "Anvil failed to start after ${ANVIL_TIMEOUT}s"
+    echo ""
+    echo "Last 20 lines of $ANVIL_LOG:"
+    tail -20 "$ANVIL_LOG" 2>/dev/null || true
     exit 1
-}
+fi
 
-# ─── Step 3: Launch Docker Compose stack ──────────────────────
-echo -e "${YELLOW}[3/3] Launching Docker Compose stack...${NC}"
-echo "  Deployer will run (~3 min), then indexer + daemons start."
-echo ""
-sudo docker compose -f "$COMPOSE_FILE" up -d
+# Quick RPC test — verify the fork URL is actually working (catches 403s)
+step "2d" "Verifying upstream RPC access..."
+BALANCE_CHECK=$(cast balance 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --rpc-url "$ANVIL_RPC" 2>&1) || true
+if echo "$BALANCE_CHECK" | grep -qi "403\|forbidden\|whitelist\|error"; then
+    fail "Upstream RPC returned an error — check MAINNET_RPC_URL in $ENV_FILE"
+    echo "  Response: $BALANCE_CHECK"
+    exit 1
+fi
+ok "Upstream RPC is accessible"
 
+# ═════════════════════════════════════════════════════════════
+# STEP 3: Start support services (if full restart)
+# ═════════════════════════════════════════════════════════════
+if [ "$SIM_ONLY" = false ]; then
+    header "STEP 3: START SUPPORT SERVICES"
+
+    step "3a" "Starting rates-indexer..."
+    docker compose -f "$COMPOSE_RATES" --env-file "$ENV_FILE" up -d --build 2>&1 | tail -3
+    ok "Rates-indexer started"
+
+    step "3b" "Starting Telegram bot..."
+    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+        docker compose -f "$COMPOSE_BOT" --env-file "$ENV_FILE" up -d --build 2>&1 | tail -3
+        ok "Telegram bot started"
+    else
+        warn "TELEGRAM_BOT_TOKEN not set — skipping bot"
+    fi
+
+    # Wait for rates-indexer to be healthy (deployer depends on it)
+    step "3c" "Waiting for rates-indexer health..."
+    for i in $(seq 1 60); do
+        if curl -sf http://localhost:${RATES_PORT:-8081}/ > /dev/null 2>&1; then
+            ok "Rates-indexer healthy (took ${i}s)"
+            break
+        fi
+        sleep 2
+    done
+    if ! curl -sf http://localhost:${RATES_PORT:-8081}/ > /dev/null 2>&1; then
+        warn "Rates-indexer not responding — deployer will use fallback rate"
+    fi
+else
+    header "STEP 3: SUPPORT SERVICES (SKIPPED)"
+    info "Rates-indexer and bot kept running (--sim-only mode)"
+fi
+
+# ═════════════════════════════════════════════════════════════
+# STEP 4: Launch simulation stack
+# ═════════════════════════════════════════════════════════════
+header "STEP 4: DEPLOY & LAUNCH SIMULATION"
+
+BUILD_FLAG=""
+if [ "$NO_BUILD" = false ]; then
+    BUILD_FLAG="--build"
+fi
+
+step "4a" "Starting docker compose (deployer runs first)..."
+docker compose -f "$COMPOSE_MAIN" --env-file "$ENV_FILE" up -d $BUILD_FLAG 2>&1 | tail -5
+
+# Wait for deployer to complete
+step "4b" "Waiting for deployer to finish (timeout: ${DEPLOYER_TIMEOUT}s)..."
+dim "This deploys protocol, market, users, and router (~5-8 min)"
+
+DEPLOYER_STARTED=$(date +%s)
+LAST_LOG=""
+while true; do
+    ELAPSED=$(( $(date +%s) - DEPLOYER_STARTED ))
+
+    # Check if deployer has exited
+    DEPLOYER_STATUS=$(docker inspect --format '{{.State.Status}}' docker-deployer-1 2>/dev/null || echo "missing")
+
+    if [ "$DEPLOYER_STATUS" = "exited" ]; then
+        EXIT_CODE=$(docker inspect --format '{{.State.ExitCode}}' docker-deployer-1 2>/dev/null || echo "?")
+        if [ "$EXIT_CODE" = "0" ]; then
+            ok "Deployer completed successfully (took ${ELAPSED}s)"
+            break
+        else
+            fail "Deployer exited with code $EXIT_CODE after ${ELAPSED}s"
+            echo ""
+            echo "Last 30 lines of deployer logs:"
+            docker logs docker-deployer-1 --tail 30 2>&1
+            echo ""
+            fail "Fix the issue and re-run this script"
+            exit 1
+        fi
+    fi
+
+    if [ "$DEPLOYER_STATUS" = "missing" ]; then
+        fail "Deployer container not found — compose may have failed"
+        exit 1
+    fi
+
+    if [ "$ELAPSED" -ge "$DEPLOYER_TIMEOUT" ]; then
+        fail "Deployer timed out after ${DEPLOYER_TIMEOUT}s"
+        echo "Last 20 lines:"
+        docker logs docker-deployer-1 --tail 20 2>&1
+        exit 1
+    fi
+
+    # Show progress every 30s
+    if [ $((ELAPSED % 30)) -eq 0 ] && [ "$ELAPSED" -gt 0 ]; then
+        CURRENT_LOG=$(docker logs docker-deployer-1 --tail 1 2>/dev/null | head -1 || echo "")
+        if [ "$CURRENT_LOG" != "$LAST_LOG" ] && [ -n "$CURRENT_LOG" ]; then
+            dim "[${ELAPSED}s] $CURRENT_LOG"
+            LAST_LOG="$CURRENT_LOG"
+        else
+            dim "[${ELAPSED}s] Still running..."
+        fi
+    fi
+
+    sleep 5
+done
+
+# ═════════════════════════════════════════════════════════════
+# STEP 5: Verify dependent containers started
+# ═════════════════════════════════════════════════════════════
+header "STEP 5: VERIFY ALL CONTAINERS"
+
+step "5a" "Checking container statuses..."
+EXPECTED_RUNNING=("docker-indexer-1" "docker-mm-daemon-1" "docker-chaos-trader-1")
+ALL_RUNNING=true
+
+for container in "${EXPECTED_RUNNING[@]}"; do
+    STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
+    if [ "$STATUS" = "running" ]; then
+        ok "$container → running"
+    elif [ "$STATUS" = "created" ]; then
+        warn "$container stuck in 'created' — forcing start..."
+        docker start "$container" 2>/dev/null || true
+        sleep 2
+        STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
+        if [ "$STATUS" = "running" ]; then
+            ok "$container → started successfully"
+        else
+            fail "$container → failed to start ($STATUS)"
+            docker logs "$container" --tail 5 2>&1
+            ALL_RUNNING=false
+        fi
+    else
+        fail "$container → $STATUS"
+        ALL_RUNNING=false
+    fi
+done
+
+# Wait for indexer to become healthy
+step "5b" "Waiting for indexer health check..."
+for i in $(seq 1 "$HEALTH_TIMEOUT"); do
+    if curl -sf http://localhost:${INDEXER_PORT:-8080}/ > /dev/null 2>&1; then
+        ok "Indexer API healthy (took ${i}s)"
+        break
+    fi
+    if [ $((i % 15)) -eq 0 ]; then
+        dim "Still waiting... (${i}/${HEALTH_TIMEOUT}s)"
+    fi
+    sleep 1
+done
+if ! curl -sf http://localhost:${INDEXER_PORT:-8080}/ > /dev/null 2>&1; then
+    warn "Indexer not responding yet — may still be initializing"
+fi
+
+# Quick daemon sanity check — look for errors in last few log lines
+step "5c" "Daemon health check..."
+sleep 10  # Give daemons a few cycles
+
+for container in docker-mm-daemon-1 docker-chaos-trader-1; do
+    RECENT=$(docker logs "$container" --tail 5 2>&1 || echo "no logs")
+    if echo "$RECENT" | grep -qi "error\|traceback\|403\|failed"; then
+        warn "$container has recent errors:"
+        echo "$RECENT" | head -3 | sed 's/^/    /'
+    elif echo "$RECENT" | grep -qi "successful\|Index=\|Status"; then
+        ok "$container looks healthy"
+    else
+        info "$container — waiting for first activity"
+    fi
+done
+
+# ═════════════════════════════════════════════════════════════
+# STEP 6: Final status report
+# ═════════════════════════════════════════════════════════════
+header "STATUS REPORT"
+
+echo -e "${MAGENTA}╔═══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${MAGENTA}║           RLD SIMULATION STACK — STATUS                  ║${NC}"
+echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
+
+# Anvil
+ANVIL_BLOCK=$(cast block-number --rpc-url "$ANVIL_RPC" 2>/dev/null || echo "?")
+ANVIL_PID_NOW=$(pgrep -f "anvil.*--host" || echo "?")
+printf "${MAGENTA}║${NC}  %-12s  %-10s  %-28s ${MAGENTA}║${NC}\n" "Anvil" "✅ UP" "Block: $ANVIL_BLOCK (PID: $ANVIL_PID_NOW)"
+
+# Docker containers
+echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
+docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | while IFS= read -r line; do
+    if echo "$line" | grep -q "NAMES"; then continue; fi
+    NAME=$(echo "$line" | awk '{print $1}')
+    STATUS_TEXT=$(echo "$line" | cut -d' ' -f2-)
+    ICON="✅"
+    echo "$STATUS_TEXT" | grep -q "unhealthy\|Exited" && ICON="❌"
+    printf "${MAGENTA}║${NC}  %-28s %s %-22s ${MAGENTA}║${NC}\n" "$NAME" "$ICON" "$STATUS_TEXT"
+done
+
+echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
+
+# Ports
+printf "${MAGENTA}║${NC}  %-12s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Rates=:${RATES_PORT:-8081}"
+printf "${MAGENTA}║${NC}  %-12s  %-42s ${MAGENTA}║${NC}\n" "" "Bot=:${BOT_PORT:-8082}"
+
+echo -e "${MAGENTA}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}═══ Stack is up! ═══${NC}"
+echo -e "${DIM}Useful commands:${NC}"
+echo "  Logs:    docker compose -f $COMPOSE_MAIN logs -f"
+echo "  Status:  docker compose -f $COMPOSE_MAIN ps -a"
+echo "  Stop:    docker compose -f $COMPOSE_MAIN down -v"
+echo "  Anvil:   tail -f $ANVIL_LOG"
 echo ""
-echo "  Monitor:  sudo docker compose -f docker/docker-compose.yml logs -f"
-echo "  Status:   sudo docker compose -f docker/docker-compose.yml ps -a"
-echo "  Stop:     sudo docker compose -f docker/docker-compose.yml down -v"
-echo ""
+
+if [ "$ALL_RUNNING" = true ]; then
+    echo -e "${GREEN}✅ All systems operational!${NC}"
+else
+    echo -e "${YELLOW}⚠️  Some services had issues — check logs above.${NC}"
+    exit 1
+fi

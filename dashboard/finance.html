@@ -379,6 +379,53 @@
         border-top: 1px solid var(--bdr);
         margin-top: 8px;
       }
+
+      /* ── Reconnecting Banner ── */
+      .reconnect-banner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 12px 20px;
+        margin-bottom: 20px;
+        background: var(--r20);
+        border: 1px solid rgba(255, 68, 102, 0.2);
+        color: var(--r);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        animation: fadeIn 0.3s ease;
+      }
+      .reconnect-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255, 68, 102, 0.3);
+        border-top-color: var(--r);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .stale-banner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 10px 20px;
+        margin-bottom: 16px;
+        background: var(--a20);
+        border: 1px solid rgba(255, 170, 34, 0.2);
+        color: var(--a);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        animation: fadeIn 0.3s ease;
+      }
     </style>
   </head>
   <body>
@@ -668,29 +715,73 @@
         const [chartData, setChartData] = useState(null);
         const [events, setEvents] = useState([]);
         const [err, setErr] = useState(null);
+        const [errCount, setErrCount] = useState(0);
+        const [disconnected, setDisconnected] = useState(false);
+        const [simRestarted, setSimRestarted] = useState(false);
+        const [lastBlock, setLastBlock] = useState(null);
         const [tick, setTick] = useState(0);
         const [now, setNow] = useState(new Date());
 
+        // Detect simulation restart: block number goes backwards
+        const detectRestart = useCallback(
+          (newData) => {
+            if (!newData?.block_number) return false;
+            const newBlock = newData.block_number;
+            if (lastBlock !== null && newBlock < lastBlock - 10) {
+              // Block went backwards significantly = sim was restarted
+              return true;
+            }
+            return false;
+          },
+          [lastBlock],
+        );
+
         const loadLatest = useCallback(() => {
           fetch("/api/latest")
-            .then((r) => r.json())
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
             .then((d) => {
+              // Check for simulation restart (block number decreased)
+              if (detectRestart(d)) {
+                setSimRestarted(true);
+                setChartData(null);
+                setEvents([]);
+                // Clear the restart banner after 30s
+                setTimeout(() => setSimRestarted(false), 30000);
+              }
+              setLastBlock(d.block_number || null);
               setLatest(d);
               setErr(null);
+              setErrCount(0);
+              setDisconnected(false);
             })
-            .catch((e) => setErr(e.message));
-        }, []);
+            .catch((e) => {
+              setErr(e.message);
+              setErrCount((c) => c + 1);
+              if (errCount >= 2) setDisconnected(true);
+            });
+        }, [detectRestart, errCount]);
+
         const loadChart = useCallback(() => {
           fetch("/api/chart/price?limit=1000")
-            .then((r) => r.json())
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
             .then((d) => {
               if (d && d.data) setChartData(d.data);
             })
             .catch(() => {});
         }, []);
+
         const loadEvents = useCallback(() => {
           fetch("/api/events?limit=1000")
-            .then((r) => r.json())
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
             .then((d) => {
               if (Array.isArray(d)) setEvents(d);
             })
@@ -730,6 +821,17 @@
               </div>
               <div style={{ color: "var(--td)", marginTop: 8, fontSize: 13 }}>
                 {err}
+              </div>
+              <div style={{ color: "var(--td)", marginTop: 16, fontSize: 12 }}>
+                <div
+                  className="reconnect-spinner"
+                  style={{ margin: "12px auto" }}
+                />
+                Retrying every 10s… (attempt {errCount})
+              </div>
+              <div style={{ color: "var(--td)", marginTop: 12, fontSize: 11 }}>
+                If a simulation restart is in progress, this will reconnect
+                automatically.
               </div>
             </div>
           );
@@ -834,6 +936,25 @@
                 SIMULATION
               </a>
             </div>
+
+            {/* ═══ RECONNECTING BANNER ═══ */}
+            {disconnected && latest && (
+              <div className="reconnect-banner">
+                <div className="reconnect-spinner" />
+                SIM INDEXER DISCONNECTED — Reconnecting… (attempt {errCount})
+                <span style={{ fontWeight: 400, opacity: 0.7 }}>
+                  Data below may be stale
+                </span>
+              </div>
+            )}
+
+            {/* ═══ SIM RESTARTED BANNER ═══ */}
+            {simRestarted && (
+              <div className="stale-banner">
+                ⟳ SIMULATION RESTARTED — Chart and events cleared, loading fresh
+                data…
+              </div>
+            )}
 
             {/* ═══ SECTION 1: HERO METRICS ═══ */}
             <div className="hero">

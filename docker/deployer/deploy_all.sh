@@ -462,7 +462,8 @@ for name, key_env in [('MM', 'MM_KEY'), ('Chaos', 'CHAOS_KEY')]:
                 'maxFeePerGas': w3.to_wei('2', 'gwei'), 'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
             })
             signed = w3.eth.account.sign_transaction(tx, key)
-            w3.eth.send_raw_transaction(signed.raw_transaction)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
             print(f'  ✅ {name} approved {tname} for {sname}')
 "
 fi

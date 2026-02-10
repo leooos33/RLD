@@ -554,9 +554,11 @@
       function Dashboard() {
         const [d, setD] = useState(null);
         const [err, setErr] = useState(null);
+        const [errCount, setErrCount] = useState(0);
         const [logs, setLogs] = useState([]);
         const [tick, setTick] = useState(0);
         const [now, setNow] = useState(new Date());
+        const [dataAge, setDataAge] = useState(0);
 
         const load = useCallback(() => {
           fetch("/status.json?_=" + Date.now())
@@ -567,6 +569,14 @@
             .then((j) => {
               setD(j);
               setErr(null);
+              setErrCount(0);
+              // Calculate data age (how old is status.json)
+              if (j.timestamp) {
+                const age = Math.floor(
+                  (Date.now() - new Date(j.timestamp).getTime()) / 1000,
+                );
+                setDataAge(age);
+              }
               const ts = new Date().toLocaleTimeString("en-GB", {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -608,6 +618,7 @@
             })
             .catch((e) => {
               setErr(e.message);
+              setErrCount((c) => c + 1);
               const ts = new Date().toLocaleTimeString("en-GB", {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -631,6 +642,7 @@
           const iv = setInterval(() => {
             setTick((t) => t + 1);
             setNow(new Date());
+            setDataAge((a) => a + 1);
           }, 1000);
           return () => clearInterval(iv);
         }, []);
@@ -653,9 +665,12 @@
           return (
             <div style={{ padding: 80, textAlign: "center" }}>
               <span
-                style={{ color: "var(--g)", fontSize: 12 }}
+                style={{
+                  color: "var(--g)",
+                  fontSize: 12,
+                  animation: "pulse 1.5s ease infinite",
+                }}
                 className="glow-g"
-                style={{ animation: "pulse 1.5s ease infinite" }}
               >
                 ▌ INITIALIZING...
               </span>
@@ -674,10 +689,15 @@
         const running = cts.filter(
           (c) => c.status === "healthy" || c.status === "running",
         );
-        const stopped = cts.filter((c) => c.status === "stopped");
-        const allUp =
-          stopped.length === 0 ||
-          (stopped.length === 1 && stopped[0].name.includes("deployer"));
+        const stopped = cts.filter(
+          (c) => c.status === "stopped" || c.status === "created",
+        );
+        // Only flag degraded if a stopped container is NOT the deployer AND didn't exit cleanly
+        const problemStopped = stopped.filter(
+          (c) =>
+            !c.name.includes("deployer") && !c.uptime?.includes("Exited (0)"),
+        );
+        const allUp = problemStopped.length === 0 && running.length > 0;
         const svcList = [
           {
             n: "Nginx",
@@ -758,6 +778,28 @@
                     {allUp ? "ALL SYSTEMS OPERATIONAL" : "DEGRADED"}
                   </span>
                 </div>
+                {dataAge > 180 && (
+                  <span
+                    style={{
+                      color: "var(--a)",
+                      fontSize: 9,
+                      letterSpacing: "1px",
+                    }}
+                  >
+                    ⚠ DATA {Math.floor(dataAge / 60)}m OLD
+                  </span>
+                )}
+                {errCount > 0 && (
+                  <span
+                    style={{
+                      color: "var(--r)",
+                      fontSize: 9,
+                      animation: "pulse 1.5s ease infinite",
+                    }}
+                  >
+                    ✗ FETCH ERRORS: {errCount}
+                  </span>
+                )}
                 <span style={{ color: "var(--td)", fontSize: 10 }}>
                   {now.toLocaleTimeString("en-GB")}
                 </span>

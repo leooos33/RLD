@@ -32,7 +32,7 @@ while IFS='|' read -r name cpu mem netio; do
   name_clean=$(echo "$name" | xargs)
   cpu_clean=$(echo "$cpu" | xargs | tr -d '%')
   mem_clean=$(echo "$mem" | xargs)
-  net_clean=$(echo "$net" | xargs | sed 's/"/\\"/g')
+  net_clean=$(echo "$netio" | xargs | sed 's/"/\\"/g')
   
   # Get status + restart count
   status_line=$(docker ps -a --filter "name=$name_clean" --format "{{.Status}}" 2>/dev/null | head -1)
@@ -49,7 +49,7 @@ while IFS='|' read -r name cpu mem netio; do
 
   if [ "$first" = true ]; then first=false; else containers_json+=","; fi
   containers_json+="{\"name\":\"$name_clean\",\"status\":\"$health\",\"uptime\":\"$uptime_str\",\"cpu\":$cpu_clean,\"memory\":\"$mem_clean\",\"network\":\"$net_clean\",\"restarts\":$restart_count,\"started\":\"$started_at\",\"ports\":\"$ports\"}"
-done < <(docker stats --no-stream --format "{{.Names}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}" 2>/dev/null || true)
+done < <(docker stats --no-stream --format "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}" 2>/dev/null || true)
 
 # Add stopped containers
 while IFS='|' read -r name status_line; do
@@ -61,6 +61,16 @@ while IFS='|' read -r name status_line; do
   if [ "$first" = true ]; then first=false; else containers_json+=","; fi
   containers_json+="{\"name\":\"$name_clean\",\"status\":\"stopped\",\"uptime\":\"$uptime_str\",\"cpu\":0,\"memory\":\"0B / 0B\",\"network\":\"0B / 0B\",\"restarts\":0,\"started\":\"\",\"ports\":\"\"}"
 done < <(docker ps -a --filter "status=exited" --format "{{.Names}}|{{.Status}}" 2>/dev/null || true)
+
+# Add containers in 'created' state (stuck after deployer)
+while IFS='|' read -r name status_line; do
+  [ -z "$name" ] && continue
+  name_clean=$(echo "$name" | xargs)
+  echo "$containers_json" | grep -q "\"$name_clean\"" && continue
+  uptime_str=$(echo "$status_line" | xargs)
+  if [ "$first" = true ]; then first=false; else containers_json+=","; fi
+  containers_json+="{\"name\":\"$name_clean\",\"status\":\"created\",\"uptime\":\"$uptime_str\",\"cpu\":0,\"memory\":\"0B / 0B\",\"network\":\"0B / 0B\",\"restarts\":0,\"started\":\"\",\"ports\":\"\"}"
+done < <(docker ps -a --filter "status=created" --format "{{.Names}}|{{.Status}}" 2>/dev/null || true)
 containers_json+="]"
 
 # ── API health + response times ──

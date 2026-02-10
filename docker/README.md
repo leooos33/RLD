@@ -29,40 +29,57 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
 
 ## Quick Start
 
-### 1. Start persistent services (run once)
+### Full Stack Restart (recommended)
 
 ```bash
-# Aave V3 Rates Indexer (port 8081) — survives simulation restarts
-docker compose -f docker/docker-compose.rates.yml up -d
-
-# Telegram Monitor Bot (port 8082)
-docker compose -f docker/docker-compose.bot.yml up -d
+# One command does everything: kills Anvil, tears down containers,
+# restarts Anvil from clean fork, deploys contracts, launches all services,
+# waits for health, and prints a status report.
+./docker/restart.sh
 ```
 
-### 2. Simulation cycle
+**CLI Flags:**
+
+| Flag          | Description                                               |
+| ------------- | --------------------------------------------------------- |
+| `--sim-only`  | Only restart sim stack — keep rates-indexer + bot running |
+| `--no-build`  | Skip Docker image rebuilds (faster if no code changes)    |
+| `--keep-data` | Preserve indexer data volume across restart               |
+| `--help`      | Show usage                                                |
 
 ```bash
-# Restart Anvil, deploy contracts, launch simulation stack
-./restart.sh
+# Quick restart after code change to daemons only
+./docker/restart.sh --sim-only
 
-# Or manually:
-anvil --fork-url $ETH_RPC_URL --fork-block-number 21698573 --block-time 1
-docker compose -f docker/docker-compose.yml up --build
+# Fast restart without rebuilding images
+./docker/restart.sh --no-build
+
+# Keep indexer history across restart
+./docker/restart.sh --keep-data
 ```
 
-### 3. Frontend (containerized)
+### Manual Setup (step by step)
 
 ```bash
-# One-command deploy (recommended)
+# 1. Start Anvil fork
+anvil --fork-url $MAINNET_RPC_URL --fork-block-number 21698573 --block-time 1 --host 0.0.0.0
+
+# 2. Start persistent services (only needed once)
+docker compose -f docker/docker-compose.rates.yml --env-file docker/.env up -d
+docker compose -f docker/docker-compose.bot.yml --env-file docker/.env up -d
+
+# 3. Deploy + launch simulation
+cd docker && docker compose up --build -d
+```
+
+### Frontend (production)
+
+```bash
+# Build locally — Nginx serves from frontend/dist
+cd frontend && npm run build
+
+# Or containerized
 docker compose -f docker/docker-compose.frontend.yml up -d --build
-
-# Or manual build
-docker build \
-  --build-arg VITE_API_BASE_URL=https://rld.fi/api \
-  --build-arg VITE_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY \
-  -f frontend/Dockerfile -t rld-frontend .
-
-docker run -p 3000:80 rld-frontend
 ```
 
 ---
@@ -186,51 +203,91 @@ cd frontend && npm run build
 
 ## Environment Variables
 
-### Root `.env` (required)
+### `docker/.env` (primary config)
 
-| Variable             | Description                          | Secret?         |
-| -------------------- | ------------------------------------ | --------------- |
-| `MAINNET_RPC_URL`    | Alchemy/Infura RPC for rates indexer | Yes             |
-| `ETH_RPC_URL`        | Alchemy RPC for Anvil forking        | Yes             |
-| `DEPLOYER_KEY`       | Anvil key #0 (deploy contracts)      | Simulation only |
-| `MM_KEY`             | Anvil key #3 (market maker)          | Simulation only |
-| `CHAOS_KEY`          | Anvil key #4 (chaos trader)          | Simulation only |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot auth token              | Yes             |
-| `TELEGRAM_CHAT_ID`   | Telegram chat for reports            | No              |
-| `API_KEY`            | Rates API auth key                   | Yes             |
+| Variable             | Description                                             | Secret?         |
+| -------------------- | ------------------------------------------------------- | --------------- |
+| `RPC_URL`            | Anvil RPC (default: `http://host.docker.internal:8545`) | No              |
+| `MAINNET_RPC_URL`    | **Unrestricted** Alchemy key for server-side use        | Yes             |
+| `DEPLOYER_KEY`       | Anvil key #0 (deploy contracts)                         | Simulation only |
+| `USER_A_KEY`         | Anvil key #0 (LP provider)                              | Simulation only |
+| `USER_B_KEY`         | Anvil key #1 (long user)                                | Simulation only |
+| `USER_C_KEY`         | Anvil key #2 (TWAMM user)                               | Simulation only |
+| `MM_KEY`             | Anvil key #3 (market maker)                             | Simulation only |
+| `CHAOS_KEY`          | Anvil key #4 (chaos trader)                             | Simulation only |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot auth token                                 | Yes             |
+| `TELEGRAM_CHAT_ID`   | Telegram chat for reports                               | No              |
+| `API_KEY`            | Rates API auth key                                      | Yes             |
 
-### Frontend `.env` (safe — no secrets)
+### Root `.env` (protocol addresses + frontend vars)
 
-| Variable               | Description                         |
-| ---------------------- | ----------------------------------- |
-| `VITE_API_BASE_URL`    | API endpoint (`https://rld.fi/api`) |
-| `VITE_MAINNET_RPC_URL` | Public RPC for on-chain reads       |
+| Variable               | Description                                            |
+| ---------------------- | ------------------------------------------------------ |
+| `FORK_BLOCK`           | Anvil fork block number (default: `21698573`)          |
+| `MAINNET_RPC_URL`      | **Unrestricted** Alchemy key (same as docker/.env)     |
+| `VITE_MAINNET_RPC_URL` | **Origin-restricted** Alchemy key (frontend on rld.fi) |
+| `VITE_API_BASE_URL`    | API endpoint (`https://rld.fi/api`)                    |
+| `RLD_CORE`, `WAUSDC`…  | Protocol contract addresses (auto-updated by deployer) |
 
-> **Security:** Only `VITE_`-prefixed vars are exposed to the browser. The API key is injected server-side by Nginx's `proxy_set_header X-API-Key`.
+> **API Key Strategy:** Two Alchemy keys are used:
+>
+> - **Unrestricted** (`MAINNET_RPC_URL`) — for Anvil fork + rates indexer (server-side only)
+> - **Origin-restricted to `rld.fi`** (`VITE_MAINNET_RPC_URL`) — for the frontend (exposed to browsers)
+>
+> Only `VITE_`-prefixed vars are exposed to the browser. The rates API key is injected server-side by Nginx's `proxy_set_header X-API-Key`.
 
 ---
 
 ## Operations
 
+### Common Tasks
+
+```bash
+# Full clean restart (Anvil + all containers)
+./docker/restart.sh
+
+# Restart sim only (keep rates + bot)
+./docker/restart.sh --sim-only
+
+# Fast restart (no image rebuild)
+./docker/restart.sh --sim-only --no-build
+```
+
+### Monitoring
+
 ```bash
 # View all containers
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# Logs
+# Follow logs
 docker compose -f docker/docker-compose.yml logs -f indexer
+docker compose -f docker/docker-compose.yml logs -f mm-daemon
 docker compose -f docker/docker-compose.bot.yml logs -f monitor-bot
-
-# Restart simulation (keeps rates + bot running)
-docker compose -f docker/docker-compose.yml down -v
-./restart.sh
-
-# Rebuild + restart a single service
-docker compose -f docker/docker-compose.yml build indexer
-docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 
 # Check indexer lag
 curl -s http://localhost:8080/api/status | python3 -m json.tool
+
+# Check Anvil block
+cast block-number --rpc-url http://localhost:8545
 ```
+
+### Single-Service Rebuild
+
+```bash
+# Rebuild + restart just one service (no full redeploy)
+docker compose -f docker/docker-compose.yml build indexer
+docker compose -f docker/docker-compose.yml up -d --no-deps indexer
+```
+
+### Troubleshooting
+
+| Symptom                           | Cause                                         | Fix                                                    |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
+| RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin | Use an unrestricted key in `MAINNET_RPC_URL`           |
+| Port already in use on restart    | Orphaned container from previous run          | `restart.sh` handles this automatically                |
+| Deployer `nonce too low`          | Rapid-fire transactions without receipt wait  | Already fixed in `deploy_all.sh`                       |
+| Containers stuck in `Created`     | Deployer dependency not met                   | `restart.sh` auto-recovers stuck containers            |
+| `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer  | Ensure both use same compose or `host.docker.internal` |
 
 ---
 
