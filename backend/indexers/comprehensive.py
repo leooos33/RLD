@@ -217,22 +217,54 @@ class ComprehensiveIndexer:
         logger.info(f"   Token1: {self.token1}")
     
     def _compute_pool_id(self) -> bytes:
-        """Compute V4 pool ID from pool key components."""
-        # Pool ID is keccak256 of the PoolKey struct
+        """Get V4 pool ID — auto-detect from swap events or POOL_ID env var.
+        
+        The Solidity PoolIdLibrary.toId() hashes the PoolKey struct directly
+        from memory, and reproducing this in Python can fail if the pool was
+        deployed with different fee/tickSpacing than expected. To guarantee
+        correctness, we:
+          1. Check POOL_ID env var (explicit override)
+          2. Read pool_id from existing Swap events in the DB (most reliable)
+          3. Fall back to computing from PoolKey parameters
+        """
+        # 1. Explicit override via env var
+        pool_id_env = os.getenv("POOL_ID")
+        if pool_id_env:
+            pool_id_bytes = bytes.fromhex(pool_id_env.replace('0x', ''))
+            logger.info(f"   Pool ID (from env): {pool_id_bytes.hex()}")
+            return pool_id_bytes
+        
+        # 2. Auto-detect from existing Swap events in the DB
         try:
-            # Get TWAMM hook address - try deployments.json first, then env var
-            twamm_hook = None
-            try:
-                with open("/home/ubuntu/RLD/contracts/deployments.json") as f:
-                    deployments = json.load(f)
-                    # Try both possible keys
-                    twamm_hook = deployments.get("TWAMM") or deployments.get("TWAMMHook")
-            except:
-                pass
-            
-            # Fallback to env var
+            import sqlite3
+            db_path = os.getenv("DB_PATH", "/data/market.db")
+            db = sqlite3.connect(db_path)
+            c = db.cursor()
+            c.execute(
+                "SELECT data FROM events WHERE event_name='Swap' ORDER BY block_number DESC LIMIT 1"
+            )
+            row = c.fetchone()
+            db.close()
+            if row:
+                event_data = json.loads(row[0])
+                event_pool_id = event_data.get('pool_id', '')
+                if event_pool_id:
+                    pool_id_bytes = bytes.fromhex(event_pool_id.replace('0x', ''))
+                    logger.info(f"   Pool ID (from swap events): {pool_id_bytes.hex()}")
+                    return pool_id_bytes
+        except Exception as e:
+            logger.debug(f"Could not read pool_id from events DB: {e}")
+        
+        # 3. Fallback: compute from PoolKey parameters
+        try:
+            twamm_hook = os.getenv("TWAMM_HOOK")
             if not twamm_hook:
-                twamm_hook = os.getenv("TWAMM_HOOK")
+                try:
+                    with open("/home/ubuntu/RLD/contracts/deployments.json") as f:
+                        deployments = json.load(f)
+                        twamm_hook = deployments.get("TWAMM") or deployments.get("TWAMMHook")
+                except:
+                    pass
             
             if not twamm_hook:
                 logger.warning("TWAMM hook address not found - pool state will be unavailable")
@@ -240,19 +272,33 @@ class ComprehensiveIndexer:
             
             logger.info(f"   TWAMM Hook: {twamm_hook}")
             
-            # PoolKey: currency0, currency1, fee (500), tickSpacing (5), hooks
-            # These values MUST match the deployed pool!
             from eth_abi import encode
             pool_key_encoded = encode(
                 ['address', 'address', 'uint24', 'int24', 'address'],
                 [self.token0, self.token1, 500, 5, Web3.to_checksum_address(twamm_hook)]
             )
             pool_id = Web3.keccak(pool_key_encoded)
-            logger.info(f"   Pool ID: {pool_id.hex()}")
+            logger.info(f"   Pool ID (computed): {pool_id.hex()}")
+            logger.warning("   ⚠️  Computed pool ID may not match the deployed pool. "
+                          "Set POOL_ID env var to override.")
             return pool_id
         except Exception as e:
             logger.warning(f"Could not compute pool ID: {e}")
             return None
+    
+    def _mark_price_from_sqrt(self, sqrt_price_x96: int) -> float:
+        """Compute mark price (wRLP in waUSDC terms) from sqrtPriceX96."""
+        if sqrt_price_x96 == 0:
+            return 0.0
+        raw_price_x18 = (sqrt_price_x96 * sqrt_price_x96 * 10**18) // (2**192)
+        if raw_price_x18 == 0:
+            return 0.0
+        if self.wausdc_is_token0:
+            # raw = wRLP/waUSDC → invert to get waUSDC/wRLP
+            return (10**36 / raw_price_x18) / 10**18
+        else:
+            # raw = waUSDC/wRLP (price < 1 with negative ticks) → invert
+            return (10**36 / raw_price_x18) / 10**18
     
     def get_market_state(self) -> Dict:
         """Fetch current market state from RLDCore."""
@@ -333,20 +379,7 @@ class ComprehensiveIndexer:
             liquidity = int.from_bytes(liquidity_data, 'big') & ((1 << 128) - 1)
             
             # Calculate mark price from sqrtPriceX96
-            # Match Solidity: rawPriceX18 = sqrtPriceX96² × 1e18 / 2^192
-            # This gives price = token1/token0 in 18-decimal precision
-            if sqrt_price_x96 > 0:
-                raw_price_x18 = (sqrt_price_x96 * sqrt_price_x96 * 10**18) // (2**192)
-                
-                # If waUSDC is token0: rawPrice = wRLP/waUSDC, need to invert
-                # If waUSDC is token1: rawPrice = waUSDC/wRLP (correct)
-                if self.wausdc_is_token0:
-                    # Need to invert: wrlpPriceX18 = 1e18² / rawPriceX18
-                    mark_price = (10**36 / raw_price_x18) / 10**18 if raw_price_x18 > 0 else 0
-                else:
-                    mark_price = raw_price_x18 / 10**18
-            else:
-                mark_price = 0
+            mark_price = self._mark_price_from_sqrt(sqrt_price_x96)
             
             return {
                 'token0': self.token0,
@@ -748,10 +781,11 @@ class ComprehensiveIndexer:
         logger.info(f"   📊 Market: NF={market_state.get('normalization_factor', 0)/1e18:.10f}, "
                    f"Debt={market_state.get('total_debt', 0)/1e6:.2f}")
         
-        # 2. Pool State
+        # 2. Pool State (read via extsload)
         pool_state = self.get_pool_state()
         if pool_state and self.pool_id:
-            insert_pool_state(block_number, self.pool_id.hex() if self.pool_id else "", pool_state)
+            pool_id_hex = self.pool_id.hex() if self.pool_id else ""
+            insert_pool_state(block_number, pool_id_hex, pool_state)
             snapshot['pool_state'] = pool_state
             logger.info(f"   💧 Pool: Price=${pool_state.get('mark_price', 0):.4f}, "
                        f"Tick={pool_state.get('tick', 0)}, "
@@ -768,6 +802,48 @@ class ComprehensiveIndexer:
         snapshot['events'] = events
         if events:
             logger.info(f"   📝 Events: {len(events)} event(s)")
+        
+        # 3b. Override pool state from Swap events (most accurate source)
+        # Swap events contain the post-swap sqrtPriceX96, tick, and liquidity
+        # from the ACTUAL trading pool — guaranteed to be correct.
+        swap_events = [e for e in events if e['event_name'] == 'Swap']
+        if swap_events:
+            last_swap = swap_events[-1]
+            swap_data = last_swap.get('data', {})
+            swap_sqrt = int(swap_data.get('sqrtPriceX96', '0'))
+            swap_tick = swap_data.get('tick', 0)
+            swap_liq = int(swap_data.get('liquidity', '0'))
+            swap_pool_id = swap_data.get('pool_id', '')
+            
+            if swap_sqrt > 0:
+                swap_mark = self._mark_price_from_sqrt(swap_sqrt)
+                
+                # Auto-detect pool_id on first swap if not yet known from events
+                if swap_pool_id and not os.getenv("POOL_ID"):
+                    new_pid = bytes.fromhex(swap_pool_id.replace('0x', ''))
+                    if self.pool_id is None or new_pid != self.pool_id:
+                        logger.info(f"   🔄 Auto-updating pool_id from swap event: {swap_pool_id}")
+                        self.pool_id = new_pid
+                
+                # Build corrected pool state from swap event
+                corrected_pool_state = {
+                    'token0': self.token0,
+                    'token1': self.token1,
+                    'sqrt_price_x96': swap_sqrt,
+                    'tick': swap_tick,
+                    'liquidity': swap_liq,
+                    'mark_price': swap_mark,
+                    'fee_growth_global0': 0,
+                    'fee_growth_global1': 0
+                }
+                
+                pool_id_hex = swap_pool_id or (self.pool_id.hex() if self.pool_id else "")
+                
+                # Update DB with corrected pool state
+                insert_pool_state(block_number, pool_id_hex, corrected_pool_state)
+                snapshot['pool_state'] = corrected_pool_state
+                logger.info(f"   🔄 Pool (swap): Price=${swap_mark:.4f}, "
+                           f"Tick={swap_tick}, Liq={swap_liq}")
         
         # 4. Broker Positions
         broker_positions = []

@@ -10,9 +10,11 @@ import Layout from "./components/Layout";
 // Lazy Load Secondary Pages
 const Bonds = lazy(() => import("./components/Bonds"));
 const Markets = lazy(() => import("./components/Markets"));
-const Research = lazy(() => import("./components/Research"));
-const Article = lazy(() => import("./components/Article"));
+
 const Portfolio = lazy(() => import("./components/Portfolio"));
+const SimulationTerminal = lazy(
+  () => import("./components/SimulationTerminal"),
+);
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -75,27 +77,20 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
-              <Route
-                path="/research"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <Research />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/research/:id"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <Article />
-                  </Suspense>
-                }
-              />
+
               <Route
                 path="/portfolio"
                 element={
                   <Suspense fallback={<Loading />}>
                     <Portfolio />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/sim"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <SimulationTerminal />
                   </Suspense>
                 }
               />

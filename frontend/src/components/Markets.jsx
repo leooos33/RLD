@@ -2,13 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   Loader2,
   TrendingUp,
-  ArrowUpRight,
   Shield,
   Globe,
   Zap,
   Wallet,
-  BarChart3,
-  Clock,
   Activity,
   ChevronDown,
   Check,
@@ -17,17 +14,12 @@ import {
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
 import { API_BASE, fetcher } from "../utils/helpers";
+import { useChartControls } from "../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
-import SettingsButton from "./SettingsButton";
-import MobileDropdown from "./MobileDropdown";
+import ChartControlBar from "./ChartControlBar";
+import ControlCell from "./ControlCell";
 
-// --- HELPER FUNCTIONS ---
-const getPastDate = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
-};
-const getToday = () => new Date().toISOString().split("T")[0];
+// --- ASSET CONFIG ---
 const ASSETS = [
   {
     symbol: "USDC",
@@ -58,6 +50,48 @@ const ASSETS = [
   },
 ];
 
+// --- CHART SERIES CONFIG ---
+const SERIES_CONFIG = [
+  {
+    key: "apy_usdc",
+    label: "USDC_Rate",
+    name: "USDC Rate",
+    color: "#22d3ee",
+    bg: "bg-cyan-400",
+  },
+  {
+    key: "apy_dai",
+    label: "DAI_Rate",
+    name: "DAI Rate",
+    color: "#facc15",
+    bg: "bg-yellow-400",
+  },
+  {
+    key: "apy_usdt",
+    label: "USDT_Rate",
+    name: "USDT Rate",
+    color: "#4ade80",
+    bg: "bg-green-400",
+  },
+  {
+    key: "apy_sofr",
+    label: "SOFR_Rate",
+    name: "SOFR (Risk Free)",
+    color: "#c084fc",
+    bg: "bg-purple-400",
+  },
+  {
+    key: "ethPrice",
+    label: "ETH_Price",
+    name: "ETH Price",
+    color: "#a1a1aa",
+    bg: "bg-zinc-400",
+    yAxisId: "right",
+  },
+];
+
+// --- SUB-COMPONENTS ---
+
 // eslint-disable-next-line no-unused-vars
 function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
   return (
@@ -85,7 +119,6 @@ function FilterDropdown({ label, options, selected, onChange }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = React.useRef(null);
 
-  // Close on click outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -110,11 +143,11 @@ function FilterDropdown({ label, options, selected, onChange }) {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={`
-                    w-full h-[30px] border border-white/20 bg-black flex items-center justify-between px-3 
-                    text-xs font-mono text-white focus:outline-none uppercase tracking-widest 
-                    hover:border-white transition-colors
-                    ${isOpen ? "border-white" : ""}
-                `}
+          w-full h-[30px] border border-white/20 bg-black flex items-center justify-between px-3 
+          text-xs font-mono text-white focus:outline-none uppercase tracking-widest 
+          hover:border-white transition-colors
+          ${isOpen ? "border-white" : ""}
+        `}
       >
         <div className="flex items-center gap-2 overflow-hidden">
           {label && <span>{label}</span>}
@@ -139,32 +172,31 @@ function FilterDropdown({ label, options, selected, onChange }) {
       {isOpen && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-[#0a0a0a] border border-white/20 z-50 flex flex-col shadow-xl">
           <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5 custom-scrollbar">
-            {/* SELECT ALL OPTION */}
+            {/* SELECT ALL */}
             <button
               onClick={() => {
-                if (isAllSelected)
-                  onChange(new Set()); // Deselect all
-                else onChange(new Set(options)); // Select all
+                if (isAllSelected) onChange(new Set());
+                else onChange(new Set(options));
               }}
               className={`
-                                w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
-                                ${
-                                  isAllSelected
-                                    ? "bg-cyan-500/10 text-cyan-400"
-                                    : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
-                                }
-                                border-b border-white/5 mb-1
-                            `}
+                w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
+                ${
+                  isAllSelected
+                    ? "bg-cyan-500/10 text-cyan-400"
+                    : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                }
+                border-b border-white/5 mb-1
+              `}
             >
               <div
                 className={`
-                                w-3.5 h-3.5 border flex items-center justify-center transition-colors
-                                ${
-                                  isAllSelected
-                                    ? "bg-cyan-500 border-cyan-500"
-                                    : "border-white/20 group-hover:border-white/40"
-                                }
-                            `}
+                  w-3.5 h-3.5 border flex items-center justify-center transition-colors
+                  ${
+                    isAllSelected
+                      ? "bg-cyan-500 border-cyan-500"
+                      : "border-white/20 group-hover:border-white/40"
+                  }
+                `}
               >
                 {isAllSelected && (
                   <Check size={10} className="text-black stroke-[3]" />
@@ -180,23 +212,23 @@ function FilterDropdown({ label, options, selected, onChange }) {
                   key={opt}
                   onClick={() => toggle(opt)}
                   className={`
-                                        w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
-                                        ${
-                                          isSelected
-                                            ? "bg-cyan-500/10 text-cyan-400"
-                                            : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
-                                        }
-                                    `}
+                    w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
+                    ${
+                      isSelected
+                        ? "bg-cyan-500/10 text-cyan-400"
+                        : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                    }
+                  `}
                 >
                   <div
                     className={`
-                                        w-3.5 h-3.5 border flex items-center justify-center transition-colors
-                                        ${
-                                          isSelected
-                                            ? "bg-cyan-500 border-cyan-500"
-                                            : "border-white/20 group-hover:border-white/40"
-                                        }
-                                    `}
+                      w-3.5 h-3.5 border flex items-center justify-center transition-colors
+                      ${
+                        isSelected
+                          ? "bg-cyan-500 border-cyan-500"
+                          : "border-white/20 group-hover:border-white/40"
+                      }
+                    `}
                   >
                     {isSelected && (
                       <Check size={10} className="text-black stroke-[3]" />
@@ -212,20 +244,22 @@ function FilterDropdown({ label, options, selected, onChange }) {
     </div>
   );
 }
+
+// --- MAIN COMPONENT ---
+
 export default function Markets() {
   const [marketData, setMarketData] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // --- Chart State ---
-  // --- Chart State ---
-  const [tempStart, setTempStart] = useState(getPastDate(365));
-  const [tempEnd, setTempEnd] = useState(getToday());
-  const [appliedStart, setAppliedStart] = useState(getPastDate(365));
-  const [appliedEnd, setAppliedEnd] = useState(getToday());
-  const [activeRange, setActiveRange] = useState("1Y");
-  const [resolution, setResolution] = useState("1D");
+  // Shared chart controls
+  const controls = useChartControls({
+    defaultRange: "1Y",
+    defaultDays: 365,
+    defaultResolution: "1D",
+  });
+  const { appliedStart, appliedEnd, resolution } = controls;
 
-  // --- Filters State ---
+  // Filters
   const [selectedProtocols, setSelectedProtocols] = useState(
     new Set(["AAVE", "MORPHO", "EULER", "FLUID"]),
   );
@@ -233,38 +267,30 @@ export default function Markets() {
     new Set(["USDC", "DAI", "USDT"]),
   );
 
-  // --- ACTIONS ---
-  const handleApplyDate = () => {
-    setAppliedStart(tempStart);
-    setAppliedEnd(tempEnd);
-    setActiveRange("CUSTOM");
+  // Legend / Series
+  const [hiddenSeries, setHiddenSeries] = useState(new Set());
+
+  const toggleSeries = (key) => {
+    const next = new Set(hiddenSeries);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setHiddenSeries(next);
   };
 
-  const handleQuickRange = (days, label) => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - days);
-
-    if (days <= 3) setResolution("1H");
-    else if (days <= 14) setResolution("1H");
-    else if (days <= 90) setResolution("4H");
-    else setResolution("1D");
-
-    const startStr = start.toISOString().split("T")[0];
-    const endStr = end.toISOString().split("T")[0];
-
-    setTempStart(startStr);
-    setTempEnd(endStr);
-    setAppliedStart(startStr);
-    setAppliedEnd(endStr);
-    setActiveRange(label);
-  };
+  const activeAreas = useMemo(() => {
+    return SERIES_CONFIG.filter((s) => !hiddenSeries.has(s.key)).map((s) => ({
+      key: s.key,
+      name: s.name,
+      color: s.color,
+      yAxisId: s.yAxisId,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenSeries]);
 
   // --- Initial Data Fetch (Cards/Table) ---
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        // Use configured RPC or fallback to public Cloudflare/LlamaNodes to prevent localhost errors
         const rpcUrl =
           import.meta.env.VITE_MAINNET_RPC_URL || "https://eth.llamarpc.com";
         const provider = new JsonRpcProvider(rpcUrl);
@@ -301,7 +327,6 @@ export default function Markets() {
 
         const results = await Promise.all(promises);
         results.sort((a, b) => b.debt - a.debt);
-
         setMarketData(results);
         setLoading(false);
       } catch (err) {
@@ -313,7 +338,7 @@ export default function Markets() {
     fetchAllData();
   }, []);
 
-  // --- Chart Data Fetching (USDC History) ---
+  // --- Chart Data Fetching ---
   const getHistoryUrl = (symbol) => {
     return `${API_BASE}/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   };
@@ -327,13 +352,12 @@ export default function Markets() {
     return `${API_BASE}/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   }, fetcher);
 
-  // Merge Data for Chart
+  // Merge Chart Data
   const chartData = useMemo(() => {
     if (!usdcHistory || usdcHistory.length === 0) return [];
 
-    // Define bucket size based on resolution
     const getBucket = (ts) => {
-      let seconds = 3600; // Default 1H
+      let seconds = 3600;
       if (resolution === "4H") seconds = 14400;
       if (resolution === "1D") seconds = 86400;
       if (resolution === "1W") seconds = 604800;
@@ -341,32 +365,20 @@ export default function Markets() {
     };
 
     const merged = new Map();
-
     const mergePoint = (ts, key, val) => {
       const bucket = getBucket(ts);
-      if (!merged.has(bucket)) {
-        merged.set(bucket, { timestamp: bucket });
-      }
-      const point = merged.get(bucket);
-      point[key] = val;
+      if (!merged.has(bucket)) merged.set(bucket, { timestamp: bucket });
+      merged.get(bucket)[key] = val;
     };
 
-    // 1. USDC
     usdcHistory.forEach((r) => mergePoint(r.timestamp, "apy_usdc", r.apy));
-
-    // 2. DAI
     if (daiHistory)
       daiHistory.forEach((r) => mergePoint(r.timestamp, "apy_dai", r.apy));
-
-    // 3. USDT
     if (usdtHistory)
       usdtHistory.forEach((r) => mergePoint(r.timestamp, "apy_usdt", r.apy));
-
-    // 4. SOFR (Risk Free Rate)
     if (sofrHistory)
       sofrHistory.forEach((r) => mergePoint(r.timestamp, "apy_sofr", r.apy));
 
-    // 5. ETH Price
     if (ethPrices) {
       ethPrices.forEach((p) => mergePoint(p.timestamp, "ethPrice", p.price));
     } else {
@@ -379,7 +391,7 @@ export default function Markets() {
       (a, b) => a.timestamp - b.timestamp,
     );
 
-    // Forward Fill SOFR (and potentially others) to ensure continuous lines/tooltips on weekends
+    // Forward fill SOFR for weekends
     let lastSofr = null;
     return sortedData.map((point) => {
       if (point.apy_sofr !== undefined && point.apy_sofr !== null) {
@@ -398,21 +410,19 @@ export default function Markets() {
     resolution,
   ]);
 
+  // --- Stats ---
   const stats = useMemo(() => {
     const totalDebt = marketData.reduce((acc, curr) => acc + curr.debt, 0);
-
     const weightedSum = marketData.reduce(
       (acc, curr) => acc + curr.apy * curr.debt,
       0,
     );
     const avgApy = totalDebt > 0 ? weightedSum / totalDebt : 0;
-
     const topMarket = marketData.reduce(
       (prev, current) => (prev.debt > current.debt ? prev : current),
       { symbol: "-", debt: 0 },
     );
     const dominance = totalDebt > 0 ? (topMarket.debt / totalDebt) * 100 : 0;
-
     return { totalDebt, avgApy, topMarket, dominance };
   }, [marketData]);
 
@@ -426,64 +436,76 @@ export default function Markets() {
     }).format(value);
   };
 
-  // --- Legend / Series State ---
-  const [hiddenSeries, setHiddenSeries] = useState(new Set());
+  // --- SVG Download ---
+  const handleDownloadSVG = () => {
+    const svg = document.querySelector("#markets-chart-container svg");
+    if (!svg) return;
 
-  const SERIES_CONFIG = [
-    {
-      key: "apy_usdc",
-      label: "USDC_Rate",
-      name: "USDC Rate",
-      color: "#22d3ee",
-      bg: "bg-cyan-400",
-    },
-    {
-      key: "apy_dai",
-      label: "DAI_Rate",
-      name: "DAI Rate",
-      color: "#facc15",
-      bg: "bg-yellow-400",
-    },
-    {
-      key: "apy_usdt",
-      label: "USDT_Rate",
-      name: "USDT Rate",
-      color: "#4ade80",
-      bg: "bg-green-400",
-    },
-    {
-      key: "apy_sofr",
-      label: "SOFR_Rate",
-      name: "SOFR (Risk Free)",
-      color: "#c084fc",
-      bg: "bg-purple-400",
-    },
-    {
-      key: "ethPrice",
-      label: "ETH_Price",
-      name: "ETH Price",
-      color: "#a1a1aa",
-      bg: "bg-zinc-400",
-      yAxisId: "right",
-    },
-  ];
+    const rect = svg.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    const legendHeight = 40;
+    const fontStyle =
+      "font-family: monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;";
 
-  const toggleSeries = (key) => {
-    const next = new Set(hiddenSeries);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setHiddenSeries(next);
+    let legendContent = "";
+    let currentX = 20;
+
+    SERIES_CONFIG.forEach((series) => {
+      if (hiddenSeries.has(series.key)) return;
+      legendContent += `<rect x="${currentX}" y="0" width="10" height="10" fill="${series.color}" />`;
+      const labelWidth = series.label.length * 8;
+      legendContent += `<text x="${currentX + 16}" y="9" fill="#000000" style="${fontStyle}">${series.label}</text>`;
+      currentX += 16 + labelWidth + 20;
+    });
+
+    const serializer = new XMLSerializer();
+    let sourceChart = serializer.serializeToString(svg);
+
+    if (
+      !sourceChart.match(/^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/)
+    ) {
+      sourceChart = sourceChart.replace(
+        /^<svg/,
+        '<svg xmlns="http://www.w3.org/2000/svg"',
+      );
+    }
+
+    const finalSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height + legendHeight}" viewBox="0 0 ${width} ${height + legendHeight}">
+        <defs>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&amp;display=swap');
+            text { font-family: monospace !important; fill: #000000 !important; }
+            .recharts-cartesian-grid line { stroke: #e5e5e5 !important; }
+            .recharts-cartesian-axis-line { stroke: #000000 !important; }
+            .recharts-cartesian-axis-tick-line { stroke: #000000 !important; }
+          </style>
+        </defs>
+        <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+        <g transform="translate(0, 15)">${legendContent}</g>
+        <g transform="translate(0, ${legendHeight})">${sourceChart}</g>
+      </svg>
+    `;
+
+    const url =
+      "data:image/svg+xml;charset=utf-8," + encodeURIComponent(finalSvg);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rate-dashboard-chart-${new Date().toISOString().split("T")[0]}.svg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
-  const activeAreas = useMemo(() => {
-    return SERIES_CONFIG.filter((s) => !hiddenSeries.has(s.key)).map((s) => ({
-      key: s.key,
-      name: s.name,
-      color: s.color,
-      yAxisId: s.yAxisId,
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hiddenSeries]);
+  // --- TIMEFRAME CONFIG (no ALL for Markets) ---
+  const marketTimeframes = [
+    { l: "1D", d: 1 },
+    { l: "1W", d: 7 },
+    { l: "1M", d: 30 },
+    { l: "3M", d: 90 },
+    { l: "1Y", d: 365 },
+  ];
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono selection:bg-pink-500/30">
@@ -529,96 +551,8 @@ export default function Markets() {
         </div>
 
         {/* CONTROLS */}
-        <div className="order-last md:order-none border-y border-white/10 grid grid-cols-2 md:grid-cols-3">
-          <ControlCell
-            label="TIMEFRAME"
-            className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4"
-          >
-            {/* Mobile Dropdown */}
-            <MobileDropdown
-              value={activeRange}
-              options={[
-                { label: "1D", value: { d: 1, l: "1D" } },
-                { label: "1W", value: { d: 7, l: "1W" } },
-                { label: "1M", value: { d: 30, l: "1M" } },
-                { label: "3M", value: { d: 90, l: "3M" } },
-                { label: "1Y", value: { d: 365, l: "1Y" } },
-              ].map((o) => ({ label: o.label, value: o.value }))}
-              onChange={(v) => handleQuickRange(v.d, v.l)}
-            />
+        <ChartControlBar controls={controls} timeframes={marketTimeframes} />
 
-            {/* Desktop Buttons */}
-            <div className="hidden md:flex flex-wrap w-full gap-0">
-              {[
-                { l: "1D", d: 1 },
-                { l: "1W", d: 7 },
-                { l: "1M", d: 30 },
-                { l: "3M", d: 90 },
-                { l: "1Y", d: 365 },
-              ].map((btn) => (
-                <SettingsButton
-                  key={btn.l}
-                  onClick={() => handleQuickRange(btn.d, btn.l)}
-                  isActive={activeRange === btn.l}
-                  className="flex-1"
-                >
-                  {btn.l}
-                </SettingsButton>
-              ))}
-            </div>
-          </ControlCell>
-          <ControlCell label="RESOLUTION" className="pl-4 md:pl-4">
-            {/* Mobile Dropdown */}
-            <MobileDropdown
-              value={resolution}
-              options={["1H", "4H", "1D", "1W"].map((r) => ({
-                label: r,
-                value: r,
-              }))}
-              onChange={(v) => setResolution(v)}
-            />
-
-            {/* Desktop Buttons */}
-            <div className="hidden md:flex flex-wrap w-full gap-0">
-              {["1H", "4H", "1D", "1W"].map((res) => (
-                <SettingsButton
-                  key={res}
-                  onClick={() => setResolution(res)}
-                  isActive={resolution === res}
-                  className="flex-1"
-                >
-                  {res}
-                </SettingsButton>
-              ))}
-            </div>
-          </ControlCell>
-          <ControlCell label="CUSTOM_RANGE" className="pr-0 hidden md:flex">
-            <div className="flex items-center justify-between h-[30px] w-full gap-2">
-              <input
-                type="date"
-                value={tempStart}
-                onChange={(e) => setTempStart(e.target.value)}
-                className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-[38%] py-1 rounded-none"
-              />
-              <span className="text-gray-600 text-xs">-</span>
-              <input
-                type="date"
-                value={tempEnd}
-                onChange={(e) => setTempEnd(e.target.value)}
-                className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-[38%] py-1 rounded-none"
-              />
-              <SettingsButton
-                onClick={handleApplyDate}
-                className="px-3 h-full flex items-center"
-              >
-                SET
-              </SettingsButton>
-            </div>
-          </ControlCell>
-        </div>
-
-        {/* CHART SECTION */}
-        {/* CHART SECTION */}
         {/* CHART SECTION */}
         <div className="mb-6">
           <div className="p-4 pl-0 pr-0">
@@ -644,96 +578,7 @@ export default function Markets() {
 
               {/* Download Button */}
               <button
-                onClick={() => {
-                  const svg = document.querySelector(
-                    "#markets-chart-container svg",
-                  );
-                  if (!svg) return;
-
-                  // 1. Get Setup
-                  const rect = svg.getBoundingClientRect();
-                  const width = rect.width;
-                  const height = rect.height;
-                  const legendHeight = 40;
-                  const fontStyle =
-                    "font-family: monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;";
-
-                  // 2. Build Legend SVG
-                  let legendContent = "";
-                  let currentX = 20;
-
-                  SERIES_CONFIG.forEach((series) => {
-                    if (hiddenSeries.has(series.key)) return;
-
-                    // Box
-                    legendContent += `<rect x="${currentX}" y="0" width="10" height="10" fill="${series.color}" />`;
-
-                    // Text
-                    // Approx width calc: 7px per char
-                    const labelWidth = series.label.length * 8;
-                    legendContent += `<text x="${
-                      currentX + 16
-                    }" y="9" fill="#000000" style="${fontStyle}">${
-                      series.label
-                    }</text>`;
-
-                    currentX += 16 + labelWidth + 20;
-                  });
-
-                  // 3. Serialize & Combine
-                  const serializer = new XMLSerializer();
-                  let sourceChart = serializer.serializeToString(svg);
-
-                  // Ensure xmlns
-                  if (
-                    !sourceChart.match(
-                      /^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/,
-                    )
-                  ) {
-                    sourceChart = sourceChart.replace(
-                      /^<svg/,
-                      '<svg xmlns="http://www.w3.org/2000/svg"',
-                    );
-                  }
-
-                  const finalSvg = `
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
-                                          height + legendHeight
-                                        }" viewBox="0 0 ${width} ${height + legendHeight}">
-                                            <defs>
-                                                <style>
-                                                    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&amp;display=swap');
-                                                    text { font-family: monospace !important; fill: #000000 !important; }
-                                                    .recharts-cartesian-grid line { stroke: #e5e5e5 !important; }
-                                                    .recharts-cartesian-axis-line { stroke: #000000 !important; }
-                                                    .recharts-cartesian-axis-tick-line { stroke: #000000 !important; }
-                                                </style>
-                                            </defs>
-                                            <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
-                                            
-                                            <g transform="translate(0, 15)">
-                                                ${legendContent}
-                                            </g>
-                                            
-                                            <g transform="translate(0, ${legendHeight})">
-                                                ${sourceChart}
-                                            </g>
-                                        </svg>
-                                    `;
-
-                  // 4. Download
-                  const url =
-                    "data:image/svg+xml;charset=utf-8," +
-                    encodeURIComponent(finalSvg);
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download = `rate-dashboard-chart-${
-                    new Date().toISOString().split("T")[0]
-                  }.svg`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
+                onClick={handleDownloadSVG}
                 className="hidden md:flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
               >
                 <Download size={14} /> SVG
@@ -758,8 +603,6 @@ export default function Markets() {
             </div>
           </div>
         </div>
-
-        {/* TABLE HEADER */}
 
         {/* FILTERS */}
         <div className="mb-6 border-y border-white/10 grid grid-cols-2 md:grid-cols-2">
@@ -887,7 +730,7 @@ export default function Markets() {
               </tbody>
             </table>
 
-            {/* Empty State / Footer */}
+            {/* Footer */}
             {!loading && marketData.length > 0 && (
               <div className="p-4 border-t border-white/5 bg-[#0d0d0d] flex justify-between items-center text-[10px] uppercase tracking-widest text-gray-600">
                 <span>Showing {marketData.length} Assets</span>
@@ -899,19 +742,6 @@ export default function Markets() {
           </div>
         </div>
       </main>
-    </div>
-  );
-}
-
-function ControlCell({ label, children, className = "" }) {
-  return (
-    <div className={`p-4 flex flex-col gap-3 ${className}`}>
-      <span className="text-[11px] text-gray-500 uppercase tracking-[0.2em] font-bold">
-        {label}
-      </span>
-      <div className="flex items-center w-full flex-wrap gap-y-2">
-        {children}
-      </div>
     </div>
   );
 }

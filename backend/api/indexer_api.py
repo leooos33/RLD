@@ -349,6 +349,129 @@ async def get_price_chart(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/volume")
+async def get_volume(
+    hours: int = Query(24, le=168, description="Hours lookback for volume"),
+):
+    """Get trade volume aggregated from Swap events."""
+    try:
+        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+
+        # Get latest timestamp
+        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+        max_ts = c.fetchone()[0]
+        if not max_ts:
+            return {"volume_24h": 0, "swap_count": 0, "volume_formatted": "$0"}
+
+        cutoff = max_ts - (hours * 3600)
+
+        c.execute('''
+            SELECT COUNT(*),
+                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
+            FROM events
+            WHERE event_name='Swap' AND timestamp >= ?
+        ''', (cutoff,))
+        count, vol_raw = c.fetchone()
+        conn.close()
+
+        vol_raw = vol_raw or 0
+        vol_usd = vol_raw / 1e6
+
+        # Format nicely
+        if vol_usd >= 1e9:
+            formatted = f"${vol_usd / 1e9:.2f}B"
+        elif vol_usd >= 1e6:
+            formatted = f"${vol_usd / 1e6:.2f}M"
+        elif vol_usd >= 1e3:
+            formatted = f"${vol_usd / 1e3:.0f}K"
+        else:
+            formatted = f"${vol_usd:,.0f}"
+
+        return {
+            "volume_usd": vol_usd,
+            "swap_count": count or 0,
+            "volume_formatted": formatted,
+            "hours": hours,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market-info")
+async def get_market_info(request: Request):
+    """Get on-chain market config, token names, and risk parameters."""
+    try:
+        market_config = getattr(request.app.state, "market_config", None)
+        if not market_config:
+            raise HTTPException(status_code=503, detail="Market config not available")
+
+        rpc_url = market_config.get("rpc_url", os.environ.get("RPC_URL", "http://host.docker.internal:8545"))
+        rld_core = market_config.get("rld_core", "0xaE7b7A1c6C4d859e19301ccAc2C6eD28A4C51288")
+        market_id = market_config.get("market_id", "0x660a01c4bdc81dcbc5845841998ef85fac39414b465dc91c77330463bc5b1a92")
+        col_token = market_config.get("collateral_token", "0x91c8C745fd156d8624677aa924Cdc1Ef8173C69C")
+        pos_token = market_config.get("position_token", "0x699BF0931001f6cc804942C6C998d9E4dC95cB28")
+
+        import urllib.request as urlreq
+
+        def eth_call(to: str, data: str) -> str:
+            payload = json.dumps({
+                "jsonrpc": "2.0", "method": "eth_call", "id": 1,
+                "params": [{"to": to, "data": data}, "latest"]
+            }).encode()
+            req = urlreq.Request(rpc_url, data=payload,
+                                 headers={"Content-Type": "application/json"})
+            with urlreq.urlopen(req, timeout=5) as resp:
+                return json.loads(resp.read())["result"]
+
+        def decode_string(hex_data: str) -> str:
+            raw = bytes.fromhex(hex_data.replace("0x", ""))
+            offset = int.from_bytes(raw[0:32], "big")
+            length = int.from_bytes(raw[offset:offset+32], "big")
+            return raw[offset+32:offset+32+length].decode("utf-8")
+
+        def decode_uint(hex_data: str, slot: int) -> int:
+            raw = bytes.fromhex(hex_data.replace("0x", ""))
+            return int.from_bytes(raw[slot*32:(slot+1)*32], "big")
+
+        # Token name/symbol: name()=0x06fdde03, symbol()=0x95d89b41
+        col_name = decode_string(eth_call(col_token, "0x06fdde03"))
+        col_symbol = decode_string(eth_call(col_token, "0x95d89b41"))
+        pos_name = decode_string(eth_call(pos_token, "0x06fdde03"))
+        pos_symbol = decode_string(eth_call(pos_token, "0x95d89b41"))
+
+        # getMarketConfig(bytes32) selector = 0x6a6ae218
+        selector = "0x6a6ae218"
+        padded_id = market_id.replace("0x", "").zfill(64)
+        config_data = eth_call(rld_core, selector + padded_id)
+
+        # MarketConfig: uint64, uint64, uint64, uint32, uint128, bytes32, address
+        min_col_ratio = decode_uint(config_data, 0)
+        maintenance_margin = decode_uint(config_data, 1)
+        liq_close_factor = decode_uint(config_data, 2)
+        funding_period = decode_uint(config_data, 3)
+        debt_cap = decode_uint(config_data, 4)
+
+        return {
+            "collateral": {"name": col_name, "symbol": col_symbol, "address": col_token},
+            "position_token": {"name": pos_name, "symbol": pos_symbol, "address": pos_token},
+            "risk_params": {
+                "min_col_ratio": min_col_ratio / 1e18,
+                "min_col_ratio_pct": f"{min_col_ratio / 1e16:.0f}%",
+                "maintenance_margin": maintenance_margin / 1e18,
+                "maintenance_margin_pct": f"{maintenance_margin / 1e16:.0f}%",
+                "liq_close_factor": liq_close_factor / 1e18,
+                "liq_close_factor_pct": f"{liq_close_factor / 1e16:.0f}%",
+                "funding_period_sec": funding_period,
+                "funding_period_days": funding_period / 86400,
+                "debt_cap": debt_cap,
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

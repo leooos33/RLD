@@ -200,7 +200,7 @@ const LandingPage = () => {
               </p>
             </div>
 
-            <FooterList title="Protocol" items={["Whitepaper", "Research "]} />
+            <FooterList title="Protocol" items={["Whitepaper"]} />
             <FooterList
               title="Interface"
               items={["Terminal", "Analytics", "Documentation", "Status"]}

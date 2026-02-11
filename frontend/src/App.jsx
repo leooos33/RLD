@@ -1,38 +1,32 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { Link } from "react-router-dom";
 import useSWR from "swr";
 import axios from "axios";
 import {
   Terminal,
   Power,
   Activity,
-  Wallet,
   ExternalLink,
   RefreshCw,
   Clock,
   TrendingUp,
   TrendingDown,
   FileDown,
-  ChevronDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 
 import { useWallet } from "./context/WalletContext";
-import Header from "./components/Header";
 import TradingTerminal, {
   InputGroup,
   SummaryRow,
 } from "./components/TradingTerminal";
 import SettingsButton from "./components/SettingsButton";
-import MobileDropdown from "./components/MobileDropdown";
-import { API_BASE, authHeaders, fetcher } from "./utils/helpers";
+import ControlCell from "./components/ControlCell";
+import StatItem from "./components/StatItem";
+import ChartControlBar from "./components/ChartControlBar";
+import { useChartControls } from "./hooks/useChartControls";
+import { API_BASE, authHeaders, fetcher, getToday } from "./utils/helpers";
 
-const getPastDate = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
-};
-const getToday = () => new Date().toISOString().split("T")[0];
+// --- HELPERS ---
 
 const formatTwarLabel = (seconds) => {
   if (!seconds) return "RATE_TWAR_OFF";
@@ -61,17 +55,39 @@ const calculateCorrelation = (x, y) => {
   return numerator / denominator;
 };
 
-// --- APP COMPONENT ---
+function MetricBox({ label, value, sub, dimmed }) {
+  return (
+    <div
+      className={`p-6 flex flex-col justify-between h-full min-h-[180px] ${
+        dimmed ? "opacity-30" : ""
+      }`}
+    >
+      <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+        {label} <Terminal size={15} className="opacity-90" />
+      </div>
+      <div>
+        <div className="text-3xl font-light text-white mb-2 tracking-tight">
+          {value}
+          <span className="text-sm text-gray-600 ml-1">%</span>
+        </div>
+        <div className="text-[12px] text-gray-500 uppercase tracking-widest">
+          {sub}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // --- APP COMPONENT ---
+
 function App() {
-  // Data State
-  const [tempStart, setTempStart] = useState(getPastDate(9999));
-  const [tempEnd, setTempEnd] = useState(getToday());
-  const [appliedStart, setAppliedStart] = useState(getPastDate(9999));
-  const [appliedEnd, setAppliedEnd] = useState(getToday());
-  const [activeRange, setActiveRange] = useState("ALL");
-  const [resolution, setResolution] = useState("1D");
+  // Shared chart controls
+  const controls = useChartControls({
+    defaultRange: "ALL",
+    defaultDays: 9999,
+    defaultResolution: "1D",
+  });
+  const { appliedStart, appliedEnd, activeRange, resolution } = controls;
 
   // Analysis State
   const [showTwar, setShowTwar] = useState(true);
@@ -87,9 +103,9 @@ function App() {
   // PnL Simulation State
   const [simTargetRate, setSimTargetRate] = useState(null);
 
-  // --- VISIBILITY STATE ---
+  // Visibility State
   const [hiddenSeries, setHiddenSeries] = useState([]);
-  const [visibleChartData, setVisibleChartData] = useState([]); // Zoomed data from chart
+  const [visibleChartData, setVisibleChartData] = useState([]);
 
   const toggleSeries = (key) => {
     setHiddenSeries((prev) =>
@@ -97,33 +113,9 @@ function App() {
     );
   };
 
-  // --- ACTIONS ---
-  const handleApplyDate = () => {
-    setAppliedStart(tempStart);
-    setAppliedEnd(tempEnd);
-    setActiveRange("CUSTOM");
-  };
-
   const handleApplyTwar = () => setTwarWindow(tempTwarInput);
 
-  const handleQuickRange = (days, label) => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - days);
-    if (days <= 3)
-      setResolution("1H"); // 24H - 3D -> 1H
-    else if (days <= 14)
-      setResolution("1H"); // 1W - 2W -> 1H (High Res)
-    else if (days <= 90)
-      setResolution("4H"); // 1M - 3M -> 4H (Medium Res)
-    else setResolution("1D"); // 1Y - ALL -> 1D (Low Res)
-    setTempStart(start.toISOString().split("T")[0]);
-    setTempEnd(end.toISOString().split("T")[0]);
-    setAppliedStart(start.toISOString().split("T")[0]);
-    setAppliedEnd(end.toISOString().split("T")[0]);
-    setActiveRange(label);
-  };
-
+  // --- API URLs ---
   const getUrl = () => {
     let url = `${API_BASE}/rates?resolution=${resolution}`;
     if (appliedStart) url += `&start_date=${appliedStart}`;
@@ -131,9 +123,16 @@ function App() {
     return url;
   };
 
+  const getEthUrl = () => {
+    let url = `${API_BASE}/eth-prices?resolution=${resolution}`;
+    if (appliedStart) url += `&start_date=${appliedStart}`;
+    if (appliedEnd) url += `&end_date=${appliedEnd}`;
+    return url;
+  };
+
+  // --- CSV DOWNLOAD ---
   const handleDownloadCSV = async () => {
     try {
-      // Fetch full history (approx 45k hours since 2021). Limit to 100k safe.
       const url = `${API_BASE}/rates?resolution=1H&limit=100000`;
       const res = await axios.get(url, { headers: authHeaders });
       const data = res.data;
@@ -146,14 +145,12 @@ function App() {
       const headers =
         "Timestamp,Date (UTC),APY (%),RATE_TWAR (%),ETH Price ($)\n";
 
-      // Calculate TWAR for CSV
       const historyQueue = [];
       let runningArea = 0;
       let runningTime = 0;
 
       const rows = data
         .map((row, i) => {
-          // TWAR Logic
           const prevTs = i > 0 ? data[i - 1].timestamp : row.timestamp;
           let dt = row.timestamp - prevTs;
           if (dt < 0) dt = 0;
@@ -180,9 +177,7 @@ function App() {
             .replace("T", " ")
             .replace("Z", "");
           const price = row.eth_price ? row.eth_price.toFixed(2) : "";
-          return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(
-            4,
-          )},${price}`;
+          return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(4)},${price}`;
         })
         .join("\n");
 
@@ -206,40 +201,30 @@ function App() {
     }
   };
 
-  // Fetch Rates
+  // --- DATA FETCHING ---
   const { data: rates, error } = useSWR(getUrl(), fetcher, {
     refreshInterval: 10000,
   });
 
-  // --- SYNC DATE INPUTS WITH ACTUAL DATA ---
+  // Sync date inputs with actual data
   useEffect(() => {
     if (activeRange !== "CUSTOM" && rates && rates.length > 0) {
       const firstTs = rates[0].timestamp;
       const lastTs = rates[rates.length - 1].timestamp;
-
       const startStr = new Date(firstTs * 1000).toISOString().split("T")[0];
       const endStr = new Date(lastTs * 1000).toISOString().split("T")[0];
-
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTempStart(startStr);
-      setTempEnd(endStr);
+      controls.setTempStart(startStr);
+      controls.setTempEnd(endStr);
     }
-  }, [rates, activeRange]);
+  }, [rates, activeRange, controls]);
 
-  // Fetch ETH Prices
-  const getEthUrl = () => {
-    let url = `${API_BASE}/eth-prices?resolution=${resolution}`;
-    if (appliedStart) url += `&start_date=${appliedStart}`;
-    if (appliedEnd) url += `&end_date=${appliedEnd}`;
-    return url;
-  };
   const { data: ethPrices } = useSWR(getEthUrl(), fetcher);
 
-  // Calculations
+  // --- DATA PROCESSING ---
   const processedData = useMemo(() => {
     if (!rates || rates.length === 0) return [];
 
-    // ETH Price Map
     const priceMap = new Map();
     if (ethPrices && ethPrices.length > 0) {
       ethPrices.forEach((p) => priceMap.set(p.timestamp, p.price));
@@ -250,9 +235,6 @@ function App() {
     let runningArea = 0;
     let runningTime = 0;
 
-    // Determine bucket size for matching
-    // If RAW, we match to the nearest hour (3600)
-    // If others, we match to that resolution
     const bucketSize =
       resolution === "1W"
         ? 604800
@@ -264,8 +246,6 @@ function App() {
 
     for (let i = 0; i < rates.length; i++) {
       const current = rates[i];
-
-      // --- TWAR Logic ---
       const prevTs = i > 0 ? rates[i - 1].timestamp : current.timestamp;
       let dt = current.timestamp - prevTs;
       if (dt < 0) dt = 0;
@@ -274,11 +254,7 @@ function App() {
         current.apy !== null && current.apy !== undefined ? current.apy : 0;
       const stepArea = apy * dt;
 
-      historyQueue.push({
-        dt: dt,
-        area: stepArea,
-        timestamp: current.timestamp,
-      });
+      historyQueue.push({ dt, area: stepArea, timestamp: current.timestamp });
       runningArea += stepArea;
       runningTime += dt;
 
@@ -293,14 +269,9 @@ function App() {
       let twarValue = runningTime > 0 ? runningArea / runningTime : apy;
       twarValue = Math.max(0, twarValue);
 
-      // Lookup Price (Loose Matching)
-      // 1. Check if backend already provided it (Aggregated Mode)
       let price = current.eth_price;
-
       if (price === undefined || price === null) {
-        // 2. Fallback: Client-side Map Lookup
         price = priceMap.get(current.timestamp);
-
         if (price === undefined) {
           const bucketTs =
             Math.floor(current.timestamp / bucketSize) * bucketSize;
@@ -308,11 +279,7 @@ function App() {
         }
       }
 
-      result.push({
-        ...current,
-        twar: twarValue,
-        ethPrice: price || null,
-      });
+      result.push({ ...current, twar: twarValue, ethPrice: price || null });
     }
     return result;
   }, [rates, ethPrices, twarWindow, resolution]);
@@ -332,16 +299,12 @@ function App() {
     };
   }, [rates]);
 
-  // 24H Change Calculation
   const dailyChange = useMemo(() => {
     if (!rates || rates.length < 2) return 0;
-    const oneDaySeconds = 86400;
     const latestTs = rates[rates.length - 1].timestamp;
-    const targetTs = latestTs - oneDaySeconds;
-
+    const targetTs = latestTs - 86400;
     let closest = rates[0];
     let minDiff = Math.abs(closest.timestamp - targetTs);
-
     for (let i = 1; i < rates.length; i++) {
       const diff = Math.abs(rates[i].timestamp - targetTs);
       if (diff < minDiff) {
@@ -352,29 +315,21 @@ function App() {
     return rates[rates.length - 1].apy - closest.apy;
   }, [rates]);
 
-  // Downsample data for rendering performance
-  // Recharts crashes with >3-5k points (SVG overload).
-  // We limit to ~2000 visual points.
   const chartData = useMemo(() => {
     if (processedData.length <= 2000) return processedData;
-
     const step = Math.ceil(processedData.length / 2000);
     return processedData.filter((_, i) => i % step === 0);
   }, [processedData]);
 
-  // const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
   const latest =
     rates && rates.length > 0
       ? rates[rates.length - 1]
       : { apy: 0, block_number: 0, timestamp: 0 };
-  const _latestTwar =
-    processedData.length > 0 ? processedData[processedData.length - 1].twar : 0;
 
   // --- TRADING CALCULATIONS ---
   const currentRate = latest.apy;
 
   let _leverage, liqRate, notional;
-
   if (tradeSide === "LONG") {
     _leverage = 1;
     notional = collateral;
@@ -417,6 +372,17 @@ function App() {
   };
 
   const simPnL = calculateSimPnL();
+
+  // --- CORRELATION ---
+  const correlationData = useMemo(() => {
+    const source =
+      visibleChartData.length > 0 ? visibleChartData : processedData;
+    if (source.length === 0) return { value: 0, positive: true };
+    const apys = source.map((d) => d.apy || 0);
+    const prices = source.map((d) => d.ethPrice || 0);
+    const corr = calculateCorrelation(apys, prices);
+    return { value: corr, positive: corr > 0 };
+  }, [visibleChartData, processedData]);
 
   // --- RENDER ---
   if (error)
@@ -470,7 +436,7 @@ function App() {
               <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
                 {/* CARD 1: CURRENT SPOT + 24H CHANGE */}
                 <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                  {/* MOBILE LAYOUT (Grid Row) */}
+                  {/* MOBILE */}
                   <div className="md:hidden h-full flex flex-col justify-between">
                     <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
                       CURRENT_SPOT <Terminal size={15} className="opacity-90" />
@@ -496,7 +462,7 @@ function App() {
                     </div>
                   </div>
 
-                  {/* DESKTOP LAYOUT (Original MetricBox Content) */}
+                  {/* DESKTOP */}
                   <div className="hidden md:flex flex-col justify-between h-full">
                     <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
                       CURRENT_SPOT <Terminal size={15} className="opacity-90" />
@@ -532,22 +498,18 @@ function App() {
                   <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
                     PERIOD_STATS <Activity size={15} className="opacity-90" />
                   </div>
-
-                  {/* MOBILE: Range & Volatility Only (Row Layout like Funding Rate) */}
+                  {/* MOBILE */}
                   <div className="md:hidden grid grid-cols-2 gap-x-4 mt-auto">
                     <StatItem
                       label="RANGE[MIN - MAX]"
-                      value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(
-                        2,
-                      )}`}
+                      value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(2)}`}
                     />
                     <StatItem
                       label="VOLATILITY"
                       value={`±${stats.vol.toFixed(2)}%`}
                     />
                   </div>
-
-                  {/* DESKTOP: Full Grid */}
+                  {/* DESKTOP */}
                   <div className="hidden md:grid grid-cols-2 gap-y-6 gap-x-4">
                     <StatItem
                       label="MIN_RATE"
@@ -568,7 +530,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* CARD 3: FUNDING_RATE (Daily/Yearly) */}
+                {/* CARD 3: FUNDING_RATE */}
                 <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
                   <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
                     FUNDING_RATE <Clock size={15} className="opacity-90" />
@@ -588,127 +550,43 @@ function App() {
             </div>
 
             {/* 2. CONTROLS */}
-            <div className="order-last md:order-none border-y border-white/10 grid grid-cols-2 xl:grid-cols-4">
-              <ControlCell
-                label="TIMEFRAME"
-                className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4"
-              >
-                {/* Mobile Dropdown */}
-                <MobileDropdown
-                  value={activeRange}
-                  options={[
-                    { label: "1D", value: { d: 1, l: "1D" } },
-                    { label: "1W", value: { d: 7, l: "1W" } },
-                    { label: "1M", value: { d: 30, l: "1M" } },
-                    { label: "3M", value: { d: 90, l: "3M" } },
-                    { label: "1Y", value: { d: 365, l: "1Y" } },
-                    { label: "ALL", value: { d: 9999, l: "ALL" } },
-                  ].map((o) => ({ label: o.label, value: o.value }))}
-                  onChange={(v) => handleQuickRange(v.d, v.l)}
-                />
-
-                {/* Desktop Buttons */}
-                <div className="hidden md:flex w-full gap-0">
-                  {[
-                    { l: "1D", d: 1 },
-                    { l: "1W", d: 7 },
-                    { l: "1M", d: 30 },
-                    { l: "3M", d: 90 },
-                    { l: "1Y", d: 365 },
-                    { l: "ALL", d: 9999 },
-                  ].map((btn) => (
-                    <SettingsButton
-                      key={btn.l}
-                      onClick={() => handleQuickRange(btn.d, btn.l)}
-                      isActive={activeRange === btn.l}
-                      className="flex-1"
-                    >
-                      {btn.l}
-                    </SettingsButton>
-                  ))}
-                </div>
-              </ControlCell>
-              <ControlCell label="RESOLUTION" className="pl-4 md:pl-4 ">
-                {/* Mobile Dropdown */}
-                <MobileDropdown
-                  value={resolution}
-                  options={["1H", "4H", "1D", "1W"].map((r) => ({
-                    label: r,
-                    value: r,
-                  }))}
-                  onChange={(v) => setResolution(v)}
-                />
-
-                {/* Desktop Buttons */}
-                <div className="hidden md:flex w-full gap-0">
-                  {["1H", "4H", "1D", "1W"].map((res) => (
-                    <SettingsButton
-                      key={res}
-                      onClick={() => setResolution(res)}
-                      isActive={resolution === res}
-                      className="flex-1"
-                    >
-                      {res}
-                    </SettingsButton>
-                  ))}
-                </div>
-              </ControlCell>
-              <ControlCell label="CUSTOM_RANGE" className="pr-0 hidden md:flex">
-                <div className="flex items-center justify-between h-[30px] w-full gap-2">
-                  <input
-                    type="date"
-                    value={tempStart}
-                    onChange={(e) => setTempStart(e.target.value)}
-                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
-                  />
-                  <span className="text-gray-600 text-xs">-</span>
-                  <input
-                    type="date"
-                    value={tempEnd}
-                    onChange={(e) => setTempEnd(e.target.value)}
-                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
-                  />
-                  <SettingsButton
-                    onClick={handleApplyDate}
-                    className="px-3 h-full flex items-center"
-                  >
-                    SET
-                  </SettingsButton>
-                </div>
-              </ControlCell>
-              <ControlCell
-                label="TWAR_SMOOTHING_[SEC]"
-                className="pr-0 hidden md:flex"
-              >
-                <div className="flex items-center justify-end md:justify-between gap-2 h-[30px] w-full">
-                  <input
-                    type="number"
-                    value={tempTwarInput}
-                    onChange={(e) => setTempTwarInput(Number(e.target.value))}
-                    className="hidden md:block flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                  <SettingsButton
-                    onClick={handleApplyTwar}
-                    className="hidden md:flex px-3 h-full items-center"
-                  >
-                    SET
-                  </SettingsButton>
-                  <SettingsButton
-                    onClick={() => setShowTwar(!showTwar)}
-                    isActive={showTwar}
-                    className="w-full md:w-auto px-3 h-full flex items-center justify-center gap-2"
-                  >
-                    <Power
-                      size={12}
-                      className={showTwar ? "text-black" : "text-gray-600"}
+            <ChartControlBar
+              controls={controls}
+              extraControls={
+                <ControlCell
+                  label="TWAR_SMOOTHING_[SEC]"
+                  className="pr-0 hidden md:flex"
+                >
+                  <div className="flex items-center justify-end md:justify-between gap-2 h-[30px] w-full">
+                    <input
+                      type="number"
+                      value={tempTwarInput}
+                      onChange={(e) => setTempTwarInput(Number(e.target.value))}
+                      className="hidden md:block flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     />
-                    <span className="md:hidden text-[10px] uppercase font-bold tracking-widest">
-                      {showTwar ? "TWAR: ON" : "TWAR: OFF"}
-                    </span>
-                  </SettingsButton>
-                </div>
-              </ControlCell>
-            </div>
+                    <SettingsButton
+                      onClick={handleApplyTwar}
+                      className="hidden md:flex px-3 h-full items-center"
+                    >
+                      SET
+                    </SettingsButton>
+                    <SettingsButton
+                      onClick={() => setShowTwar(!showTwar)}
+                      isActive={showTwar}
+                      className="w-full md:w-auto px-3 h-full flex items-center justify-center gap-2"
+                    >
+                      <Power
+                        size={12}
+                        className={showTwar ? "text-black" : "text-gray-600"}
+                      />
+                      <span className="md:hidden text-[10px] uppercase font-bold tracking-widest">
+                        {showTwar ? "TWAR: ON" : "TWAR: OFF"}
+                      </span>
+                    </SettingsButton>
+                  </div>
+                </ControlCell>
+              }
+            />
 
             {/* 3. CHART */}
             <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
@@ -742,7 +620,6 @@ function App() {
                       </span>
                     </div>
                   )}
-                  {/* ETH Price Legend */}
                   <div
                     className={`flex items-center gap-2 cursor-pointer transition-all ${
                       hiddenSeries.includes("ethPrice")
@@ -756,7 +633,6 @@ function App() {
                       ETH_Price
                     </span>
                   </div>
-                  {/* CSV Download Button */}
                   <button
                     onClick={handleDownloadCSV}
                     className="hidden md:flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
@@ -772,30 +648,15 @@ function App() {
                   </button>
                 </div>
                 <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
-                  {/* Correlation Display */}
                   {processedData.length > 0 && (
                     <span
-                      className={(() => {
-                        const source =
-                          visibleChartData.length > 0
-                            ? visibleChartData
-                            : processedData;
-                        const apys = source.map((d) => d.apy || 0);
-                        const prices = source.map((d) => d.ethPrice || 0);
-                        const corr = calculateCorrelation(apys, prices);
-                        return corr > 0 ? "text-green-500" : "text-red-500";
-                      })()}
+                      className={
+                        correlationData.positive
+                          ? "text-green-500"
+                          : "text-red-500"
+                      }
                     >
-                      CORRELATION:{" "}
-                      {(() => {
-                        const source =
-                          visibleChartData.length > 0
-                            ? visibleChartData
-                            : processedData;
-                        const apys = source.map((d) => d.apy || 0);
-                        const prices = source.map((d) => d.ethPrice || 0);
-                        return calculateCorrelation(apys, prices).toFixed(2);
-                      })()}
+                      CORRELATION: {correlationData.value.toFixed(2)}
                     </span>
                   )}
                 </div>
@@ -1012,54 +873,6 @@ function App() {
               </div>
             </div>
           </TradingTerminal>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- SUB-COMPONENTS ---
-function ControlCell({ label, children, className = "" }) {
-  return (
-    <div className={`p-4 flex flex-col gap-3 ${className}`}>
-      <span className="text-[11px] text-gray-500 uppercase tracking-[0.2em] font-bold">
-        {label}
-      </span>
-      <div className="flex items-center w-full">{children}</div>
-    </div>
-  );
-}
-
-function StatItem({ label, value }) {
-  return (
-    <div>
-      <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">
-        {label}
-      </div>
-      <div className="text-xl font-light text-white font-mono tracking-tighter">
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function MetricBox({ label, value, sub, dimmed }) {
-  return (
-    <div
-      className={`p-6 flex flex-col justify-between h-full min-h-[180px] ${
-        dimmed ? "opacity-30" : ""
-      }`}
-    >
-      <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-        {label} <Terminal size={15} className="opacity-90" />
-      </div>
-      <div>
-        <div className="text-3xl font-light text-white mb-2 tracking-tight">
-          {value}
-          <span className="text-sm text-gray-600 ml-1">%</span>
-        </div>
-        <div className="text-[12px] text-gray-500 uppercase tracking-widest">
-          {sub}
         </div>
       </div>
     </div>

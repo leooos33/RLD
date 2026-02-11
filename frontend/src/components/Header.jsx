@@ -77,6 +77,15 @@ export default function Header({ isCapped, ratesLoaded }) {
               >
                 PORTFOLIO
               </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/sim"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/sim" ? "text-cyan-400 cursor-default" : "text-cyan-700 hover:text-cyan-400 cursor-pointer"}`}
+              >
+                SIM
+              </Link>
             </div>
           </div>
 
@@ -155,6 +164,12 @@ export default function Header({ isCapped, ratesLoaded }) {
                 className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
               >
                 PORTFOLIO
+              </Link>
+              <Link
+                to="/sim"
+                className={`py-2 ${location.pathname === "/sim" ? "text-cyan-400" : "text-cyan-700"}`}
+              >
+                SIM
               </Link>
             </nav>
           </div>
