@@ -107,8 +107,8 @@ docker compose -f docker/docker-compose.frontend.yml up -d --build
 | `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python urllib`  | `deployer` | Indexes simulation blocks + serves API. Auto-resets DB on restart          |
 | `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Market maker: arb trades + oracle updates from live rates                  |
 | `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Random trades for market activity                                          |
-| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl             | —          | Scrapes live Aave V3 rates + ETH prices from mainnet (60s)                 |
-| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl             | —          | Telegram bot: `/status` reports, hourly digests                            |
+| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl             | —          | Indexes Aave V3 rates + ETH price (Uniswap V3 slot0) per block (~12s)      |
+| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl             | —          | Telegram bot: `/status` dashboard, hourly rate+price digests               |
 | `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget             | —          | Multi-stage build: Node 20 → Nginx Alpine (68MB)                           |
 
 ### Service Ordering & Resilience
@@ -130,7 +130,6 @@ All compose-managed containers share the `docker_default` network. Services comm
 | From           | To              | URL                                |
 | -------------- | --------------- | ---------------------------------- |
 | `monitor-bot`  | `rates-indexer` | `http://rates-indexer:8080`        |
-| `monitor-bot`  | `indexer`       | `http://indexer:8080`              |
 | `mm-daemon`    | `rates-indexer` | `http://rates-indexer:8080`        |
 | All containers | Anvil           | `http://host.docker.internal:8545` |
 
@@ -207,11 +206,12 @@ cd frontend && npm run build
 
 ### Rates Indexer (port 8081, proxied at `/api/`)
 
-| Endpoint                         | Description           |
-| -------------------------------- | --------------------- |
-| `GET /`                          | Service status        |
-| `GET /rates?symbol=USDC&limit=N` | Historical spot rates |
-| `GET /eth-prices?limit=N`        | ETH price history     |
+| Endpoint                                 | Description                                  |
+| ---------------------------------------- | -------------------------------------------- |
+| `GET /`                                  | Service status                               |
+| `GET /rates?symbol=USDC&limit=N`         | Historical spot rates (hourly from clean DB) |
+| `GET /eth-prices?limit=N`                | ETH price history (hourly, default)          |
+| `GET /eth-prices?limit=N&resolution=RAW` | ETH price (block-level, ~12s, from raw DB)   |
 
 ---
 
@@ -338,19 +338,19 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 
 ### Troubleshooting
 
-| Symptom                           | Cause                                          | Fix                                                    |
-| --------------------------------- | ---------------------------------------------- | ------------------------------------------------------ |
-| RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin  | Use an unrestricted key in `MAINNET_RPC_URL`           |
-| Port already in use on restart    | Orphaned container from previous run           | `restart.sh` handles this automatically                |
-| Deployer `nonce too low`          | Rapid-fire transactions without receipt wait   | Already fixed in `deploy_all.sh`                       |
-| Containers stuck in `Created`     | Deployer dependency not met                    | Fixed: `depends_on: service_completed_successfully`    |
-| Services start with empty config  | `deployment.json` exists but is `{}`           | Fixed: `wait-for-config.sh` validates `rld_core` key   |
-| Indexer crashes on first attempt  | Contracts not deployed when discovery runs     | Fixed: `entrypoint.py` retries 30× with 10s backoff    |
-| `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer   | Ensure both use same compose or `host.docker.internal` |
-| Dashboard JSON parse error        | `status.json` read mid-write                   | Fixed: atomic writes via `mktemp` + `mv`               |
-| ETH prices not syncing            | `ETH_PRICE_GRAPH_URL` missing from docker/.env | Add the Graph API URL to `docker/.env`                 |
-| Sync age > 5min on dashboard      | `SYNC_INTERVAL` too high in daemon.py          | Set to 60s (current default)                           |
-| Dashboard shows 5/6 services ok   | Stopped deployer counted in health check       | Fixed: stopped/created containers excluded from count  |
+| Symptom                           | Cause                                         | Fix                                                    |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
+| RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin | Use an unrestricted key in `MAINNET_RPC_URL`           |
+| Port already in use on restart    | Orphaned container from previous run          | `restart.sh` handles this automatically                |
+| Deployer `nonce too low`          | Rapid-fire transactions without receipt wait  | Already fixed in `deploy_all.sh`                       |
+| Containers stuck in `Created`     | Deployer dependency not met                   | Fixed: `depends_on: service_completed_successfully`    |
+| Services start with empty config  | `deployment.json` exists but is `{}`          | Fixed: `wait-for-config.sh` validates `rld_core` key   |
+| Indexer crashes on first attempt  | Contracts not deployed when discovery runs    | Fixed: `entrypoint.py` retries 30× with 10s backoff    |
+| `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer  | Ensure both use same compose or `host.docker.internal` |
+| Dashboard JSON parse error        | `status.json` read mid-write                  | Fixed: atomic writes via `mktemp` + `mv`               |
+| ETH price stale by ~1 hour        | Using `1H` resolution instead of `RAW`        | Use `/eth-prices?resolution=RAW` for live price        |
+| Sync age > 5min on dashboard      | `SYNC_INTERVAL` too high in daemon.py         | Set to 60s (current default)                           |
+| Dashboard shows 5/6 services ok   | Stopped deployer counted in health check      | Fixed: stopped/created containers excluded from count  |
 
 ---
 
@@ -469,13 +469,15 @@ Logs are rotated automatically after 7 days.
 
 ### ETH Price Sync
 
-The rates-indexer daemon fetches ETH/USDC prices from The Graph's Uniswap V3 subgraph (`poolHourDatas`) every 60 seconds.
+The rates-indexer daemon fetches ETH/USDC prices **on-chain** via the Uniswap V3 `slot0()` function at every block (~12s), alongside Aave V3 rate calls.
 
 ```
-The Graph API → aave_rates.db (eth_prices table) → sync_clean_db.py → clean_rates.db (hourly_stats)
+Uniswap V3 slot0() ──► aave_rates.db (eth_prices) ──► sync_clean_db.py ──► clean_rates.db (hourly_stats)
+     (per block, ~12s)          (block-level)              (AVG per hour)         (hourly aggregated)
 ```
 
-- **Source:** Uniswap V3 USDC/ETH 0.05% pool (`0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640`)
-- **Sync interval:** 60s (`SYNC_INTERVAL` in `daemon.py`)
-- **Backfill:** If data gaps are detected, fetch from The Graph API — never use interpolation for financial data
-- **Corrupt row filter:** Rows where `price NOT BETWEEN 100 AND 100000` are excluded during sync
+- **Primary source:** Uniswap V3 USDC/ETH 0.05% pool `slot0()` — real-time `sqrtPriceX96` at each block
+- **Conversion:** `ETH_USD = 10¹² / (sqrtPriceX96² / 2¹⁹²)` (adjusts for USDC 6 / WETH 18 decimals)
+- **Gap repair:** The Graph `poolHourDatas` query backfills missing data after crashes (startup only)
+- **API resolutions:** `RAW` = block-level from `aave_rates.db`, `1H/4H/1D` = aggregated from `clean_rates.db`
+- **Bot display:** Uses `RAW` resolution for live price, `1H` for 24h trend calculation
