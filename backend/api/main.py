@@ -159,6 +159,14 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+RAW_DB_PATH = os.path.join(DB_DIR, "aave_rates.db")
+
+def get_raw_db_connection():
+    """Connect to the raw aave_rates.db for block-level data."""
+    conn = sqlite3.connect(f'file:{RAW_DB_PATH}?mode=ro', uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 # --- Web3 Setup (For Deployment) ---
 w3 = None
 account = None
@@ -1069,7 +1077,7 @@ def get_eth_prices(
     limit: int = 50000,
     start_date: str = Query(None),
     end_date: str = Query(None),
-    resolution: str = Query("1H", description="1H, 4H, 1D")
+    resolution: str = Query("1H", description="RAW, 1H, 4H, 1D")
 ):
     try:
         # Cache Check
@@ -1079,6 +1087,40 @@ def get_eth_prices(
             return cached
 
         conn = get_db_connection()
+        
+        # RAW resolution: read directly from aave_rates.db eth_prices table
+        if resolution == "RAW":
+            try:
+                conn_raw = get_raw_db_connection()
+                query = "SELECT timestamp, price, block_number FROM eth_prices WHERE 1=1"
+                params_raw = []
+                if start_date:
+                    dt = datetime.strptime(start_date, "%Y-%m-%d")
+                    query += " AND timestamp >= ?"
+                    params_raw.append(int(dt.timestamp()))
+                if end_date:
+                    dt = datetime.strptime(end_date, "%Y-%m-%d")
+                    query += " AND timestamp <= ?"
+                    params_raw.append(int(dt.timestamp()) + 86399)
+                query += f" ORDER BY timestamp DESC LIMIT {min(limit, 100000)}"
+                df = pd.read_sql_query(query, conn_raw, params=params_raw)
+                conn_raw.close()
+                conn.close()
+                if df.empty:
+                    return []
+                data = df.to_dict(orient="records")
+                for row in data:
+                    for k, v in row.items():
+                        if isinstance(v, float) and v != v:
+                            row[k] = None
+                set_cache(cache_key, data)
+                return data
+            except Exception as e:
+                if "no such table" in str(e):
+                    conn.close()
+                    return []
+                conn.close()
+                raise
         
         buckets = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
         seconds = buckets.get(resolution, 3600)

@@ -161,6 +161,15 @@ def index_block_range(start_block, end_block, cursor, conn):
         logger.warning("No onchain assets configured")
         return 0
 
+    # Ensure eth_prices table exists
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS eth_prices (
+            timestamp INTEGER PRIMARY KEY,
+            price REAL,
+            block_number INTEGER
+        )
+    """)
+
     total_records = 0
 
     for batch_start in range(start_block, end_block, BATCH_SIZE):
@@ -183,6 +192,14 @@ def index_block_range(start_block, end_block, cursor, conn):
                 id_map[req_id] = {'block': block_num, 'type': 'rate', 'symbol': symbol}
                 req_id += 1
 
+            # ETH price from Uniswap V3 slot0
+            payload.append({
+                "jsonrpc": "2.0", "method": "eth_call", "id": req_id,
+                "params": [{"to": ETH_POOL_ADDRESS, "data": SLOT0_SELECTOR}, hex_block]
+            })
+            id_map[req_id] = {'block': block_num, 'type': 'eth_price'}
+            req_id += 1
+
             # Timestamp for block
             payload.append({
                 "jsonrpc": "2.0", "method": "eth_getBlockByNumber", "id": req_id,
@@ -198,6 +215,7 @@ def index_block_range(start_block, end_block, cursor, conn):
         # Parse results
         block_timestamps = {}
         block_rates = {}
+        block_eth_prices = {}
 
         for res in results:
             rid = res.get('id')
@@ -222,18 +240,39 @@ def index_block_range(start_block, end_block, cursor, conn):
                     if blk not in block_rates:
                         block_rates[blk] = {}
                     block_rates[blk][sym] = val
+            elif meta['type'] == 'eth_price':
+                try:
+                    raw = res['result'][2:]
+                    sqrtPriceX96 = int(raw[:64], 16)
+                    if sqrtPriceX96 > 0:
+                        price_raw = (sqrtPriceX96 ** 2) / Q192
+                        eth_price = DECIMAL_ADJUST / price_raw
+                        if 100 < eth_price < 100000:  # Sanity check
+                            block_eth_prices[blk] = eth_price
+                except:
+                    pass
 
         # Insert into DB
         for blk in range(batch_start, batch_end):
-            if blk in block_timestamps and blk in block_rates:
+            if blk in block_timestamps:
                 ts = block_timestamps[blk]
-                rates = block_rates[blk]
 
-                for sym, rate in rates.items():
-                    table = assets_map[sym]['table']
+                # Insert rates
+                if blk in block_rates:
+                    rates = block_rates[blk]
+                    for sym, rate in rates.items():
+                        table = assets_map[sym]['table']
+                        cursor.execute(
+                            f"INSERT OR IGNORE INTO {table} VALUES (?, ?, ?)",
+                            (blk, ts, rate)
+                        )
+                        total_records += 1
+
+                # Insert ETH price
+                if blk in block_eth_prices:
                     cursor.execute(
-                        f"INSERT OR IGNORE INTO {table} VALUES (?, ?, ?)",
-                        (blk, ts, rate)
+                        "INSERT OR REPLACE INTO eth_prices (timestamp, price, block_number) VALUES (?, ?, ?)",
+                        (ts, block_eth_prices[blk], blk)
                     )
                     total_records += 1
 
@@ -280,6 +319,9 @@ def sync_clean_db():
 
 # ETH Price Configuration
 ETH_POOL_ADDRESS = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"  # Uniswap V3 USDC/ETH 0.05%
+SLOT0_SELECTOR = "0x3850c7bd"  # slot0() function selector
+Q192 = 2 ** 192  # Precomputed constant for price conversion
+DECIMAL_ADJUST = 10 ** 12  # 10^(WETH_dec - USDC_dec) = 10^(18-6)
 
 
 def sync_eth_prices(conn):
@@ -475,7 +517,6 @@ def run_daemon():
 
                 # Full hourly aggregation periodically 
                 if time.time() - last_sync_time > SYNC_INTERVAL:
-                    sync_eth_prices(conn)  # Sync ETH prices
                     sync_clean_db()
                     last_sync_time = time.time()
             else:

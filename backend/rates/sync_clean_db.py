@@ -66,7 +66,7 @@ def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
     cursor_raw = conn_raw.cursor()
     try:
         cursor_raw.execute(
-            "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ? AND price BETWEEN 100 AND 100000",
+            "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ?",
             (hour_floor,)
         )
     except Exception:
