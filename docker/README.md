@@ -101,15 +101,25 @@ docker compose -f docker/docker-compose.frontend.yml up -d --build
 
 ### Container Details
 
-| Container       | Image                        | Port | Health              | Description                                                                        |
-| --------------- | ---------------------------- | ---- | ------------------- | ---------------------------------------------------------------------------------- |
-| `deployer`      | `docker/deployer/Dockerfile` | —    | Exits on completion | Deploys protocol, market, oracle, users, router → writes `/config/deployment.json` |
-| `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python3 urllib`    | Indexes simulation blocks + serves API. **Auto-resets DB on simulation restart**   |
-| `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | —                   | Market maker: arb trades + oracle updates from live rates                          |
-| `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | —                   | Random trades for market activity                                                  |
-| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl                | Scrapes live Aave V3 rates + ETH prices from mainnet (60s sync interval)           |
-| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl                | Telegram bot: `/status` reports, hourly digests                                    |
-| `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget                | Multi-stage build: Node 20 → Nginx Alpine (68MB)                                   |
+| Container       | Image                        | Port | Health           | Depends On | Description                                                                |
+| --------------- | ---------------------------- | ---- | ---------------- | ---------- | -------------------------------------------------------------------------- |
+| `deployer`      | `docker/deployer/Dockerfile` | —    | Exits on success | —          | Deploys protocol, oracle, market, users, router → writes `deployment.json` |
+| `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python urllib`  | `deployer` | Indexes simulation blocks + serves API. Auto-resets DB on restart          |
+| `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Market maker: arb trades + oracle updates from live rates                  |
+| `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Random trades for market activity                                          |
+| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl             | —          | Scrapes live Aave V3 rates + ETH prices from mainnet (60s)                 |
+| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl             | —          | Telegram bot: `/status` reports, hourly digests                            |
+| `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget             | —          | Multi-stage build: Node 20 → Nginx Alpine (68MB)                           |
+
+### Service Ordering & Resilience
+
+The simulation stack uses three layers of defense against startup race conditions:
+
+1. **`depends_on: service_completed_successfully`** — `indexer`, `mm-daemon`, and `chaos-trader` only start after the `deployer` container exits with code 0. This prevents services from starting with an empty or partial `deployment.json`.
+
+2. **`wait-for-config.sh`** (daemon entrypoint) — Validates that `deployment.json` contains a non-null `rld_core` key, not just that the file exists. Polls every 2s for up to 240s.
+
+3. **`entrypoint.py`** (indexer) — Retries on-chain market discovery up to 30 times with 10s backoff. If contracts aren't deployed yet when the indexer starts, it waits instead of crashing.
 
 ---
 
@@ -333,7 +343,9 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 | RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin  | Use an unrestricted key in `MAINNET_RPC_URL`           |
 | Port already in use on restart    | Orphaned container from previous run           | `restart.sh` handles this automatically                |
 | Deployer `nonce too low`          | Rapid-fire transactions without receipt wait   | Already fixed in `deploy_all.sh`                       |
-| Containers stuck in `Created`     | Deployer dependency not met                    | `restart.sh` auto-recovers stuck containers            |
+| Containers stuck in `Created`     | Deployer dependency not met                    | Fixed: `depends_on: service_completed_successfully`    |
+| Services start with empty config  | `deployment.json` exists but is `{}`           | Fixed: `wait-for-config.sh` validates `rld_core` key   |
+| Indexer crashes on first attempt  | Contracts not deployed when discovery runs     | Fixed: `entrypoint.py` retries 30× with 10s backoff    |
 | `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer   | Ensure both use same compose or `host.docker.internal` |
 | Dashboard JSON parse error        | `status.json` read mid-write                   | Fixed: atomic writes via `mktemp` + `mv`               |
 | ETH prices not syncing            | `ETH_PRICE_GRAPH_URL` missing from docker/.env | Add the Graph API URL to `docker/.env`                 |
