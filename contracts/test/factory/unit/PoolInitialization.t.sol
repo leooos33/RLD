@@ -75,7 +75,8 @@ contract PoolInitializationTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0), // No TWAMM for testing
             address(0x1), // Mock renderer (non-zero)
-            30 days     // Valid funding period
+            30 days,    // Valid funding period
+            address(0)  // No BrokerRouter
         );
         
         // Step 2: Deploy core with factory address (immutable)

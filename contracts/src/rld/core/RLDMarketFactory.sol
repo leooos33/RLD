@@ -96,6 +96,11 @@ contract RLDMarketFactory is ReentrancyGuard {
     /// @notice Standard funding model for interest rate calculations
     address public immutable STD_FUNDING_MODEL;
 
+    /// @notice BrokerRouter address — pre-approved as operator on every new broker
+    /// @dev Passed as defaultOperator to PrimeBrokerFactory during market creation.
+    ///      Can be address(0) if no router is deployed yet.
+    address public immutable BROKER_ROUTER;
+
 
     /// @notice Metadata renderer for Bond NFT display (CURRENTLY UNUSED)
     /// @dev Reserved for future on-chain metadata rendering functionality.
@@ -221,6 +226,7 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @param metadataRenderer NFT metadata renderer address
      * @param _fundingPeriod Funding period in seconds (e.g., 30 days = 2592000)
      */
+    /// @param brokerRouter BrokerRouter address (pre-approved on all new brokers, can be address(0))
     constructor(
         address poolManager, 
         address positionTokenImpl,
@@ -229,7 +235,8 @@ contract RLDMarketFactory is ReentrancyGuard {
         address fundingModel,
         address twamm,
         address metadataRenderer,
-        uint32 _fundingPeriod
+        uint32 _fundingPeriod,
+        address brokerRouter
     ) {
         // Store deployer for one-time CORE initialization
         DEPLOYER = msg.sender;
@@ -258,6 +265,7 @@ contract RLDMarketFactory is ReentrancyGuard {
         TWAMM = twamm;
         METADATA_RENDERER = metadataRenderer;
         FUNDING_PERIOD = _fundingPeriod;
+        BROKER_ROUTER = brokerRouter;
     }
 
     /* ============================================================================================ */
@@ -438,13 +446,23 @@ contract RLDMarketFactory is ReentrancyGuard {
         // NOTE: METADATA_RENDERER is passed but currently unused by PrimeBrokerFactory
         // Reserved for future on-chain metadata rendering (see METADATA_RENDERER docs above)
         // CORE is passed so brokers can call RLDCore during initialization
+        // Build default operators array (BrokerRouter if configured)
+        address[] memory operators;
+        if (BROKER_ROUTER != address(0)) {
+            operators = new address[](1);
+            operators[0] = BROKER_ROUTER;
+        } else {
+            operators = new address[](0);
+        }
+
         PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(
             PRIME_BROKER_IMPL, 
             id,
             name,
             nftSymbol,
             METADATA_RENDERER,  // Currently unused, reserved for future
-            CORE                // Passed to brokers during init
+            CORE,               // Passed to brokers during init
+            operators            // BrokerRouter pre-approved on every broker
         );
         factory = address(pbFactory);
         

@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { CONTRACTS } from "../config/simulationConfig";
 
 /**
  * One-click Anvil faucet: provisions ETH + waUSDC to the connected wallet.
@@ -10,6 +9,9 @@ import { CONTRACTS } from "../config/simulationConfig";
  *   2. Impersonate USDC whale → transfer USDC to user
  *   3. Impersonate user → approve + supply to Aave → aUSDC
  *   4. Impersonate user → approve + wrap aUSDC → waUSDC
+ *
+ * @param {string} account        Connected wallet address
+ * @param {string} waUsdcAddress   Live waUSDC contract address (from indexer)
  */
 
 // ── Mainnet addresses (Anvil fork of mainnet) ─────────────────────
@@ -17,7 +19,6 @@ const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const AUSDC = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c";
 const AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
 const USDC_WHALE = "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341";
-const WAUSDC = CONTRACTS.wausdc;
 const RPC_URL = "http://127.0.0.1:8545";
 
 // Amount to fund: 100k USDC (6 decimals)
@@ -98,33 +99,41 @@ async function waitForTx(rpcUrl, txHash, timeout = 30000) {
   throw new Error(`TX timeout: ${txHash}`);
 }
 
-export function useFaucet(account) {
+export function useFaucet(account, waUsdcAddress) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState(""); // Current step description
   const [waUsdcBalance, setWaUsdcBalance] = useState(null);
 
   // ── Fetch waUSDC balance for any address ───────────────────────
-  const fetchBalance = useCallback(async (addr) => {
-    if (!addr) return;
-    try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
-      const contract = new ethers.Contract(WAUSDC, WAUSDC_ABI, provider);
-      const bal = await contract.balanceOf(addr);
-      setWaUsdcBalance(ethers.formatUnits(bal, 6));
-    } catch (e) {
-      console.warn("Failed to fetch waUSDC balance:", e);
-    }
-  }, []);
+  const fetchBalance = useCallback(
+    async (addr) => {
+      if (!addr || !waUsdcAddress) return;
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const contract = new ethers.Contract(
+          waUsdcAddress,
+          WAUSDC_ABI,
+          provider,
+        );
+        const bal = await contract.balanceOf(addr);
+        setWaUsdcBalance(ethers.formatUnits(bal, 6));
+      } catch (e) {
+        console.warn("Failed to fetch waUSDC balance:", e);
+      }
+    },
+    [waUsdcAddress],
+  );
 
-  // Auto-fetch balance when account connects
+  // Auto-fetch balance when account connects or waUSDC address changes
   useEffect(() => {
-    if (account) fetchBalance(account);
-  }, [account, fetchBalance]);
+    if (account && waUsdcAddress) fetchBalance(account);
+  }, [account, waUsdcAddress, fetchBalance]);
 
   const requestFaucet = useCallback(
     async (userAddress) => {
       if (!userAddress) throw new Error("No wallet connected");
+      if (!waUsdcAddress) throw new Error("waUSDC address not loaded yet");
 
       setLoading(true);
       setError(null);
@@ -214,7 +223,7 @@ export function useFaucet(account) {
 
         // Approve aUSDC → waUSDC wrapper
         const approveWrapData = iface.erc20.encodeFunctionData("approve", [
-          WAUSDC,
+          waUsdcAddress,
           aUsdcBal,
         ]);
         const txApproveWrap = await sendImpersonatedTx(
@@ -230,7 +239,7 @@ export function useFaucet(account) {
         const txWrap = await sendImpersonatedTx(
           RPC_URL,
           user,
-          WAUSDC,
+          waUsdcAddress,
           wrapData,
         );
         await waitForTx(RPC_URL, txWrap);
@@ -250,7 +259,7 @@ export function useFaucet(account) {
         setLoading(false);
       }
     },
-    [fetchBalance, waUsdcBalance],
+    [fetchBalance, waUsdcBalance, waUsdcAddress],
   );
 
   return {

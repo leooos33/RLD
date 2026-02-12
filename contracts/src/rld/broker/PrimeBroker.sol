@@ -297,10 +297,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @param _marketId The market ID this broker is bound to
     /// @param _factory The PrimeBrokerFactory that deployed this clone
     /// @param _core The RLDCore singleton address
+    /// @param _initialOperators Addresses to pre-approve as operators (e.g., BrokerRouter)
     function initialize(
         MarketId _marketId,
         address _factory,
-        address _core
+        address _core,
+        address[] calldata _initialOperators
     ) external {
         // SECURITY: Prevent re-initialization
         require(!initialized, "Initialized");
@@ -321,6 +323,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         positionToken = vars.positionToken;
         underlyingPool = vars.underlyingPool;
         rateOracle = vars.rateOracle;
+
+        // Set initial operators (e.g., BrokerRouter) so they're pre-approved from deploy
+        for (uint256 i = 0; i < _initialOperators.length; i++) {
+            operators[_initialOperators[i]] = true;
+            emit OperatorUpdated(_initialOperators[i], true);
+        }
 
         initialized = true;
     }

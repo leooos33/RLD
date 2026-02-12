@@ -250,7 +250,8 @@ contract CRITICAL001FixTest is Test {
             fundingModel,
             twamm,
             metadataRenderer,
-            fundingPeriod
+            fundingPeriod,
+            address(0)  // No BrokerRouter
         );
     }
     

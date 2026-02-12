@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import useSWR from "swr";
-import { SIM_API, KNOWN_BROKERS } from "../config/simulationConfig";
+import { SIM_API } from "../config/simulationConfig";
+
+// Broker labels by deployment order (deployer always creates in this sequence)
+const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
 
 const fetcher = (url) => fetch(url).then((r) => r.json());
 
@@ -105,11 +108,9 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
   // ── Derived: broker positions ───────────────────────────────
   const brokers = useMemo(() => {
     if (!latest?.broker_positions?.length) return [];
-    return latest.broker_positions.map((bp) => ({
+    return latest.broker_positions.map((bp, i) => ({
       address: bp.broker_address,
-      label:
-        KNOWN_BROKERS[bp.broker_address.toLowerCase()] ||
-        bp.broker_address.slice(0, 8) + "...",
+      label: BROKER_LABELS[i] || bp.broker_address.slice(0, 8) + "...",
       collateral: bp.collateral / 1e6,
       debt: bp.debt / 1e6,
       collateralValue: bp.collateral_value / 1e6,

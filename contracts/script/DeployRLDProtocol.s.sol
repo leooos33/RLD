@@ -23,6 +23,9 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 
+// Periphery
+import {BrokerRouter} from "../src/periphery/BrokerRouter.sol";
+
 /// @notice Minimal metadata renderer that returns empty strings (satisfies non-zero check)
 contract MinimalMetadataRenderer {
     function tokenURI(uint256) external pure returns (string memory) {
@@ -50,6 +53,7 @@ contract DeployRLDProtocol is Script {
     // Uniswap V4
     address constant UNISWAP_POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address constant UNISWAP_POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
+    address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant CREATE2_DEPLOYER = address(0x4e59b44847b379578588920cA78FbF26c0B4956C);
     
     // Aave V3
@@ -75,6 +79,9 @@ contract DeployRLDProtocol is Script {
     address public standardFundingModel;
     address public v4Oracle;
     address public rldAaveOracle;
+    
+    // Periphery
+    address public brokerRouter;
     
     // Core
     address public rldMarketFactory;
@@ -215,12 +222,26 @@ contract DeployRLDProtocol is Script {
         console.log("");
         
         // ============================================
+        // PHASE 2.5: Deploy BrokerRouter
+        // ============================================
+        console.log("PHASE 2.5: BrokerRouter");
+        console.log("----------------------------------");
+        
+        BrokerRouter router = new BrokerRouter(
+            UNISWAP_POOL_MANAGER,   // poolManager
+            PERMIT2                 // permit2
+        );
+        brokerRouter = address(router);
+        console.log("BrokerRouter:", brokerRouter);
+        
+        console.log("");
+        
+        // ============================================
         // PHASE 3: Deploy Factory
         // ============================================
         console.log("PHASE 3: Market Factory");
         console.log("----------------------------------");
         
-        // Note: TWAMM is optional (set to 0 for testing)
         RLDMarketFactory factory = new RLDMarketFactory(
             UNISWAP_POOL_MANAGER,   // poolManager
             positionTokenImpl,      // positionTokenImpl
@@ -229,7 +250,8 @@ contract DeployRLDProtocol is Script {
             standardFundingModel,   // fundingModel
             twammAddress,           // twamm (real contract)
             metadataRenderer,       // metadataRenderer
-            FUNDING_PERIOD          // fundingPeriod
+            FUNDING_PERIOD,         // fundingPeriod
+            brokerRouter            // brokerRouter (pre-approved operator on every broker)
         );
         rldMarketFactory = address(factory);
         console.log("RLDMarketFactory:", rldMarketFactory);
@@ -305,6 +327,7 @@ contract DeployRLDProtocol is Script {
         vm.serializeAddress(jsonObj, "TWAMM", twammAddress);
         vm.serializeAddress(jsonObj, "PrimeBrokerImpl", primeBrokerImpl);
         vm.serializeAddress(jsonObj, "PositionTokenImpl", positionTokenImpl);
+        vm.serializeAddress(jsonObj, "BrokerRouter", brokerRouter);
         
         string memory finalJson = vm.serializeAddress(jsonObj, "MetadataRenderer", metadataRenderer);
         

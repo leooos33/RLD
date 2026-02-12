@@ -86,6 +86,11 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @dev Passed to each broker during initialization so clones can call Core
     address public immutable CORE;
 
+    /// @notice Default operators set on every new broker (e.g., BrokerRouter)
+    /// @dev Set at factory deployment. Every createBroker() call passes these
+    ///      to PrimeBroker.initialize() as pre-approved operators.
+    address[] public defaultOperators;
+
     /* ============================================================================================ */
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
@@ -108,13 +113,15 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @param symbol The ERC721 collection symbol (e.g., "RLD-aUSDC")
     /// @param renderer Optional metadata renderer (currently unused, can be address(0))
     /// @param core The RLDCore singleton address (passed to brokers during init)
+    /// @param _defaultOperators Addresses to pre-approve on every new broker (e.g., BrokerRouter)
     constructor(
         address implementation,
         MarketId marketId,
         string memory name,
         string memory symbol,
         address renderer,
-        address core
+        address core,
+        address[] memory _defaultOperators
     ) ERC721(name, symbol) {
         require(implementation != address(0), "Invalid implementation");
         require(MarketId.unwrap(marketId) != bytes32(0), "Invalid marketId");
@@ -123,6 +130,7 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
         MARKET_ID = marketId;
         RENDERER = renderer; // Stored but currently unused (see RENDERER docs)
         CORE = core;
+        defaultOperators = _defaultOperators;
     }
 
     /* ============================================================================================ */
@@ -156,7 +164,8 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
         PrimeBroker(payable(broker)).initialize(
             MARKET_ID,
             address(this),
-            CORE  // Pass CORE to broker so clones have correct address
+            CORE,
+            defaultOperators
         );
         
         // 3. Mint NFT with tokenId = broker address

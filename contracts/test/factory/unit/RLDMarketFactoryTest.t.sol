@@ -87,7 +87,8 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0), // No TWAMM for testing
             address(0x1), // Mock renderer (non-zero)
-            30 days     // Valid funding period
+            30 days,    // Valid funding period
+            address(0)  // No BrokerRouter
         );
         
         // Step 2: Deploy core with factory address (immutable)
@@ -310,7 +311,8 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0),
             address(0x1), // Mock renderer
-            1 hours // Too low - should be >= 1 day
+            1 hours, // Too low - should be >= 1 day
+            address(0)
         );
     }
     
@@ -328,7 +330,8 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0),
             address(0x1), // Mock renderer
-            366 days // Too high - should be <= 365 days
+            366 days, // Too high - should be <= 365 days
+            address(0)
         );
     }
     
@@ -346,7 +349,8 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0),
             address(0x1), // Mock renderer
-            1 days
+            1 days,
+            address(0)
         );
         assertTrue(address(factory1) != address(0), "Should accept 1 day");
         
@@ -359,7 +363,8 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0),
             address(0x1), // Mock renderer
-            365 days
+            365 days,
+            address(0)
         );
         assertTrue(address(factory2) != address(0), "Should accept 365 days");
     }

@@ -86,12 +86,14 @@ fi
 TWAMM_HOOK=$(jq -r '.TWAMM' deployments.json)
 FACTORY=$(jq -r '.RLDMarketFactory' deployments.json)
 RLD_CORE=$(jq -r '.RLDCore' deployments.json)
+BROKER_ROUTER=$(jq -r '.BrokerRouter' deployments.json)
 BROKER_FACTORY_ADDR=""  # Comes from market deploy
 
 log_ok "Protocol deployed"
-echo "  RLDCore:    $RLD_CORE"
-echo "  TWAMM Hook: $TWAMM_HOOK"
-echo "  Factory:    $FACTORY"
+echo "  RLDCore:       $RLD_CORE"
+echo "  TWAMM Hook:    $TWAMM_HOOK"
+echo "  Factory:       $FACTORY"
+echo "  BrokerRouter:  $BROKER_ROUTER"
 
 # ─── Deploy MockOracle ─────────────────────────────────────────
 log_step "1.2" "Deploying MockRLDAaveOracle..."
@@ -168,6 +170,18 @@ log_step "2.2" "Priming TWAMM oracle..."
 cast rpc evm_increaseTime 7200 --rpc-url "$RPC_URL" > /dev/null
 cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
 log_ok "Oracle primed (2h advance)"
+
+# ─── Configure BrokerRouter deposit route ──────────────────────
+log_step "2.3" "Configuring BrokerRouter deposit route (USDC → aUSDC → waUSDC)..."
+
+# BrokerRouter.setDepositRoute(collateralToken, (underlying, aToken, wrapped, aavePool))
+cast send "$BROKER_ROUTER" \
+    "setDepositRoute(address,(address,address,address,address))" \
+    "$WAUSDC" \
+    "($USDC,$AUSDC,$WAUSDC,$AAVE_POOL)" \
+    --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
+
+log_ok "Deposit route configured: USDC → aUSDC → waUSDC"
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 3: SETUP USERS
@@ -482,6 +496,7 @@ cat > /config/deployment.json << EOF
     "twamm_hook": "$TWAMM_HOOK",
     "market_id": "$MARKET_ID",
     "mock_oracle": "$MOCK_ORACLE",
+    "broker_router": "$BROKER_ROUTER",
     "wausdc": "$WAUSDC",
     "position_token": "$POSITION_TOKEN",
     "broker_factory": "$BROKER_FACTORY_ADDR",

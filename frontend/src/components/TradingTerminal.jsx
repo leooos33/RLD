@@ -9,7 +9,15 @@ export const SummaryRow = ({ label, value, valueColor = "text-white" }) => (
 );
 
 // Helper for input groups
-export const InputGroup = ({ label, subLabel, value, onChange, suffix, type = "number", placeholder = "0.00" }) => (
+export const InputGroup = ({
+  label,
+  subLabel,
+  value,
+  onChange,
+  suffix,
+  type = "number",
+  placeholder = "0.00",
+}) => (
   <div className="space-y-2">
     <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
       <span>{label}</span>
@@ -40,7 +48,7 @@ const TradingTerminal = ({
 
   // Tabs (optional)
   tabs = [], // { id, label, onClick, isActive, color }
-  
+
   // Content
   children,
 
@@ -52,7 +60,7 @@ const TradingTerminal = ({
     variant: "cyan", // cyan, pink
     connectWallet: null, // If provided, shows "Connect" instead when no account
   },
-  
+
   account, // Passed for connect wallet logic if needed
   connectWallet, // Passed for connect wallet logic
   footer, // Optional footer content
@@ -72,24 +80,23 @@ const TradingTerminal = ({
       </div>
 
       {/* Tabs */}
-       {tabs.length > 0 && (
+      {tabs.length > 0 && (
         <div className="grid grid-cols-2 border-b border-white/10">
           {tabs.map((tab) => (
-             <button
-               key={tab.id}
-               onClick={tab.onClick}
-               className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
-                 tab.isActive
-                   ? tab.activeClass || "bg-white text-black"
-                   : "bg-[#080808] text-gray-600 hover:text-gray-400 hover:bg-white/5"
-               }`}
-             >
-               {tab.label}
-             </button>
+            <button
+              key={tab.id}
+              onClick={tab.onClick}
+              className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+                tab.isActive
+                  ? tab.activeClass || "bg-white text-black"
+                  : "bg-[#080808] text-gray-600 hover:text-gray-400 hover:bg-white/5"
+              }`}
+            >
+              {tab.label}
+            </button>
           ))}
         </div>
       )}
-
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col p-4 md:p-6 gap-6">
@@ -97,29 +104,22 @@ const TradingTerminal = ({
 
         {/* Action Button */}
         <div className="mt-auto">
-          {account ? (
-            <button
-              onClick={actionButton.onClick}
-              disabled={actionButton.disabled}
-              className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none ${
-                actionButton.variant === "pink"
+          <button
+            onClick={actionButton.onClick}
+            disabled={actionButton.disabled}
+            className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none ${
+              !account
+                ? "border border-white/20 text-gray-400 hover:text-white hover:border-white"
+                : actionButton.variant === "pink"
                   ? "bg-pink-500 text-black hover:bg-pink-400"
                   : "bg-cyan-500 text-black hover:bg-cyan-400"
-              } ${actionButton.disabled ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"}`}
-            >
-              {actionButton.label}
-            </button>
-          ) : (
-            <button
-              onClick={actionButton.connectWallet || connectWallet}
-              className="w-full py-4 border border-white/20 text-xs font-bold tracking-[0.2em] uppercase text-gray-400 hover:text-white hover:border-white transition-all focus:outline-none rounded-none"
-            >
-              Connect to Trade
-            </button>
-          )}
+            } ${actionButton.disabled ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"}`}
+          >
+            {actionButton.label}
+          </button>
         </div>
       </div>
-      
+
       {/* Optional Footer */}
       {footer}
     </div>
@@ -127,4 +127,3 @@ const TradingTerminal = ({
 };
 
 export default TradingTerminal;
-

@@ -12,14 +12,30 @@ echo "⏳ Waiting for deployment config at $CONFIG_FILE..."
 
 for i in $(seq 1 120); do
     if [ -f "$CONFIG_FILE" ]; then
-        echo "✅ Config found!"
-        break
+        # File exists — check if it has actual content (not empty {})
+        RLD_CORE_VAL=$(jq -r '.rld_core // empty' "$CONFIG_FILE" 2>/dev/null)
+        if [ -n "$RLD_CORE_VAL" ] && [ "$RLD_CORE_VAL" != "null" ]; then
+            echo "✅ Config ready (rld_core=$RLD_CORE_VAL)"
+            break
+        fi
+        # Only log every 10th attempt to avoid spam
+        if [ $((i % 10)) -eq 0 ]; then
+            echo "  ⏳ Config file exists but incomplete (attempt $i/120)..."
+        fi
     fi
     sleep 2
 done
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "❌ Timed out waiting for $CONFIG_FILE"
+    exit 1
+fi
+
+# Final validation — ensure the config is complete
+RLD_CORE_VAL=$(jq -r '.rld_core // empty' "$CONFIG_FILE" 2>/dev/null)
+if [ -z "$RLD_CORE_VAL" ] || [ "$RLD_CORE_VAL" = "null" ]; then
+    echo "❌ Config file exists but rld_core is missing or null"
+    cat "$CONFIG_FILE"
     exit 1
 fi
 

@@ -2,74 +2,65 @@
 description: Deploy waUSDC market and provide V4 LP from scratch
 ---
 
-# Deploy Wrapped Market & LP
+# Deploy Simulation Stack
 
-This workflow deploys the waUSDC wrapper, creates a new market with waUSDC collateral, mints wRLP, and provides V4 concentrated liquidity.
+Full redeployment of the RLD simulation stack (protocol, MockOracle, market, users, LP, brokers, swap router).
+
+> **DO NOT TOUCH**: rates-indexer, tg-bot — they run independently.
 
 ## Prerequisites
 
-- Local Anvil fork running (via `deploy_local.sh`)
-- `PRIVATE_KEY` set in `contracts/.env`
+- `docker/.env` configured (keys, RPC URLs, API keys)
+- Docker and Docker Compose v2 installed
 
-## Steps
+## Canonical Command
 
 // turbo-all
 
-### 1. Start Local Fork (if not running)
+### Sim-only restart (rates-indexer + tg-bot stay running)
 
 ```bash
-cd /home/ubuntu/RLD
-./scripts/deploy_local.sh
+cd /home/ubuntu/RLD && ./docker/restart.sh --sim-only
 ```
 
-Wait for "Deployment Complete" message.
-
-### 2. Deploy waUSDC Wrapper & Create Market
+### Full restart (everything including rates + bot)
 
 ```bash
-cd /home/ubuntu/RLD/contracts
-source .env
-forge script script/DeployWrappedMarket.s.sol --rpc-url http://localhost:8545 --broadcast -v
+cd /home/ubuntu/RLD && ./docker/restart.sh
 ```
 
-This deploys:
+### Options
 
-- waUSDC wrapper at `0xcb68357b50A5e759E9C530f172A8174EfA1E350D`
-- New market with waUSDC collateral
+| Flag          | Effect                                    |
+| :------------ | :---------------------------------------- |
+| `--sim-only`  | Keep rates-indexer and tg-bot running     |
+| `--no-build`  | Skip Docker image rebuilds (faster)       |
+| `--keep-data` | Preserve indexer SQLite DB across restart |
 
-### 3. Mint wRLP & Provide V4 LP
+## What happens
+
+1. **Teardown**: Kills Anvil, stops sim containers, prunes images
+2. **Anvil**: Starts fresh fork at configured block
+3. **Support**: Starts rates-indexer + bot (unless `--sim-only`)
+4. **Deploy**: Runs deployer container (`deploy_all.sh`)
+   - Protocol (RLDCore, Factory, TWAMM, BrokerRouter)
+   - MockRLDAaveOracle (rate fetched from rates-indexer API)
+   - Wrapped market (waUSDC, wRLP, BrokerFactory)
+   - Users: LP ($100M), Long ($100k), TWAMM ($100k), MM ($10M), Chaos ($10M)
+   - SwapRouter + token approvals
+   - Writes `deployment.json`
+5. **Services**: Indexer, MM daemon, Chaos trader start after deployer exits
+6. **Verify**: Health checks on all containers + API endpoint
+
+## Verify
 
 ```bash
-cd /home/ubuntu/RLD
-./scripts/mint_and_lp_wrapped.sh
+# Check all containers
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Check API
+curl -s http://localhost:8080/api/latest | python3 -m json.tool | head -20
+
+# MM daemon logs
+docker logs docker-mm-daemon-1 --tail 10
 ```
-
-This script:
-
-1. Acquires 10M aUSDC from whale
-2. Wraps to waUSDC
-3. Creates broker, deposits waUSDC
-4. Mints 500k wRLP debt
-5. Withdraws 100k each for LP
-6. Approves V4 contracts
-7. Provides concentrated liquidity (price range: 2-20)
-
-## Output
-
-On success, you'll see:
-
-```
-✓ V4 LP Position Created!
-  Token ID: 148253
-  Tick Range: [6930, 29960]
-  Price Range: waUSDC/wRLP = [2, 20]
-```
-
-## Addresses (after deployment)
-
-| Contract       | Address                                      |
-| -------------- | -------------------------------------------- |
-| waUSDC         | `0xcb68357b50A5e759E9C530f172A8174EfA1E350D` |
-| wRLP           | `0x9ed4F4724b521326a9d9d2420252440bD05556c4` |
-| Broker Factory | `0x9554b52516f306360a239746F70f88c23D187b63` |
-| Market ID      | `0x9adc509a91014b...`                        |

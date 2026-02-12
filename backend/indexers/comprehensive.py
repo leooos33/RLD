@@ -287,7 +287,12 @@ class ComprehensiveIndexer:
             return None
     
     def _mark_price_from_sqrt(self, sqrt_price_x96: int) -> float:
-        """Compute mark price (wRLP in waUSDC terms) from sqrtPriceX96."""
+        """Compute mark price (wRLP in waUSDC terms) from sqrtPriceX96.
+        
+        sqrtPriceX96 encodes price = token1/token0.
+        - If waUSDC is token0: raw = wRLP/waUSDC → invert to get waUSDC/wRLP
+        - If waUSDC is token1: raw = waUSDC/wRLP → already correct
+        """
         if sqrt_price_x96 == 0:
             return 0.0
         raw_price_x18 = (sqrt_price_x96 * sqrt_price_x96 * 10**18) // (2**192)
@@ -297,8 +302,8 @@ class ComprehensiveIndexer:
             # raw = wRLP/waUSDC → invert to get waUSDC/wRLP
             return (10**36 / raw_price_x18) / 10**18
         else:
-            # raw = waUSDC/wRLP (price < 1 with negative ticks) → invert
-            return (10**36 / raw_price_x18) / 10**18
+            # raw = waUSDC/wRLP → already the mark price we want
+            return raw_price_x18 / 10**18
     
     def get_market_state(self) -> Dict:
         """Fetch current market state from RLDCore."""

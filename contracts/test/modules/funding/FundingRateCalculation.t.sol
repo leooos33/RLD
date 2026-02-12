@@ -116,7 +116,8 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(twamm),
             address(0x1), // Mock renderer
-            uint32(FUNDING_PERIOD)
+            uint32(FUNDING_PERIOD),
+            address(0)  // No BrokerRouter
         );
         console.log("RLDMarketFactory deployed at:", address(factory));
         

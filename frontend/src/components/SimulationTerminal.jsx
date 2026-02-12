@@ -18,7 +18,10 @@ import { useSimulation } from "../hooks/useSimulation";
 import { useChartControls } from "../hooks/useChartControls";
 import { useWallet } from "../context/WalletContext";
 import { useFaucet } from "../hooks/useFaucet";
-import { CONTRACTS, MARKET_ID } from "../config/simulationConfig";
+import { useBrokerAccount } from "../hooks/useBrokerAccount";
+import { useSwapQuote } from "../hooks/useSwapQuote";
+import { useSwapExecution } from "../hooks/useSwapExecution";
+import AccountModal from "./AccountModal";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
 
@@ -137,6 +140,41 @@ export default function SimulationTerminal() {
     totalEvents,
   } = sim;
 
+  // Merge fallback infrastructure addresses (API might not return these yet)
+  // Also override token addresses for swap operations — the indexer DB has stale addresses
+  // but the pool was initialized with the .env addresses
+  const enrichedMarketInfo = useMemo(() => {
+    if (!marketInfo) return null;
+    return {
+      ...marketInfo,
+      // Override with actual deployed token addresses for swap operations
+      collateral: {
+        ...marketInfo.collateral,
+        address:
+          marketInfo.collateral?.address ||
+          "0xD1620Dac6d79BE34F8500756B47cf91B1fA5Cc8C",
+      },
+      position_token: {
+        ...marketInfo.position_token,
+        address:
+          marketInfo.position_token?.address ||
+          "0x5aEd016F177EB355EBE52c98f5883432F2351971",
+      },
+      infrastructure: {
+        broker_router: "0xBf7877CCB45f6d792c581fcbDd1150caD486B284",
+        v4_quoter: "0x873AFcA0319f5c04421E90e882566C496877aFF8",
+        twamm_hook: "0x2d1B11cE8ea5204839458789873da6b0ce182Ac0",
+        pool_manager: "0x000000000004444c5dc75cB358380D2e3dE08A90",
+        pool_fee: 500,
+        tick_spacing: 5,
+        // Actual pool token addresses
+        swap_collateral: "0xD1620Dac6d79BE34F8500756B47cf91B1fA5Cc8C",
+        swap_position_token: "0x5aEd016F177EB355EBE52c98f5883432F2351971",
+        ...marketInfo.infrastructure,
+      },
+    };
+  }, [marketInfo]);
+
   // Wallet & Faucet
   const { account, connectWallet } = useWallet();
   const {
@@ -145,7 +183,49 @@ export default function SimulationTerminal() {
     error: faucetError,
     step: faucetStep,
     waUsdcBalance,
-  } = useFaucet(account);
+  } = useFaucet(account, marketInfo?.collateral?.address);
+
+  // Broker account
+  const {
+    hasBroker,
+    brokerAddress,
+    brokerBalance,
+    creating: brokerCreating,
+    fetchBrokerBalance,
+  } = useBrokerAccount(
+    account,
+    marketInfo?.broker_factory,
+    marketInfo?.collateral?.address,
+  );
+
+  // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
+  const [tradeSide, setTradeSide] = useState("LONG");
+  const [collateral, setCollateral] = useState(1000);
+  const [shortCR, setShortCR] = useState(150);
+
+  // Swap quote (V4Quoter on-chain)
+  const { quote: swapQuote, loading: quoteLoading } = useSwapQuote(
+    enrichedMarketInfo?.infrastructure,
+    enrichedMarketInfo?.infrastructure?.swap_collateral,
+    enrichedMarketInfo?.infrastructure?.swap_position_token,
+    tradeSide === "LONG" ? collateral : 0,
+  );
+
+  // Swap execution (MetaMask-signed)
+  const {
+    executeLong,
+    executing: swapExecuting,
+    error: swapError,
+    step: swapStep,
+  } = useSwapExecution(
+    account,
+    brokerAddress,
+    enrichedMarketInfo?.infrastructure,
+    enrichedMarketInfo?.infrastructure?.swap_collateral,
+    enrichedMarketInfo?.infrastructure?.swap_position_token,
+  );
+
+  const [showAccountModal, setShowAccountModal] = useState(false);
 
   // Chart controls
   const controls = useChartControls({
@@ -154,11 +234,6 @@ export default function SimulationTerminal() {
     defaultResolution: "1D",
   });
   const { resolution } = controls;
-
-  // Trading State
-  const [tradeSide, setTradeSide] = useState("LONG");
-  const [collateral, setCollateral] = useState(1000);
-  const [shortCR, setShortCR] = useState(150);
 
   // PnL Simulation State
   const [simTargetRate, setSimTargetRate] = useState(null);
@@ -284,535 +359,587 @@ export default function SimulationTerminal() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
-      {/* MAIN CONTENT */}
-      <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
-          {/* === LEFT COLUMN (Span 9) === */}
-          <div className="xl:col-span-9 flex flex-col gap-4">
-            {/* 1. METRICS GRID */}
-            <div className="border border-white/10 grid grid-cols-1 lg:grid-cols-12">
-              {/* Branding */}
-              <div className="lg:col-span-4 flex flex-col justify-between p-6 border-b lg:border-b-0 lg:border-r border-white/10 h-full min-h-[180px]">
-                <div>
-                  <div className="text-[10px] text-gray-700 mb-6 font-mono leading-tight tracking-tight">
-                    {MARKET_ID.slice(0, 18)}...{MARKET_ID.slice(-8)}
-                  </div>
-                  <h2 className="text-3xl font-medium tracking-tight mb-2 leading-none">
-                    RLD PROTOCOL
-                    <br />
-                    <span className="text-gray-600">SIMULATION</span>
-                  </h2>
-                </div>
-                <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-widest text-gray-500">
-                    RLD_Core
-                  </span>
-                  <span className="text-[10px] uppercase tracking-widest text-cyan-500 font-mono">
-                    {CONTRACTS.rldCore.slice(0, 6)}...
-                    {CONTRACTS.rldCore.slice(-4)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Stats Cards */}
-              <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
-                {/* PRICE */}
-                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                  <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
-                    PRICE <Terminal size={15} className="opacity-90" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                    <StatItem
-                      label="ORACLE"
-                      value={market.indexPrice.toFixed(4)}
-                    />
-                    <StatItem
-                      label="24H_CHG"
-                      value={
-                        oracleChange24h != null
-                          ? `${oracleChange24h >= 0 ? "+" : ""}${oracleChange24h.toFixed(2)}%`
-                          : "—"
-                      }
-                      valueClassName={
-                        oracleChange24h != null
-                          ? oracleChange24h >= 0
-                            ? "text-green-400"
-                            : "text-red-400"
-                          : "text-white"
-                      }
-                    />
-                    <StatItem
-                      label="MARK"
-                      value={pool ? pool.markPrice.toFixed(4) : "—"}
-                    />
-                    <StatItem
-                      label="FUNDING_ANN"
-                      value={
-                        fundingFromNF
-                          ? `${fundingFromNF.annualPct >= 0 ? "+" : ""}${fundingFromNF.annualPct.toFixed(2)}%`
-                          : "—"
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* PROTOCOL */}
-                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                  <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
-                    PROTOCOL <Shield size={15} className="opacity-90" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-                    <StatItem
-                      label="TVL"
-                      value={
-                        protocolStats
-                          ? `$${(protocolStats.totalCollateral / 1e6).toFixed(2)}M`
-                          : "—"
-                      }
-                    />
-                    <StatItem
-                      label="VOL_24H"
-                      value={volumeData?.volume_formatted || "—"}
-                    />
-                    <StatItem
-                      label="TOTAL_DEBT"
-                      value={
-                        protocolStats
-                          ? `$${(protocolStats.totalDebtUsd / 1e6).toFixed(2)}M`
-                          : "—"
-                      }
-                    />
-                    <StatItem
-                      label="HEALTH"
-                      value={
-                        protocolStats
-                          ? `${protocolStats.overCollat.toFixed(1)}%`
-                          : "—"
-                      }
-                      valueClassName={
-                        protocolStats
-                          ? protocolStats.overCollat >= 200
-                            ? "text-green-400"
-                            : protocolStats.overCollat >= 120
-                              ? "text-yellow-400"
-                              : "text-red-400"
-                          : "text-white"
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* MARKET */}
-                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                  <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
-                    MARKET <Shield size={15} className="opacity-90" />
-                  </div>
-                  <div className="grid grid-cols-[3fr_2fr] gap-x-4 gap-y-6 mt-auto">
-                    <StatItem
-                      label="COLLATERAL"
-                      value={marketInfo?.collateral?.name || "—"}
-                      valueClassName="text-white !text-[17px] whitespace-nowrap"
-                    />
-                    <StatItem
-                      label="MIN_COL"
-                      value={marketInfo?.risk_params?.min_col_ratio_pct || "—"}
-                    />
-                    <StatItem
-                      label="POS_TOKEN"
-                      value={marketInfo?.position_token?.symbol || "—"}
-                      valueClassName="text-white !text-[17px]"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. CONTROLS */}
-            <ChartControlBar controls={controls} />
-
-            {/* 3. CHART */}
-            <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 px-1 gap-3 md:gap-0">
-                <div className="flex gap-4 md:gap-8 flex-wrap">
-                  {[
-                    {
-                      key: "indexPrice",
-                      label: "Index_Price",
-                      bg: "bg-cyan-400",
-                    },
-                    {
-                      key: "markPrice",
-                      label: "Mark_Price",
-                      bg: "bg-pink-500",
-                    },
-                  ].map((s) => (
-                    <div
-                      key={s.key}
-                      className={`flex items-center gap-2 cursor-pointer transition-all ${
-                        hiddenSeries.includes(s.key)
-                          ? "opacity-50 line-through"
-                          : "opacity-100 hover:opacity-80"
-                      }`}
-                      onClick={() => toggleSeries(s.key)}
-                    >
-                      <div className={`w-2 h-2 ${s.bg}`}></div>
-                      <span className="text-[11px] uppercase tracking-widest">
-                        {s.label}
-                      </span>
+    <>
+      <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
+        {/* MAIN CONTENT */}
+        <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
+            {/* === LEFT COLUMN (Span 9) === */}
+            <div className="xl:col-span-9 flex flex-col gap-4">
+              {/* 1. METRICS GRID */}
+              <div className="border border-white/10 grid grid-cols-1 lg:grid-cols-12">
+                {/* Branding */}
+                <div className="lg:col-span-4 flex flex-col justify-between p-6 border-b lg:border-b-0 lg:border-r border-white/10 h-full min-h-[180px]">
+                  <div>
+                    <div className="text-[10px] text-gray-700 mb-6 font-mono leading-tight tracking-tight">
+                      {(market?.marketId || "").slice(0, 18)}...
+                      {(market?.marketId || "").slice(-8)}
                     </div>
-                  ))}
+                    <h2 className="text-3xl font-medium tracking-tight mb-2 leading-none">
+                      RLD PROTOCOL
+                      <br />
+                      <span className="text-gray-600">SIMULATION</span>
+                    </h2>
+                  </div>
+                  <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
+                    <span className="text-[10px] uppercase tracking-widest text-gray-500">
+                      RLD_Core
+                    </span>
+                    <span className="text-[10px] uppercase tracking-widest text-cyan-500 font-mono">
+                      {(market?.marketId || "0x").slice(0, 10)}...
+                      {(market?.marketId || "").slice(-4)}
+                    </span>
+                  </div>
                 </div>
 
-                {/* Period stats */}
-                {chartStats && (
-                  <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
-                    <span>
-                      Range:{" "}
-                      <span className="text-white">
-                        {chartStats.min.toFixed(2)} –{" "}
-                        {chartStats.max.toFixed(2)}
-                      </span>
-                    </span>
-                    <span>
-                      Vol:{" "}
-                      <span className="text-white">
-                        ±{chartStats.vol.toFixed(3)}
-                      </span>
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
-                {chartData.length === 0 ? (
-                  <div className="h-full flex items-center justify-center">
-                    <Loader2 className="animate-spin text-gray-700" />
-                  </div>
-                ) : (
-                  <RLDPerformanceChart
-                    data={chartData}
-                    areas={areas}
-                    resolution={resolution}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* === RIGHT COLUMN: TRADING TERMINAL (Span 3) — matches /app layout === */}
-          <TradingTerminal
-            account={account}
-            connectWallet={connectWallet}
-            title="Synthetic_Rates"
-            Icon={Terminal}
-            subTitle="SIM"
-            tabs={[
-              {
-                id: "LONG",
-                label: "Long",
-                onClick: () => setTradeSide("LONG"),
-                isActive: tradeSide === "LONG",
-                color: "cyan",
-              },
-              {
-                id: "SHORT",
-                label: "Short",
-                onClick: () => setTradeSide("SHORT"),
-                isActive: tradeSide === "SHORT",
-                color: "pink",
-              },
-            ]}
-            actionButton={{
-              label: "SIM_ONLY · READ_ONLY",
-              onClick: () => {},
-              disabled: true,
-              variant: tradeSide === "LONG" ? "cyan" : "pink",
-            }}
-            footer={
-              <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
-                    PnL_Simulator
-                  </span>
-                  <RefreshCw
-                    size={15}
-                    className="text-gray-600 cursor-pointer hover:text-white transition-colors"
-                    onClick={() => setSimTargetRate(currentRate)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[13px] text-gray-500 font-mono">
-                    <span>Rate_Scenario</span>
-                    <span>
-                      {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="30"
-                    step="0.1"
-                    value={simTargetRate || currentRate}
-                    onChange={(e) => setSimTargetRate(Number(e.target.value))}
-                    className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-                  />
-                  <div className="flex justify-between gap-1">
-                    {[-50, -10, 10, 50].map((pct) => (
-                      <SettingsButton
-                        key={pct}
-                        onClick={() =>
-                          setSimTargetRate(currentRate * (1 + pct / 100))
+                {/* Stats Cards */}
+                <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
+                  {/* PRICE */}
+                  <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                      PRICE <Terminal size={15} className="opacity-90" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                      <StatItem
+                        label="ORACLE"
+                        value={market.indexPrice.toFixed(4)}
+                      />
+                      <StatItem
+                        label="24H_CHG"
+                        value={
+                          oracleChange24h != null
+                            ? `${oracleChange24h >= 0 ? "+" : ""}${oracleChange24h.toFixed(2)}%`
+                            : "—"
                         }
-                        className="flex-1"
+                        valueClassName={
+                          oracleChange24h != null
+                            ? oracleChange24h >= 0
+                              ? "text-green-400"
+                              : "text-red-400"
+                            : "text-white"
+                        }
+                      />
+                      <StatItem
+                        label="MARK"
+                        value={pool ? pool.markPrice.toFixed(4) : "—"}
+                      />
+                      <StatItem
+                        label="FUNDING_ANN"
+                        value={
+                          fundingFromNF
+                            ? `${fundingFromNF.annualPct >= 0 ? "+" : ""}${fundingFromNF.annualPct.toFixed(2)}%`
+                            : "—"
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  {/* PROTOCOL */}
+                  <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                      PROTOCOL <Shield size={15} className="opacity-90" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                      <StatItem
+                        label="TVL"
+                        value={
+                          protocolStats
+                            ? `$${(protocolStats.totalCollateral / 1e6).toFixed(2)}M`
+                            : "—"
+                        }
+                      />
+                      <StatItem
+                        label="VOL_24H"
+                        value={volumeData?.volume_formatted || "—"}
+                      />
+                      <StatItem
+                        label="TOTAL_DEBT"
+                        value={
+                          protocolStats
+                            ? `$${(protocolStats.totalDebtUsd / 1e6).toFixed(2)}M`
+                            : "—"
+                        }
+                      />
+                      <StatItem
+                        label="HEALTH"
+                        value={
+                          protocolStats
+                            ? `${protocolStats.overCollat.toFixed(1)}%`
+                            : "—"
+                        }
+                        valueClassName={
+                          protocolStats
+                            ? protocolStats.overCollat >= 200
+                              ? "text-green-400"
+                              : protocolStats.overCollat >= 120
+                                ? "text-yellow-400"
+                                : "text-red-400"
+                            : "text-white"
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  {/* MARKET */}
+                  <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
+                      MARKET <Shield size={15} className="opacity-90" />
+                    </div>
+                    <div className="grid grid-cols-[3fr_2fr] gap-x-4 gap-y-6 mt-auto">
+                      <StatItem
+                        label="COLLATERAL"
+                        value={marketInfo?.collateral?.name || "—"}
+                        valueClassName="text-white !text-[17px] whitespace-nowrap"
+                      />
+                      <StatItem
+                        label="MIN_COL"
+                        value={
+                          marketInfo?.risk_params?.min_col_ratio_pct || "—"
+                        }
+                      />
+                      <StatItem
+                        label="POS_TOKEN"
+                        value={marketInfo?.position_token?.symbol || "—"}
+                        valueClassName="text-white !text-[17px]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. CONTROLS */}
+              <ChartControlBar controls={controls} />
+
+              {/* 3. CHART */}
+              <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 px-1 gap-3 md:gap-0">
+                  <div className="flex gap-4 md:gap-8 flex-wrap">
+                    {[
+                      {
+                        key: "indexPrice",
+                        label: "Index_Price",
+                        bg: "bg-cyan-400",
+                      },
+                      {
+                        key: "markPrice",
+                        label: "Mark_Price",
+                        bg: "bg-pink-500",
+                      },
+                    ].map((s) => (
+                      <div
+                        key={s.key}
+                        className={`flex items-center gap-2 cursor-pointer transition-all ${
+                          hiddenSeries.includes(s.key)
+                            ? "opacity-50 line-through"
+                            : "opacity-100 hover:opacity-80"
+                        }`}
+                        onClick={() => toggleSeries(s.key)}
                       >
-                        {pct > 0 ? "+" : ""}
-                        {pct}%
-                      </SettingsButton>
+                        <div className={`w-2 h-2 ${s.bg}`}></div>
+                        <span className="text-[11px] uppercase tracking-widest">
+                          {s.label}
+                        </span>
+                      </div>
                     ))}
                   </div>
+
+                  {/* Period stats */}
+                  {chartStats && (
+                    <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
+                      <span>
+                        Range:{" "}
+                        <span className="text-white">
+                          {chartStats.min.toFixed(2)} –{" "}
+                          {chartStats.max.toFixed(2)}
+                        </span>
+                      </span>
+                      <span>
+                        Vol:{" "}
+                        <span className="text-white">
+                          ±{chartStats.vol.toFixed(3)}
+                        </span>
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                <div>
-                  <div className="flex justify-between items-end">
-                    <span className="text-[13px] text-gray-500">
-                      Est. PnL (1Y)
+                <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
+                  {chartData.length === 0 ? (
+                    <div className="h-full flex items-center justify-center">
+                      <Loader2 className="animate-spin text-gray-700" />
+                    </div>
+                  ) : (
+                    <RLDPerformanceChart
+                      data={chartData}
+                      areas={areas}
+                      resolution={resolution}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* === RIGHT COLUMN: TRADING TERMINAL (Span 3) — matches /app layout === */}
+            <TradingTerminal
+              account={account}
+              connectWallet={connectWallet}
+              title="Synthetic_Rates"
+              Icon={Terminal}
+              subTitle="SIM"
+              tabs={[
+                {
+                  id: "LONG",
+                  label: "Long",
+                  onClick: () => setTradeSide("LONG"),
+                  isActive: tradeSide === "LONG",
+                  color: "cyan",
+                },
+                {
+                  id: "SHORT",
+                  label: "Short",
+                  onClick: () => setTradeSide("SHORT"),
+                  isActive: tradeSide === "SHORT",
+                  color: "pink",
+                },
+              ]}
+              actionButton={{
+                label:
+                  !account || !hasBroker
+                    ? "Create Account"
+                    : swapExecuting
+                      ? swapStep || "Processing..."
+                      : tradeSide === "LONG"
+                        ? "Open Long"
+                        : "Open Short",
+                onClick:
+                  !account || !hasBroker
+                    ? () => setShowAccountModal(true)
+                    : tradeSide === "LONG"
+                      ? () => {
+                          executeLong(collateral, () => {
+                            if (fetchBrokerBalance && brokerAddress) {
+                              fetchBrokerBalance(brokerAddress);
+                            }
+                          });
+                        }
+                      : () => {},
+                disabled:
+                  swapExecuting ||
+                  (tradeSide === "LONG" && (!collateral || quoteLoading)),
+                variant: tradeSide === "LONG" ? "cyan" : "pink",
+              }}
+              footer={
+                <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
+                      PnL_Simulator
                     </span>
-                    <div
-                      className={`text-right ${
-                        simPnL.value >= 0 ? "text-green-500" : "text-red-500"
-                      }`}
-                    >
-                      <div className="text-xl font-mono leading-none">
-                        {simPnL.value >= 0 ? "+" : ""}
-                        {simPnL.value.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}{" "}
-                        USDC
-                      </div>
-                      <div className="text-[12px] font-mono mt-1">
-                        {simPnL.percent.toFixed(2)}% ROI
+                    <RefreshCw
+                      size={15}
+                      className="text-gray-600 cursor-pointer hover:text-white transition-colors"
+                      onClick={() => setSimTargetRate(currentRate)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[13px] text-gray-500 font-mono">
+                      <span>Rate_Scenario</span>
+                      <span>
+                        {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="30"
+                      step="0.1"
+                      value={simTargetRate || currentRate}
+                      onChange={(e) => setSimTargetRate(Number(e.target.value))}
+                      className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                    />
+                    <div className="flex justify-between gap-1">
+                      {[-50, -10, 10, 50].map((pct) => (
+                        <SettingsButton
+                          key={pct}
+                          onClick={() =>
+                            setSimTargetRate(currentRate * (1 + pct / 100))
+                          }
+                          className="flex-1"
+                        >
+                          {pct > 0 ? "+" : ""}
+                          {pct}%
+                        </SettingsButton>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-end">
+                      <span className="text-[13px] text-gray-500">
+                        Est. PnL (1Y)
+                      </span>
+                      <div
+                        className={`text-right ${
+                          simPnL.value >= 0 ? "text-green-500" : "text-red-500"
+                        }`}
+                      >
+                        <div className="text-xl font-mono leading-none">
+                          {simPnL.value >= 0 ? "+" : ""}
+                          {simPnL.value.toLocaleString(undefined, {
+                            maximumFractionDigits: 0,
+                          })}{" "}
+                          USDC
+                        </div>
+                        <div className="text-[12px] font-mono mt-1">
+                          {simPnL.percent.toFixed(2)}% ROI
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            }
-          >
-            {/* Faucet Section */}
-            {account && (
-              <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
-                <button
-                  onClick={() => requestFaucet(account)}
-                  disabled={faucetLoading}
-                  className={`w-full py-2.5 text-[11px] font-bold tracking-[0.15em] uppercase transition-all focus:outline-none rounded-none border ${
-                    faucetLoading
-                      ? "border-white/10 text-gray-600 cursor-wait"
-                      : "border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:border-cyan-500/50"
-                  }`}
-                >
-                  {faucetLoading ? (
-                    <Loader2 size={14} className="animate-spin mx-auto" />
-                  ) : waUsdcBalance ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Droplets size={12} />
-                      Faucet · Request Again
-                    </span>
-                  ) : (
-                    <span className="flex items-center justify-center gap-2">
-                      <Droplets size={12} />
-                      Request 100K waUSDC + ETH
-                    </span>
+              }
+            >
+              {/* Faucet Section */}
+              {account && (
+                <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
+                  <button
+                    onClick={() => requestFaucet(account)}
+                    disabled={faucetLoading}
+                    className={`w-full py-2.5 text-[11px] font-bold tracking-[0.15em] uppercase transition-all focus:outline-none rounded-none border ${
+                      faucetLoading
+                        ? "border-white/10 text-gray-600 cursor-wait"
+                        : "border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:border-cyan-500/50"
+                    }`}
+                  >
+                    {faucetLoading ? (
+                      <Loader2 size={14} className="animate-spin mx-auto" />
+                    ) : waUsdcBalance ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Droplets size={12} />
+                        Faucet · Request Funds
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <Droplets size={12} />
+                        Request 100K waUSDC + ETH
+                      </span>
+                    )}
+                  </button>
+                  {faucetError && (
+                    <div className="text-[10px] text-red-400 font-mono truncate">
+                      Error: {faucetError}
+                    </div>
                   )}
-                </button>
-                {faucetError && (
-                  <div className="text-[10px] text-red-400 font-mono truncate">
-                    Error: {faucetError}
+                </div>
+              )}
+
+              {/* Collateral Input */}
+              <InputGroup
+                label="Collateral"
+                subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
+                value={collateral}
+                onChange={(v) => setCollateral(Number(v))}
+                suffix="USDC"
+              />
+
+              {/* LONG: Amount Out (from V4 quote) */}
+              {tradeSide === "LONG" && (
+                <InputGroup
+                  label="Amount_Out"
+                  subLabel={quoteLoading ? "quoting..." : ""}
+                  value={
+                    swapQuote ? parseFloat(swapQuote.amountOut.toFixed(4)) : ""
+                  }
+                  onChange={() => {}}
+                  suffix="wRLP"
+                  readOnly
+                />
+              )}
+
+              {/* SHORT: Amount & CR */}
+              {tradeSide === "SHORT" && (
+                <>
+                  <InputGroup
+                    label="Amount_Notional"
+                    value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
+                    onChange={(v) => handleShortAmountChange(Number(v))}
+                    suffix="USDC"
+                  />
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                      <span>Collateral_Ratio</span>
+                      <span className="text-white">{shortCR.toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="110"
+                      max="1500"
+                      step="10"
+                      value={shortCR}
+                      onChange={(e) => setShortCR(Number(e.target.value))}
+                      className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                    />
+                    <div className="flex justify-between text-[12px] text-gray-500 font-mono">
+                      <span>110%</span>
+                      <span>1500%</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Stats Box */}
+              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
+                <SummaryRow
+                  label="Entry_Rate"
+                  value={
+                    tradeSide === "LONG" && swapQuote
+                      ? `${swapQuote.entryRate.toFixed(4)}`
+                      : `${currentRate.toFixed(4)}`
+                  }
+                />
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500 uppercase text-[12px]">
+                    Liq. Rate
+                  </span>
+                  <span className="font-mono text-orange-500 text-[12px]">
+                    {liqRate ? `${liqRate.toFixed(4)}` : "None"}
+                  </span>
+                </div>
+                <SummaryRow
+                  label="Notional"
+                  value={
+                    tradeSide === "LONG" && swapQuote
+                      ? `$${swapQuote.notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                      : `$${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                  }
+                />
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-500 uppercase text-[12px]">
+                    Est. Fee
+                  </span>
+                  <span className="font-mono text-gray-400">
+                    {tradeSide === "LONG" && swapQuote
+                      ? `${swapQuote.estFee.toFixed(2)} waUSDC`
+                      : `${(notional * 0.001).toFixed(2)} USDC`}
+                  </span>
+                </div>
+                {swapError && (
+                  <div className="text-[10px] text-red-400 font-mono truncate mt-1">
+                    {swapError}
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Collateral Input */}
-            <InputGroup
-              label="Collateral"
-              subLabel={
-                waUsdcBalance
-                  ? `BAL: ${parseFloat(waUsdcBalance).toLocaleString()}`
-                  : "SIM_MODE"
-              }
-              value={collateral}
-              onChange={(v) => setCollateral(Number(v))}
-              suffix="USDC"
-            />
-
-            {/* LONG: Amount */}
-            {tradeSide === "LONG" && (
-              <InputGroup
-                label="Amount_Notional"
-                value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
-                onChange={(v) => handleLongAmountChange(Number(v))}
-                suffix="USDC"
-              />
-            )}
-
-            {/* SHORT: Amount & CR */}
-            {tradeSide === "SHORT" && (
-              <>
-                <InputGroup
-                  label="Amount_Notional"
-                  value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
-                  onChange={(v) => handleShortAmountChange(Number(v))}
-                  suffix="USDC"
-                />
-
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
-                    <span>Collateral_Ratio</span>
-                    <span className="text-white">{shortCR.toFixed(0)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="110"
-                    max="1500"
-                    step="10"
-                    value={shortCR}
-                    onChange={(e) => setShortCR(Number(e.target.value))}
-                    className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-                  />
-                  <div className="flex justify-between text-[12px] text-gray-500 font-mono">
-                    <span>110%</span>
-                    <span>1500%</span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Stats Box */}
-            <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
-              <SummaryRow
-                label="Entry_Rate"
-                value={`${currentRate.toFixed(4)}`}
-              />
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500 uppercase text-[12px]">
-                  Liq. Rate
-                </span>
-                <span className="font-mono text-orange-500 text-[12px]">
-                  {liqRate ? `${liqRate.toFixed(4)}` : "None"}
-                </span>
-              </div>
-              <SummaryRow
-                label="Notional"
-                value={`$${notional.toLocaleString(undefined, {
-                  maximumFractionDigits: 0,
-                })}`}
-              />
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-500 uppercase text-[12px]">
-                  Est. Fee
-                </span>
-                <span className="font-mono text-gray-400">
-                  {(notional * 0.001).toFixed(2)} USDC
-                </span>
-              </div>
-            </div>
-          </TradingTerminal>
-        </div>
-
-        {/* === BOTTOM ROW: BROKER POSITIONS | FUNDING | EVENTS (full width) === */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Broker Positions */}
-          <div className="border border-white/10 bg-[#080808] flex flex-col">
-            <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-              <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                <Layers size={14} className="text-gray-500" />
-                Broker_Positions
-              </h3>
-              <span className="text-[11px] text-gray-600 uppercase tracking-widest font-mono">
-                {brokers.length} Active
-              </span>
-            </div>
-            <div className="p-4 md:p-5 flex-1">
-              <BrokerPositions brokers={brokers} />
-            </div>
+            </TradingTerminal>
           </div>
 
-          {/* Funding Direction */}
-          <div className="border border-white/10 bg-[#080808] flex flex-col">
-            <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-              <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                <ArrowUpDown size={14} className="text-gray-500" />
-                Funding_Direction
-              </h3>
-              {funding && (
-                <span
-                  className={`text-[11px] font-bold uppercase tracking-widest ${
-                    funding.direction === "LONGS_PAY"
-                      ? "text-green-500"
-                      : "text-red-500"
-                  }`}
-                >
-                  {funding.direction.replace("_", " ")}
+          {/* === BOTTOM ROW: BROKER POSITIONS | FUNDING | EVENTS (full width) === */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Broker Positions */}
+            <div className="border border-white/10 bg-[#080808] flex flex-col">
+              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
+                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                  <Layers size={14} className="text-gray-500" />
+                  Broker_Positions
+                </h3>
+                <span className="text-[11px] text-gray-600 uppercase tracking-widest font-mono">
+                  {brokers.length} Active
                 </span>
-              )}
+              </div>
+              <div className="p-4 md:p-5 flex-1">
+                <BrokerPositions brokers={brokers} />
+              </div>
             </div>
-            <div className="p-4 md:p-5 flex-1">
-              {funding ? (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
-                      Spread
-                    </div>
-                    <div
-                      className={`text-xl font-mono font-bold ${
-                        funding.spread >= 0 ? "text-green-400" : "text-red-400"
-                      }`}
-                    >
-                      {funding.spread >= 0 ? "+" : ""}
-                      {funding.spread.toFixed(4)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
-                      Spread %
-                    </div>
-                    <div
-                      className={`text-xl font-mono font-bold ${
-                        funding.spreadPct >= 0
-                          ? "text-green-400"
-                          : "text-red-400"
-                      }`}
-                    >
-                      {funding.spreadPct >= 0 ? "+" : ""}
-                      {funding.spreadPct.toFixed(2)}%
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-gray-700 text-xs uppercase tracking-widest">
-                  No funding data
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* Recent Swaps */}
-          <div className="border border-white/10 bg-[#080808] flex flex-col">
-            <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-              <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                <Gauge size={14} className="text-gray-500" />
-                Recent_Swaps
-              </h3>
+            {/* Funding Direction */}
+            <div className="border border-white/10 bg-[#080808] flex flex-col">
+              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
+                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                  <ArrowUpDown size={14} className="text-gray-500" />
+                  Funding_Direction
+                </h3>
+                {funding && (
+                  <span
+                    className={`text-[11px] font-bold uppercase tracking-widest ${
+                      funding.direction === "LONGS_PAY"
+                        ? "text-green-500"
+                        : "text-red-500"
+                    }`}
+                  >
+                    {funding.direction.replace("_", " ")}
+                  </span>
+                )}
+              </div>
+              <div className="p-4 md:p-5 flex-1">
+                {funding ? (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
+                        Spread
+                      </div>
+                      <div
+                        className={`text-xl font-mono font-bold ${
+                          funding.spread >= 0
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }`}
+                      >
+                        {funding.spread >= 0 ? "+" : ""}
+                        {funding.spread.toFixed(4)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
+                        Spread %
+                      </div>
+                      <div
+                        className={`text-xl font-mono font-bold ${
+                          funding.spreadPct >= 0
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }`}
+                      >
+                        {funding.spreadPct >= 0 ? "+" : ""}
+                        {funding.spreadPct.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-gray-700 text-xs uppercase tracking-widest">
+                    No funding data
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="p-4 md:p-5 flex-1">
-              <EventsFeed events={events} />
+
+            {/* Recent Swaps */}
+            <div className="border border-white/10 bg-[#080808] flex flex-col">
+              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
+                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                  <Gauge size={14} className="text-gray-500" />
+                  Recent_Swaps
+                </h3>
+              </div>
+              <div className="p-4 md:p-5 flex-1">
+                <EventsFeed events={events} />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Account Onboarding Modal */}
+      <AccountModal
+        isOpen={showAccountModal}
+        onClose={() => setShowAccountModal(false)}
+        onComplete={(addr) => {
+          console.log("Broker onboarded:", addr);
+          setShowAccountModal(false);
+        }}
+        brokerFactoryAddr={marketInfo?.broker_factory}
+        waUsdcAddr={marketInfo?.collateral?.address}
+      />
+    </>
   );
 }
 

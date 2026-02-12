@@ -453,9 +453,26 @@ async def get_market_info(request: Request):
         funding_period = decode_uint(config_data, 3)
         debt_cap = decode_uint(config_data, 4)
 
+        broker_factory = market_config.get("broker_factory", os.environ.get("BROKER_FACTORY"))
+
+        # Infrastructure addresses (deployed to Anvil fork)
+        broker_router = os.environ.get("BROKER_ROUTER", "0x171B627111dd81C46F6ae3F1455232bF1cbC311F")
+        v4_quoter = os.environ.get("V4_QUOTER", "0x894c963d57D46793ea0d710C816a1804f5A2e272")
+        twamm_hook = market_config.get("twamm_hook", os.environ.get("TWAMM_HOOK", "0x2d1B11cE8ea5204839458789873da6b0ce182Ac0"))
+        pool_manager = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+
         return {
             "collateral": {"name": col_name, "symbol": col_symbol, "address": col_token},
             "position_token": {"name": pos_name, "symbol": pos_symbol, "address": pos_token},
+            "broker_factory": broker_factory,
+            "infrastructure": {
+                "broker_router": broker_router,
+                "v4_quoter": v4_quoter,
+                "twamm_hook": twamm_hook,
+                "pool_manager": pool_manager,
+                "pool_fee": 500,
+                "tick_spacing": 5,
+            },
             "risk_params": {
                 "min_col_ratio": min_col_ratio / 1e18,
                 "min_col_ratio_pct": f"{min_col_ratio / 1e16:.0f}%",

@@ -117,13 +117,20 @@ def main():
     logger.info("║     RLD Market Indexer                            ║")
     logger.info("╚═══════════════════════════════════════════════════╝")
 
-    # 1. Auto-discover market config
+    # 1. Auto-discover market config (with retries — deployer may still be running)
     logger.info("[1/3] Discovering market configuration...")
-    try:
-        config = discover_from_env()
-    except Exception as e:
-        logger.error(f"❌ Discovery failed: {e}")
-        sys.exit(1)
+    MAX_DISCOVERY_RETRIES = 30
+    config = None
+    for attempt in range(1, MAX_DISCOVERY_RETRIES + 1):
+        try:
+            config = discover_from_env()
+            break
+        except Exception as e:
+            logger.error(f"❌ Discovery failed (attempt {attempt}/{MAX_DISCOVERY_RETRIES}): {e}")
+            if attempt == MAX_DISCOVERY_RETRIES:
+                logger.error("❌ All discovery attempts exhausted — exiting")
+                sys.exit(1)
+            time.sleep(10)
 
     # Store config globally for API to access
     os.environ["_DISCOVERED_COLLATERAL"] = config["collateral_token"]

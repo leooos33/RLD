@@ -100,6 +100,9 @@ def discover_market(rpc_url: str, rld_core: str, market_id: str,
     token0 = min(collateral_token.lower(), position_token.lower())
     token1 = max(collateral_token.lower(), position_token.lower())
 
+    # Broker factory — from env (set by entrypoint from deployment.json)
+    broker_factory = os.environ.get("BROKER_FACTORY")
+
     config = {
         "rpc_url": rpc_url,
         "rld_core": rld_core,
@@ -110,6 +113,7 @@ def discover_market(rpc_url: str, rld_core: str, market_id: str,
         "position_token": position_token,
         "underlying_token": underlying_token,
         "rate_oracle": rate_oracle,
+        "broker_factory": broker_factory,
         "token0": Web3.to_checksum_address(token0),
         "token1": Web3.to_checksum_address(token1),
         "normalization_factor": nf,

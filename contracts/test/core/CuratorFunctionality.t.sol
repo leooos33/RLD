@@ -78,7 +78,8 @@ contract CuratorFunctionalityTest is Test, GlobalTestConfig {
             address(fundingModel),
             address(0), // No TWAMM
             address(0x1), // Mock renderer
-            30 days
+            30 days,
+            address(0)  // No BrokerRouter
         );
         
         core = new RLDCore(address(factory), address(poolManager), address(0));

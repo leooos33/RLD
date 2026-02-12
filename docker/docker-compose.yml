@@ -22,7 +22,7 @@ services:
       context: ..
       dockerfile: docker/deployer/Dockerfile
     volumes:
-      - config:/config
+      - ./deployment.json:/config/deployment.json
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - ETH_RPC_URL=${ETH_RPC_URL}
@@ -46,7 +46,7 @@ services:
       deployer:
         condition: service_completed_successfully
     volumes:
-      - config:/config:ro
+      - ./deployment.json:/config/deployment.json:ro
       - indexer-data:/data
     ports:
       - "${INDEXER_PORT:-8080}:8080"
@@ -77,7 +77,7 @@ services:
       deployer:
         condition: service_completed_successfully
     volumes:
-      - config:/config:ro
+      - ./deployment.json:/config/deployment.json:ro
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - CONFIG_FILE=/config/deployment.json
@@ -106,7 +106,7 @@ services:
       deployer:
         condition: service_completed_successfully
     volumes:
-      - config:/config:ro
+      - ./deployment.json:/config/deployment.json:ro
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - CONFIG_FILE=/config/deployment.json
@@ -123,5 +123,4 @@ services:
       retries: 3
 
 volumes:
-  config: # Shared deployment addresses (deployer writes, others read)
   indexer-data: # Persistent indexer SQLite DB
