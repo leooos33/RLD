@@ -15,6 +15,7 @@ const Portfolio = lazy(() => import("./components/Portfolio"));
 const SimulationTerminal = lazy(
   () => import("./components/SimulationTerminal"),
 );
+const Story = lazy(() => import("./components/Story"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -58,8 +59,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <WalletProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<LandingPage />} />
+            <Route path="/landing" element={<LandingPage />} />
             <Route element={<Layout />}>
+              <Route path="/" element={<Story />} />
               <Route path="/app" element={<App />} />
               <Route
                 path="/bonds"
