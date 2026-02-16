@@ -2,7 +2,6 @@ import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
-import LandingPage from "./LandingPage";
 import "./index.css";
 import { WalletProvider } from "./context/WalletContext.jsx";
 import Layout from "./components/Layout";
@@ -15,7 +14,7 @@ const Portfolio = lazy(() => import("./components/Portfolio"));
 const SimulationTerminal = lazy(
   () => import("./components/SimulationTerminal"),
 );
-const Story = lazy(() => import("./components/Story"));
+const Homepage = lazy(() => import("./components/Homepage"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -59,9 +58,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <WalletProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/landing" element={<LandingPage />} />
             <Route element={<Layout />}>
-              <Route path="/" element={<Story />} />
+              <Route
+                path="/"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <Homepage />
+                  </Suspense>
+                }
+              />
               <Route path="/app" element={<App />} />
               <Route
                 path="/bonds"

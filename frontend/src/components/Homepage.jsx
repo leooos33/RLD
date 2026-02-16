@@ -11,12 +11,11 @@ import {
   GitBranch,
 } from "lucide-react";
 import RLDPerformanceChart from "./RLDChart";
-import BondCard from "./BondCard";
 import ratesCsv from "../assets/aave_usdc_rates_full_history_2026-01-27.csv?raw";
 
 /**
- * Story Page — Pitch Deck (concise, aligned to RLD Whitepaper)
- * Route: /story
+ * Homepage — Pitch Deck (concise, aligned to RLD Whitepaper)
+ * Route: /
  */
 
 const TWAR_WINDOW = 3600; // 1 hour smoothing
@@ -1176,7 +1175,7 @@ const StreamChartPanel = () => (
   </div>
 );
 
-export default function Story() {
+export default function Homepage() {
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono">
       {/* HERO */}
@@ -1217,18 +1216,277 @@ export default function Story() {
               Scroll
             </div>
           </div>
-          <div className="hidden lg:flex justify-center items-center">
-            <div className="w-[340px]">
-              <BondCard
-                nft={{
-                  tokenId: "0042",
-                  currency: "USDC",
-                  rate: 8.4,
-                  principal: 25000,
-                  maturityDate: "2026-05-15T00:00:00Z",
-                  status: "ACTIVE",
-                }}
-              />
+          <div className="hidden lg:flex flex-col items-center">
+            {/* Application Cards — 3 use cases */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              {/* BONDS */}
+              <div className="w-[280px] border border-white/10 bg-[#080808]">
+                <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-cyan-400" />
+                    Bond
+                  </span>
+                  <span className="text-[9px] text-gray-600 tracking-[0.15em]">
+                    #0042
+                  </span>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <div>
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Fixed APY
+                      </div>
+                      <div className="text-xl text-cyan-400 font-mono font-light tracking-tight">
+                        8.40%
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Principal
+                      </div>
+                      <div className="text-[12px] text-white font-mono">
+                        25,000 USDC
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2.5 border-t border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-cyan-500 animate-pulse" />
+                      <span className="text-[9px] text-cyan-500 uppercase tracking-widest">
+                        Active
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
+                      453 Days
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CDS */}
+              <div className="w-[280px] border border-white/10 bg-[#080808]">
+                <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-pink-500" />
+                    CDS
+                  </span>
+                  <span className="text-[9px] text-gray-600 tracking-[0.15em]">
+                    #0108
+                  </span>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <div>
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Payout
+                      </div>
+                      <div className="text-xl text-pink-400 font-mono font-light tracking-tight">
+                        10×
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Coverage
+                      </div>
+                      <div className="text-[12px] text-white font-mono">
+                        100,000 USDC
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2.5 border-t border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-pink-500 animate-pulse" />
+                      <span className="text-[9px] text-pink-400 uppercase tracking-widest">
+                        Armed
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
+                      aUSDT
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* VAULTS */}
+              <div className="w-[280px] border border-white/10 bg-[#080808]">
+                <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-green-500" />
+                    Vault
+                  </span>
+                  <span className="text-[9px] text-gray-600 tracking-[0.15em]">
+                    #0077
+                  </span>
+                </div>
+                <div className="px-4 py-3">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <div>
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Strategy APY
+                      </div>
+                      <div className="text-xl text-green-400 font-mono font-light tracking-tight">
+                        12.3%
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                        Deposited
+                      </div>
+                      <div className="text-[12px] text-white font-mono">
+                        50,000 USDC
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2.5 border-t border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-green-500 animate-pulse" />
+                      <span className="text-[9px] text-green-400 uppercase tracking-widest">
+                        Earning
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
+                      AAVE V3
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Protocol Stack — Terminal Panel Style */}
+            <div className="w-[380px] border border-white/10 bg-[#080808]">
+              {/* Panel header */}
+              <div className="px-5 py-3 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                  <Layers size={12} className="text-gray-500" />
+                  Protocol_Stack
+                </span>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]" />
+                  <span className="text-[10px] text-gray-600 uppercase tracking-[0.2em]">
+                    Live
+                  </span>
+                </div>
+              </div>
+
+              {/* Layers */}
+              <div>
+                {/* Layer 1: Applications */}
+                <div className="px-5 py-4 hover:bg-white/[0.02] transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-pink-500" />
+                      <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-pink-400">
+                        Applications
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                      ::0001
+                    </span>
+                  </div>
+                  <div className="pl-4 flex items-center gap-2">
+                    {["Bonds", "CDS", "Vaults"].map((item, j) => (
+                      <React.Fragment key={item}>
+                        {j > 0 && <span className="text-white/10">|</span>}
+                        <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                          {item}
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Layer 2: RLD Core + Uniswap V4 (side by side) */}
+                <div className="grid grid-cols-2 border-t border-white/5">
+                  <div className="px-4 py-4 hover:bg-white/[0.02] transition-colors border-r border-white/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-white" />
+                        <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-white">
+                          RLD Core
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                        ::0010
+                      </span>
+                    </div>
+                    <div className="pl-4 flex flex-col gap-1">
+                      {["CDP_Engine", "Long/Short", "Funding"].map((item) => (
+                        <span
+                          key={item}
+                          className="text-[10px] text-gray-500 uppercase tracking-widest"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="px-4 py-4 hover:bg-white/[0.02] transition-colors">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-cyan-400" />
+                        <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-cyan-400">
+                          Uniswap V4
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                        ::0100
+                      </span>
+                    </div>
+                    <div className="pl-4 flex flex-col gap-1">
+                      {["Market", "Limit", "TWAP"].map((item) => (
+                        <span
+                          key={item}
+                          className="text-[10px] text-gray-500 uppercase tracking-widest"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Layer 3: Lending Protocols */}
+                <div className="px-5 py-4 border-t border-white/5 hover:bg-white/[0.02] transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-green-500" />
+                      <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-green-400">
+                        Lending Protocols
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                      ::0011
+                    </span>
+                  </div>
+                  <div className="pl-4 flex items-center gap-2">
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      AAVE
+                    </span>
+                    <span className="text-white/10">|</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      Morpho
+                    </span>
+                    <span className="text-white/10">|</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      Euler
+                    </span>
+                    <span className="text-white/10">|</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      Fluid
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panel footer */}
+              <div className="px-5 py-2.5 border-t border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+                  4 layers
+                </span>
+                <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+                  Ethereum Mainnet
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -1340,90 +1598,133 @@ export default function Story() {
       })}
 
       {/* FOOTER */}
-      <footer className="border-t border-white/10 relative bg-[#050505] overflow-hidden">
-        <div className="absolute inset-0 pattern-grid opacity-10 pointer-events-none" />
-
-        <div className="p-6 md:p-12 grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-10 relative z-10">
-          <div className="space-y-4 col-span-2 md:col-span-1">
-            <div className="text-[13px] font-bold tracking-[0.2em] flex items-center gap-2 text-white">
-              <div className="w-2 h-2 bg-white" />
-              RLD
+      <footer className="border-t border-white/10 bg-[#080808]">
+        <div className="max-w-[1800px] mx-auto px-6 md:px-12">
+          {/* Main footer row */}
+          <div className="py-10 grid grid-cols-2 md:grid-cols-12 gap-y-10 gap-x-6">
+            {/* Brand block */}
+            <div className="col-span-2 md:col-span-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-white" />
+                <span className="text-sm font-bold tracking-widest uppercase text-white">
+                  RLD
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-relaxed max-w-[280px]">
+                Interest Rate Derivatives Layer.
+                <br />
+                One pool. Every maturity. Protected yield.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <div className="w-1.5 h-1.5 bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]" />
+                <span className="text-[10px] text-gray-600 uppercase tracking-[0.2em]">
+                  Mainnet
+                </span>
+              </div>
             </div>
-            <p className="text-[11px] text-gray-600 leading-relaxed max-w-xs">
-              Interest Rate Derivatives Layer.
-              <br />
-              One pool. Every maturity. Protected yield.
-            </p>
+
+            {/* Protocol links */}
+            <div className="col-span-1 md:col-span-2 space-y-4">
+              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+                <span className="text-white/10">//</span> Protocol
+              </div>
+              <ul className="space-y-2.5">
+                {[
+                  { label: "Whitepaper", href: "#" },
+                  { label: "Github", href: "#" },
+                  { label: "Docs", href: "https://docs.rld.finance" },
+                ].map(({ label, href }) => (
+                  <li key={label}>
+                    <a
+                      href={href}
+                      target={href.startsWith("http") ? "_blank" : undefined}
+                      rel={
+                        href.startsWith("http")
+                          ? "noopener noreferrer"
+                          : undefined
+                      }
+                      className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors block"
+                    >
+                      {label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Interface links */}
+            <div className="col-span-1 md:col-span-2 space-y-4">
+              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+                <span className="text-white/10">//</span> Interface
+              </div>
+              <ul className="space-y-2.5">
+                {[
+                  { label: "Terminal", href: "/app" },
+                  { label: "Bonds", href: "/bonds" },
+                  { label: "Markets", href: "/markets" },
+                  { label: "Portfolio", href: "/portfolio" },
+                ].map(({ label, href }) => (
+                  <li key={label}>
+                    <a
+                      href={href}
+                      className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors block"
+                    >
+                      {label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Community links */}
+            <div className="col-span-1 md:col-span-2 space-y-4">
+              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+                <span className="text-white/10">//</span> Community
+              </div>
+              <ul className="space-y-2.5">
+                {["Twitter", "Telegram", "Discord"].map((item) => (
+                  <li key={item}>
+                    <a
+                      href="#"
+                      className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors block"
+                    >
+                      {item}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Legal links */}
+            <div className="col-span-1 md:col-span-2 space-y-4">
+              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em] flex items-center gap-2">
+                <span className="text-white/10">//</span> Legal
+              </div>
+              <ul className="space-y-2.5">
+                {["Privacy Policy", "Terms of Service"].map((item) => (
+                  <li key={item}>
+                    <a
+                      href="#"
+                      className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors block"
+                    >
+                      {item}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="text-[11px] text-white font-bold uppercase tracking-widest border-b border-white/10 pb-2 w-fit">
-              Protocol
+          {/* Bottom bar */}
+          <div className="border-t border-white/5 py-5 flex flex-col md:flex-row justify-between items-center gap-3">
+            <span className="text-[10px] text-gray-700 uppercase tracking-[0.2em]">
+              © 2025 RLD Protocol
+            </span>
+            <div className="flex items-center gap-4 text-[10px] text-gray-700 uppercase tracking-[0.2em]">
+              <span>Built on Uniswap V4</span>
+              <span className="text-white/10">|</span>
+              <span>Powered by AAVE</span>
             </div>
-            <ul className="space-y-2">
-              {["Whitepaper", "Github"].map((item) => (
-                <li key={item}>
-                  <a
-                    href="#"
-                    className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors hover:pl-1 block"
-                  >
-                    [{item}]
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="space-y-4">
-            <div className="text-[11px] text-white font-bold uppercase tracking-widest border-b border-white/10 pb-2 w-fit">
-              Interface
-            </div>
-            <ul className="space-y-2">
-              {[
-                { label: "Bonds", href: "/bonds" },
-                { label: "Markets", href: "/markets" },
-                { label: "Portfolio", href: "/portfolio" },
-              ].map(({ label, href }) => (
-                <li key={label}>
-                  <a
-                    href={href}
-                    className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors hover:pl-1 block"
-                  >
-                    [{label}]
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="space-y-4">
-            <div className="text-[11px] text-white font-bold uppercase tracking-widest border-b border-white/10 pb-2 w-fit">
-              Community
-            </div>
-            <ul className="space-y-2">
-              {["Twitter", "Telegram", "Discord"].map((item) => (
-                <li key={item}>
-                  <a
-                    href="#"
-                    className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors hover:pl-1 block"
-                  >
-                    [{item}]
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <div className="border-t border-white/10 p-6 md:px-12 py-6 flex flex-col md:flex-row justify-between items-center text-[10px] text-gray-600 uppercase tracking-widest relative z-10">
-          <div>© 2025 RLD Protocol. All rights reserved.</div>
-          <div className="flex gap-6 mt-4 md:mt-0">
-            <a href="#" className="hover:text-white transition-colors">
-              Privacy Policy
-            </a>
-            <a href="#" className="hover:text-white transition-colors">
-              Terms of Service
-            </a>
           </div>
         </div>
       </footer>
