@@ -375,108 +375,171 @@ const DBox = ({ children, className = "" }) => (
   </div>
 );
 
-/** Protocol architecture diagram — matches terminal aesthetic */
+/** Protocol architecture diagram — hero-style terminal panel cards */
 const MechanismDiagram = () => {
-  const hArrow = (
-    <svg width="48" height="12" className="shrink-0">
-      <line
-        x1="0"
-        y1="6"
-        x2="48"
-        y2="6"
-        stroke="white"
-        strokeOpacity="0.3"
-        strokeDasharray="4 3"
-      />
-      <polygon points="4,2 4,10 0,6" fill="white" fillOpacity="0.3" />
-      <polygon points="44,2 44,10 48,6" fill="white" fillOpacity="0.3" />
-    </svg>
-  );
-
-  const vArrowDown = (
-    <>
-      <svg width="2" height="28">
-        <line
-          x1="1"
-          y1="0"
-          x2="1"
-          y2="28"
-          stroke="white"
-          strokeOpacity="0.3"
-          strokeDasharray="4 3"
+  /* Horizontal connector arrow */
+  const hConnector = (label) => (
+    <div className="flex flex-col items-center justify-center gap-1 shrink-0 px-1">
+      {label && (
+        <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+          {label}
+        </span>
+      )}
+      <div className="flex items-center gap-0">
+        <div className="w-1.5 h-1.5 border border-white/30 rotate-45" />
+        <div
+          className="w-10 h-px bg-gradient-to-r from-white/30 to-white/30"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 4px, transparent 4px, transparent 8px)",
+          }}
         />
-      </svg>
-      <svg width="8" height="6">
-        <polygon points="0,0 8,0 4,6" fill="white" fillOpacity="0.4" />
-      </svg>
-    </>
-  );
-
-  const vArrowUp = (
-    <>
-      <svg width="8" height="6">
-        <polygon points="0,6 8,6 4,0" fill="white" fillOpacity="0.4" />
-      </svg>
-      <svg width="2" height="28">
-        <line
-          x1="1"
-          y1="0"
-          x2="1"
-          y2="28"
-          stroke="white"
-          strokeOpacity="0.3"
-          strokeDasharray="4 3"
-        />
-      </svg>
-    </>
+        <svg width="8" height="8" className="shrink-0">
+          <polygon points="0,0 8,4 0,8" fill="white" fillOpacity="0.3" />
+        </svg>
+      </div>
+    </div>
   );
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-4">
-      <div className="flex items-center gap-0">
-        {/* Left: Oracle */}
-        <div className="border border-dashed border-white/20 p-3">
-          <div className="text-[10px] text-cyan-400 uppercase tracking-widest font-bold mb-2">
-            Interest rates oracle
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="flex items-stretch gap-0">
+        {/* ── ORACLE PANEL ── */}
+        <div className="border border-white/10 bg-[#080808] w-[190px] flex flex-col">
+          <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-green-500" />
+              Oracle
+            </span>
+            <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+              ::01
+            </span>
           </div>
-          <div className="space-y-1.5">
-            <DBox>AAVE</DBox>
-            <DBox>Morpho</DBox>
-            <DBox>Euler</DBox>
-            <DBox>Fluid</DBox>
+          <div className="px-4 py-3 space-y-1.5 flex-1">
+            {["AAVE", "Morpho", "Euler", "Fluid"].map((p) => (
+              <div key={p} className="flex items-center gap-2">
+                <div className="w-1 h-1 bg-green-500/60" />
+                <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                  {p}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2 border-t border-white/5 flex items-center justify-between">
+            <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+              Rate_Feeds
+            </span>
+            <div className="w-1.5 h-1.5 bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]" />
           </div>
         </div>
 
-        {hArrow}
+        {hConnector("Rates")}
 
-        {/* Center: CDP with Short above (absolute) */}
+        {/* ── CDP ENGINE PANEL ── */}
         <div className="relative">
-          {/* Short label + arrow — positioned above CDP, doesn't affect flow */}
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 flex flex-col items-center mb-1">
-            <span className="text-[12px] text-white font-bold uppercase tracking-widest mb-1">
-              Short
-            </span>
-            {vArrowDown}
+          {/* Short label — positioned above */}
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 flex flex-col items-center mb-2">
+            <div className="border border-pink-500/30 bg-pink-500/5 px-4 py-1.5 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-pink-500" />
+              <span className="text-[10px] text-pink-400 font-bold uppercase tracking-[0.2em]">
+                Short
+              </span>
+            </div>
+            <div className="h-4 w-px bg-pink-500/30" />
+            <svg width="8" height="6">
+              <polygon points="0,0 8,0 4,6" fill="#ec4899" fillOpacity="0.5" />
+            </svg>
           </div>
-          <DBox className="px-10 py-4 text-center font-bold text-[13px]">
-            CDP
-          </DBox>
+
+          <div className="border border-white/10 bg-[#080808] w-[190px] flex flex-col">
+            <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                <div className="w-1.5 h-1.5 bg-white" />
+                CDP_Engine
+              </span>
+              <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                ::02
+              </span>
+            </div>
+            <div className="px-4 py-3 flex-1">
+              <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                Index Price
+              </div>
+              <div className="text-lg text-white font-mono font-light tracking-tight">
+                100 × Rate
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-3 pt-2.5 border-t border-white/5">
+                {["Funding", "Margin", "Settle", "Liq."].map((t) => (
+                  <div key={t} className="flex items-center gap-1.5">
+                    <div className="w-1 h-1 bg-white/40" />
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      {t}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="px-4 py-2 border-t border-white/5 flex items-center justify-between">
+              <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+                Perpetual
+              </span>
+              <div className="w-1.5 h-1.5 bg-cyan-400 animate-pulse" />
+            </div>
+          </div>
         </div>
 
-        {hArrow}
+        {hConnector("Trade")}
 
-        {/* Right: Pool with Long below (absolute) */}
+        {/* ── UNISWAP V4 POOL PANEL ── */}
         <div className="relative">
-          <div className="flex items-stretch">
-            <DBox className="text-center">Uniswap V4</DBox>
-            <DBox className="text-center border-l-0">RLP - USDC</DBox>
+          <div className="border border-white/10 bg-[#080808] w-[190px] flex flex-col">
+            <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 bg-cyan-400" />
+                Uniswap_V4
+              </span>
+              <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                ::03
+              </span>
+            </div>
+            <div className="px-4 py-3 flex-1">
+              <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                Pool
+              </div>
+              <div className="text-lg text-white font-mono font-light tracking-tight">
+                RLP — USDC
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-3 pt-2.5 border-t border-white/5">
+                {["Market", "Limit", "TWAP", "LP"].map((t) => (
+                  <div key={t} className="flex items-center gap-1.5">
+                    <div className="w-1 h-1 bg-cyan-400/60" />
+                    <span className="text-[10px] text-gray-500 uppercase tracking-widest">
+                      {t}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="px-4 py-2 border-t border-white/5 flex items-center justify-between">
+              <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+                Concentrated_LP
+              </span>
+              <div className="w-1.5 h-1.5 bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]" />
+            </div>
           </div>
-          {/* Long label + arrow — positioned below pool, doesn't affect flow */}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 flex flex-col items-center mt-1">
-            {vArrowUp}
-            <span className="text-[12px] text-white font-bold uppercase tracking-widest mt-1">
-              Long
-            </span>
+
+          {/* Long label — positioned below */}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 flex flex-col items-center mt-2">
+            <svg width="8" height="6">
+              <polygon points="0,6 8,6 4,0" fill="#22d3ee" fillOpacity="0.5" />
+            </svg>
+            <div className="h-4 w-px bg-cyan-400/30" />
+            <div className="border border-cyan-400/30 bg-cyan-400/5 px-4 py-1.5 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-cyan-400" />
+              <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-[0.2em]">
+                Long
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -493,187 +556,232 @@ const BOND_DURATIONS = [
 ];
 
 const BondsDiagram = () => (
-  <div className="w-full h-full flex items-center justify-center p-4">
+  <div className="w-full h-full flex items-center justify-center">
     <div
       className="flex flex-col items-center gap-0"
-      style={{ transform: "scale(1.3)", transformOrigin: "center" }}
+      style={{ transform: "scale(1.25)", transformOrigin: "center" }}
     >
-      {/* Single pool at top */}
-      <DBox className="px-12 py-3 font-bold text-[12px] border-yellow-500/40 text-yellow-400">
-        Single Liquidity Pool (RLP – USDC)
-      </DBox>
+      {/* ── TOP: POOL PANEL ── */}
+      <div className="border border-white/10 bg-[#080808] w-full">
+        <div className="px-4 py-2 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-yellow-400 flex items-center gap-2">
+            <div className="w-1.5 h-1.5 bg-yellow-400" />
+            Single_Pool
+          </span>
+          <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+            RLP — USDC
+          </span>
+        </div>
+        <div className="px-4 py-2 flex items-center justify-between">
+          <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+            Any_Duration
+          </span>
+          <div className="w-1.5 h-1.5 bg-yellow-400 animate-pulse shadow-[0_0_8px_#eab308]" />
+        </div>
+      </div>
 
-      {/* Vertical connectors fanning down */}
-      <div className="flex items-start gap-6 mt-0">
+      {/* ── VERTICAL CONNECTORS ── */}
+      <div className="flex items-start gap-3">
         {BOND_DURATIONS.map((d, i) => (
           <div key={i} className="flex flex-col items-center">
-            {/* Dashed vertical line */}
-            <svg width="2" height="32">
-              <line
-                x1="1"
-                y1="0"
-                x2="1"
-                y2="32"
-                stroke="white"
-                strokeOpacity="0.25"
-                strokeDasharray="4 3"
-              />
-            </svg>
+            {/* Connector line */}
+            <div className="h-5 w-px bg-yellow-500/30" />
             <svg width="8" height="6">
-              <polygon points="0,0 8,0 4,6" fill="white" fillOpacity="0.35" />
+              <polygon points="0,0 8,0 4,6" fill="#eab308" fillOpacity="0.5" />
             </svg>
 
-            {/* Duration box */}
-            <DBox className="mt-1 px-6 py-2 text-center font-bold">
-              {d.label}
-            </DBox>
-
-            {/* TWAMM unwind bar */}
-            <div className="mt-2 w-full">
-              <div className="text-[8px] text-gray-600 uppercase tracking-widest mb-1 text-center">
-                Unwind
+            {/* ── DURATION CARD ── */}
+            <div className="border border-white/10 bg-[#080808] w-[120px] mt-0.5">
+              <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-yellow-400" />
+                  {d.label}
+                </span>
+                <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                  ::0{i + 1}
+                </span>
               </div>
-              <div className="h-1.5 w-full bg-white/5 border border-white/10">
-                <div
-                  className="h-full bg-yellow-500/50"
-                  style={{ width: `${d.fill * 100}%` }}
-                />
+              <div className="px-3 py-2">
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                  Unwind
+                </div>
+                <div className="h-1.5 w-full bg-white/5 border border-white/10">
+                  <div
+                    className="h-full bg-yellow-500/50"
+                    style={{ width: `${d.fill * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="px-3 py-1.5 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+                  TWAMM
+                </span>
+                <div className="w-1 h-1 bg-green-500/60" />
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Bottom label */}
-      <div className="mt-4 text-[10px] text-gray-600 uppercase tracking-widest">
-        ← 1 block ·········································· 5 years →
+      {/* ── TIMELINE LABEL ── */}
+      <div className="mt-3 w-full flex items-center justify-between text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+        <span>← 1 block</span>
+        <div className="flex-1 mx-2 border-t border-dashed border-white/10" />
+        <span>5 years →</span>
       </div>
     </div>
   </div>
 );
 /** Leveraged basis trade diagram */
 const BasisTradeDiagram = () => {
-  const hLine = (w = 40) => (
-    <svg width={w} height="12" className="shrink-0">
-      <line
-        x1="0"
-        y1="6"
-        x2={w}
-        y2="6"
-        stroke="white"
-        strokeOpacity="0.25"
-        strokeDasharray="4 3"
-      />
-      <polygon
-        points={`${w - 4},2 ${w - 4},10 ${w},6`}
-        fill="white"
-        fillOpacity="0.3"
-      />
-    </svg>
-  );
-
-  const vLine = (h = 24) => (
-    <svg width="2" height={h} className="mx-auto">
-      <line
-        x1="1"
-        y1="0"
-        x2="1"
-        y2={h}
-        stroke="white"
-        strokeOpacity="0.25"
-        strokeDasharray="4 3"
-      />
-    </svg>
+  /* Horizontal connector */
+  const hConnector = (labelTop, labelBottom) => (
+    <div className="flex flex-col items-center gap-1 shrink-0 px-1">
+      <div className="flex items-center gap-1">
+        <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+          {labelTop}
+        </span>
+        <div className="flex items-center gap-0">
+          <div className="w-1.5 h-1.5 border border-white/30 rotate-45" />
+          <div
+            className="w-8 h-px"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 4px, transparent 4px, transparent 8px)",
+            }}
+          />
+          <svg width="8" height="8" className="shrink-0">
+            <polygon points="0,0 8,4 0,8" fill="white" fillOpacity="0.3" />
+          </svg>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0">
+          <svg width="8" height="8" className="shrink-0 rotate-180">
+            <polygon points="0,0 8,4 0,8" fill="white" fillOpacity="0.3" />
+          </svg>
+          <div
+            className="w-8 h-px"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(90deg, rgba(255,255,255,0.3) 0, rgba(255,255,255,0.3) 4px, transparent 4px, transparent 8px)",
+            }}
+          />
+          <div className="w-1.5 h-1.5 border border-white/30 rotate-45" />
+        </div>
+        <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
+          {labelBottom}
+        </span>
+      </div>
+    </div>
   );
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-4">
+    <div className="w-full h-full flex items-center justify-center">
       <div
         className="flex flex-col items-center"
         style={{ transform: "scale(1.25)", transformOrigin: "center" }}
       >
-        {/* Top row: Lending ←→ Trader */}
+        {/* Top row: Trader ←→ Lending */}
         <div className="flex items-center gap-0">
-          <div className="flex flex-col items-center">
-            <DBox className="px-6 py-3 text-center border-green-500/40">
-              <div className="text-green-400 font-bold text-[12px]">
-                Lending Protocol
+          {/* Trader Panel */}
+          <div className="border border-white/10 bg-[#080808] w-[120px]">
+            <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                <div className="w-1.5 h-1.5 bg-white" />
+                Trader
+              </span>
+              <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                ::01
+              </span>
+            </div>
+            <div className="px-3 py-2">
+              <div className="text-[9px] text-gray-500 uppercase tracking-widest">
+                Basis_Trade
               </div>
-              <div className="text-[9px] text-gray-500 mt-1">AAVE / Morpho</div>
-            </DBox>
-          </div>
-
-          <div className="flex flex-col items-center gap-1 px-2">
-            <div className="flex items-center gap-1">
-              <span className="text-[8px] text-gray-500 uppercase tracking-widest">
-                Deposit sUSDe
-              </span>
-              {hLine(50)}
-            </div>
-            <div className="flex items-center gap-1">
-              <svg width="50" height="12" className="shrink-0 rotate-180">
-                <line
-                  x1="0"
-                  y1="6"
-                  x2="50"
-                  y2="6"
-                  stroke="white"
-                  strokeOpacity="0.25"
-                  strokeDasharray="4 3"
-                />
-                <polygon
-                  points="46,2 46,10 50,6"
-                  fill="white"
-                  fillOpacity="0.3"
-                />
-              </svg>
-              <span className="text-[8px] text-gray-500 uppercase tracking-widest">
-                Borrow USDT
-              </span>
             </div>
           </div>
 
-          <DBox className="px-8 py-3 text-center font-bold text-[13px]">
-            Trader
-          </DBox>
+          {hConnector("Deposit_sUSDe", "Borrow_USDT")}
+
+          {/* Lending Panel */}
+          <div className="border border-white/10 bg-[#080808] w-[140px]">
+            <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400 flex items-center gap-2">
+                <div className="w-1.5 h-1.5 bg-green-500" />
+                Lending
+              </span>
+              <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                ::02
+              </span>
+            </div>
+            <div className="px-3 py-2">
+              <div className="text-[9px] text-gray-500 uppercase tracking-widest">
+                AAVE / Morpho
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Vertical: Rate risk */}
-        <div className="flex flex-col items-center mt-1">
-          {vLine(20)}
-          <DBox className="px-4 py-1.5 text-center border-red-500/30">
-            <span className="text-red-400 text-[9px]">
-              ⚠ Rate spike → margin squeezed
+        <div className="flex flex-col items-center">
+          <div className="h-3 w-px bg-white/20" />
+          <div className="border border-red-500/20 bg-red-500/5 px-4 py-1.5 pb-2.5">
+            <span className="text-[9px] text-red-400 uppercase tracking-[0.15em]">
+              ⚠ Rate_spike → margin_squeezed
             </span>
-          </DBox>
-          {vLine(20)}
+          </div>
+          <div className="h-3 w-px bg-white/20" />
           <svg width="8" height="6">
             <polygon points="0,0 8,0 4,6" fill="white" fillOpacity="0.35" />
           </svg>
         </div>
 
         {/* Hedge: Long RLP */}
-        <DBox className="px-8 py-3 text-center border-green-500/40 mt-1">
-          <div className="text-green-400 font-bold text-[12px]">Long RLP</div>
-          <div className="text-[9px] text-gray-500 mt-1">Rate hedge</div>
-        </DBox>
+        <div className="border border-white/10 bg-[#080808] w-[160px] mt-0.5">
+          <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-green-500" />
+              Long_RLP
+            </span>
+            <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+              ::03
+            </span>
+          </div>
+          <div className="px-3 py-1.5 flex items-center justify-between">
+            <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+              Rate_Hedge
+            </span>
+            <div className="w-1.5 h-1.5 bg-cyan-400 animate-pulse" />
+          </div>
+        </div>
 
-        {/* Result */}
-        <div className="flex flex-col items-center mt-1">
-          {vLine(16)}
+        {/* Connector down */}
+        <div className="flex flex-col items-center">
+          <div className="h-4 w-px bg-green-500/30" />
           <svg width="8" height="6">
-            <polygon points="0,0 8,0 4,6" fill="white" fillOpacity="0.35" />
+            <polygon points="0,0 8,0 4,6" fill="#22c55e" fillOpacity="0.5" />
           </svg>
         </div>
 
-        <DBox className="px-6 py-2.5 text-center border-green-500/40 mt-1">
-          <span className="text-green-400 text-[10px] font-bold">
-            Rate ↑ → RLP profit offsets cost
-          </span>
-          <div className="text-[10px] text-white font-bold mt-1">
-            = FIXED BORROWING COST
+        {/* Result */}
+        <div className="border border-green-500/20 bg-[#080808] w-[220px] mt-0.5">
+          <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-green-500" />
+              Result
+            </span>
+            <div className="w-1.5 h-1.5 bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]" />
           </div>
-        </DBox>
+          <div className="px-3 py-2 text-center">
+            <div className="text-[9px] text-green-400 uppercase tracking-widest mb-1">
+              Rate Up → RLP Profit Offsets Cost
+            </div>
+            <div className="text-[10px] text-white font-bold uppercase tracking-[0.15em]">
+              = Fixed_Borrowing_Cost
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1425,7 +1533,7 @@ export default function Homepage() {
                       <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 bg-cyan-400" />
                         <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-cyan-400">
-                          Uniswap V4
+                          Uniswap_V4
                         </span>
                       </div>
                       <span className="text-[9px] text-gray-700 tracking-[0.15em]">
