@@ -284,7 +284,6 @@ export default function Markets() {
       color: s.color,
       yAxisId: s.yAxisId,
     }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenSeries]);
 
   // --- Initial Data Fetch (Cards/Table) ---

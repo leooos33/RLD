@@ -213,7 +213,6 @@ function App() {
       const lastTs = rates[rates.length - 1].timestamp;
       const startStr = new Date(firstTs * 1000).toISOString().split("T")[0];
       const endStr = new Date(lastTs * 1000).toISOString().split("T")[0];
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       controls.setTempStart(startStr);
       controls.setTempEnd(endStr);
     }

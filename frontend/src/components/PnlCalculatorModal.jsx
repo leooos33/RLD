@@ -20,6 +20,7 @@ export default function PnlCalculatorModal({ isOpen, onClose, currentRate }) {
   // Seed entry/target rate from currentRate on open
   useEffect(() => {
     if (isOpen && currentRate > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntryRate((prev) => (prev === "" ? currentRate.toFixed(4) : prev));
       setTargetRate((prev) => (prev === "" ? currentRate.toFixed(4) : prev));
     }

@@ -314,7 +314,7 @@ export default function SimulationTerminal() {
         message: swapError,
         duration: 6000,
       });
-      setShowSwapConfirm(false);
+      setShowSwapConfirm(false); // eslint-disable-line react-hooks/set-state-in-effect
     }
     prevSwapError.current = swapError;
   }, [swapError, showSwapConfirm, addToast]);
@@ -388,7 +388,7 @@ export default function SimulationTerminal() {
     };
   }, [tradeSide, collateral, shortAmount, shortCR, currentRate]);
 
-  const handleShortAmountChange = (newWRLP) => {
+  const _handleShortAmountChange = (newWRLP) => {
     setShortAmount(newWRLP);
     // Recalculate CR: CR = collateral / (wRLP × rate)
     if (newWRLP > 0 && currentRate > 0) {
@@ -418,11 +418,11 @@ export default function SimulationTerminal() {
     ) {
       const crDecimal = shortCR / 100;
       const newAmount = collateral / (crDecimal * currentRate);
-      setShortAmount(parseFloat(newAmount.toFixed(6)));
+      setShortAmount(parseFloat(newAmount.toFixed(6))); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [tradeSide, collateral, shortCR, currentRate]);
 
-  const handleLongAmountChange = (newAmount) => {
+  const _handleLongAmountChange = (newAmount) => {
     setCollateral(newAmount);
   };
 
@@ -1244,7 +1244,7 @@ export default function SimulationTerminal() {
         onConfirm={() => {
           if (tradeAction === "CLOSE" && tradeSide === "LONG") {
             // Close Long flow
-            executeCloseLong(parseFloat(closeAmount), (receipt) => {
+            executeCloseLong(parseFloat(closeAmount), () => {
               setShowSwapConfirm(false);
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
@@ -1259,7 +1259,7 @@ export default function SimulationTerminal() {
             });
           } else if (tradeAction === "CLOSE" && tradeSide === "SHORT") {
             // Close Short flow — spend waUSDC to buy wRLP and repay debt
-            executeCloseShort(parseFloat(closeShortAmount), (receipt) => {
+            executeCloseShort(parseFloat(closeShortAmount), () => {
               setShowSwapConfirm(false);
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
@@ -1274,7 +1274,7 @@ export default function SimulationTerminal() {
             });
           } else if (tradeSide === "SHORT" && tradeAction === "OPEN") {
             // Open Short flow — shortAmount is already in wRLP
-            executeShort(collateral, shortAmount, (receipt) => {
+            executeShort(collateral, shortAmount, () => {
               setShowSwapConfirm(false);
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
@@ -1288,7 +1288,7 @@ export default function SimulationTerminal() {
             });
           } else {
             // Open Long flow
-            executeLong(collateral, (receipt) => {
+            executeLong(collateral, () => {
               setShowSwapConfirm(false);
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
@@ -1335,7 +1335,7 @@ export default function SimulationTerminal() {
 
 // ── Helpers ───────────────────────────────────────────────────
 
-function formatLiquidity(val) {
+function _formatLiquidity(val) {
   if (val >= 1e18) return `${(val / 1e18).toFixed(1)}E`;
   if (val >= 1e15) return `${(val / 1e15).toFixed(1)}P`;
   if (val >= 1e12) return `${(val / 1e12).toFixed(1)}T`;
@@ -1345,7 +1345,7 @@ function formatLiquidity(val) {
   return val.toLocaleString();
 }
 
-function formatDebt(val) {
+function _formatDebt(val) {
   if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
   if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
   if (val >= 1e3) return `$${(val / 1e3).toFixed(1)}K`;

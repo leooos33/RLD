@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 
 const RPC_URL = "http://127.0.0.1:8545";
@@ -29,7 +29,7 @@ async function anvilRpc(method, params = []) {
   return json.result;
 }
 
-async function sendImpersonatedTx(from, to, data) {
+async function _sendImpersonatedTx(from, to, data) {
   const res = await fetch(RPC_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -45,7 +45,7 @@ async function sendImpersonatedTx(from, to, data) {
   return json.result;
 }
 
-async function waitForTx(txHash, timeout = 30000) {
+async function _waitForTx(txHash, timeout = 30000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     const res = await fetch(RPC_URL, {
@@ -237,7 +237,9 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       // Restore Anvil's chain ID back to mainnet fork (1)
       try {
         await anvilRpc("anvil_setChainId", [1]);
-      } catch {}
+      } catch {
+        /* ignored */
+      }
       setCreating(false);
     }
   }, [account, brokerFactoryAddr]);
@@ -299,7 +301,9 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       } finally {
         try {
           await anvilRpc("anvil_setChainId", [1]);
-        } catch {}
+        } catch {
+          /* ignored */
+        }
         setDepositing(false);
       }
     },

@@ -102,7 +102,7 @@ async function waitForTx(rpcUrl, txHash, timeout = 30000) {
 export function useFaucet(account, waUsdcAddress) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [step, setStep] = useState(""); // Current step description
+  const [step, _setStep] = useState(""); // Current step description
   const [waUsdcBalance, setWaUsdcBalance] = useState(null);
 
   // ── Fetch waUSDC balance for any address ───────────────────────

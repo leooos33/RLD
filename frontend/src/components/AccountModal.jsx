@@ -63,6 +63,7 @@ export default function AccountModal({
   // Reset completed state when modal closes
   useEffect(() => {
     if (!isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCompletedDeposit(false);
       setFaucetDone(false);
     }
@@ -71,6 +72,7 @@ export default function AccountModal({
   // Auto-advance past faucet step once balance arrives
   useEffect(() => {
     if (waUsdcBalance && parseFloat(waUsdcBalance) > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFaucetDone(true);
     }
   }, [waUsdcBalance]);

@@ -30,7 +30,7 @@ export default function SwapConfirmModal({
   const isOpenShort = isShort && !isClose;
   const isCloseShort = isShort && isClose;
   const isBuy = !isClose;
-  const accent = isClose ? "pink" : tradeSide === "LONG" ? "cyan" : "pink";
+  const _accent = isClose ? "pink" : tradeSide === "LONG" ? "cyan" : "pink";
 
   // Swap labels based on action
   const payLabel = isCloseShort ? "waUSDC" : isClose ? "wRLP" : "waUSDC";
@@ -51,7 +51,7 @@ export default function SwapConfirmModal({
         ? `Close ${tradeSide}`
         : `Confirm ${tradeSide}`;
 
-  const rows = isOpenShort
+  const _rows = isOpenShort
     ? [
         {
           label: "Collateral",

@@ -243,7 +243,9 @@ export function useSwapExecution(
         try {
           const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
           await rpcProvider.send("anvil_setChainId", [1]);
-        } catch (_) {}
+        } catch {
+          /* ignored */
+        }
       } finally {
         setExecuting(false);
       }
@@ -371,7 +373,9 @@ export function useSwapExecution(
         try {
           const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
           await rpcProvider.send("anvil_setChainId", [1]);
-        } catch (_) {}
+        } catch {
+          /* ignored */
+        }
       } finally {
         setExecuting(false);
       }
@@ -512,7 +516,9 @@ export function useSwapExecution(
         try {
           const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
           await rpcProvider.send("anvil_setChainId", [1]);
-        } catch (_) {}
+        } catch {
+          /* ignored */
+        }
       } finally {
         setExecuting(false);
       }
@@ -645,7 +651,9 @@ export function useSwapExecution(
         try {
           const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
           await rpcProvider.send("anvil_setChainId", [1]);
-        } catch (_) {}
+        } catch {
+          /* ignored */
+        }
       } finally {
         setExecuting(false);
       }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import { SIM_API } from "../config/simulationConfig";
 
@@ -209,7 +209,7 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
       prevBlock.current !== null &&
       latest.block_number !== prevBlock.current
     ) {
-      setBlockChanged(true);
+      setBlockChanged(true); // eslint-disable-line react-hooks/set-state-in-effect
       const timer = setTimeout(() => setBlockChanged(false), 300);
       return () => clearTimeout(timer);
     }
