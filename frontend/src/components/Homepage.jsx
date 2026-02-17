@@ -377,9 +377,38 @@ const DBox = ({ children, className = "" }) => (
 
 /** Protocol architecture diagram — hero-style terminal panel cards */
 const MechanismDiagram = () => {
+  const containerRef = React.useRef(null);
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.3 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  /* shared transition style per step index */
+  const step = (i) => ({
+    opacity: visible ? 1 : 0,
+    transform: visible ? "translateY(0)" : "translateY(18px)",
+    transition: `opacity 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms`,
+  });
+
   /* Horizontal connector arrow */
-  const hConnector = (label) => (
-    <div className="flex flex-col items-center justify-center gap-1 shrink-0 px-1">
+  const hConnector = (label, i) => (
+    <div
+      className="flex flex-col items-center justify-center gap-1 shrink-0 px-1"
+      style={step(i)}
+    >
       {label && (
         <span className="text-[9px] text-gray-600 uppercase tracking-[0.2em]">
           {label}
@@ -402,10 +431,16 @@ const MechanismDiagram = () => {
   );
 
   return (
-    <div className="w-full h-full flex items-center justify-center">
+    <div
+      className="w-full h-full flex items-center justify-center"
+      ref={containerRef}
+    >
       <div className="flex items-stretch gap-0">
         {/* ── ORACLE PANEL ── */}
-        <div className="border border-white/10 bg-[#080808] w-[190px] flex flex-col">
+        <div
+          className="border border-white/10 bg-[#080808] w-[190px] flex flex-col"
+          style={step(0)}
+        >
           <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500" />
@@ -433,10 +468,10 @@ const MechanismDiagram = () => {
           </div>
         </div>
 
-        {hConnector("Rates")}
+        {hConnector("Rates", 1)}
 
         {/* ── CDP ENGINE PANEL ── */}
-        <div className="relative">
+        <div className="relative" style={step(2)}>
           {/* Short label — positioned above */}
           <div className="absolute bottom-full left-1/2 -translate-x-1/2 flex flex-col items-center mb-2">
             <div className="border border-pink-500/30 bg-pink-500/5 px-4 py-1.5 flex items-center gap-2">
@@ -488,10 +523,10 @@ const MechanismDiagram = () => {
           </div>
         </div>
 
-        {hConnector("Trade")}
+        {hConnector("Trade", 3)}
 
         {/* ── UNISWAP V4 POOL PANEL ── */}
-        <div className="relative">
+        <div className="relative" style={step(4)}>
           <div className="border border-white/10 bg-[#080808] w-[190px] flex flex-col">
             <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400 flex items-center gap-2">
@@ -555,85 +590,154 @@ const BOND_DURATIONS = [
   { label: "5Y", fill: 1.0 },
 ];
 
-const BondsDiagram = () => (
-  <div className="w-full h-full flex items-center justify-center">
+const BondsDiagram = () => {
+  const containerRef = React.useRef(null);
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.3 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const step = (i) => ({
+    opacity: visible ? 1 : 0,
+    transform: visible ? "translateY(0)" : "translateY(18px)",
+    transition: `opacity 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms`,
+  });
+
+  return (
     <div
-      className="flex flex-col items-center gap-0"
-      style={{ transform: "scale(1.25)", transformOrigin: "center" }}
+      className="w-full h-full flex items-center justify-center"
+      ref={containerRef}
     >
-      {/* ── TOP: POOL PANEL ── */}
-      <div className="border border-white/10 bg-[#080808] w-full">
-        <div className="px-4 py-2 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-yellow-400 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-yellow-400" />
-            Single_Pool
-          </span>
-          <span className="text-[9px] text-gray-700 tracking-[0.15em]">
-            RLP — USDC
-          </span>
+      <div
+        className="flex flex-col items-center gap-0"
+        style={{ transform: "scale(1.25)", transformOrigin: "center" }}
+      >
+        {/* ── TOP: POOL PANEL ── */}
+        <div
+          className="border border-white/10 bg-[#080808] w-full"
+          style={step(0)}
+        >
+          <div className="px-4 py-2 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-yellow-400 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-yellow-400" />
+              Single_Pool
+            </span>
+            <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+              RLP — USDC
+            </span>
+          </div>
+          <div className="px-4 py-2 flex items-center justify-between">
+            <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+              Any_Duration
+            </span>
+            <div className="w-1.5 h-1.5 bg-yellow-400 animate-pulse shadow-[0_0_8px_#eab308]" />
+          </div>
         </div>
-        <div className="px-4 py-2 flex items-center justify-between">
-          <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
-            Any_Duration
-          </span>
-          <div className="w-1.5 h-1.5 bg-yellow-400 animate-pulse shadow-[0_0_8px_#eab308]" />
-        </div>
-      </div>
 
-      {/* ── VERTICAL CONNECTORS ── */}
-      <div className="flex items-start gap-3">
-        {BOND_DURATIONS.map((d, i) => (
-          <div key={i} className="flex flex-col items-center">
-            {/* Connector line */}
-            <div className="h-5 w-px bg-yellow-500/30" />
-            <svg width="8" height="6">
-              <polygon points="0,0 8,0 4,6" fill="#eab308" fillOpacity="0.5" />
-            </svg>
+        {/* ── VERTICAL CONNECTORS ── */}
+        <div className="flex items-start gap-3">
+          {BOND_DURATIONS.map((d, i) => (
+            <div
+              key={i}
+              className="flex flex-col items-center"
+              style={step(1 + i)}
+            >
+              {/* Connector line */}
+              <div className="h-5 w-px bg-yellow-500/30" />
+              <svg width="8" height="6">
+                <polygon
+                  points="0,0 8,0 4,6"
+                  fill="#eab308"
+                  fillOpacity="0.5"
+                />
+              </svg>
 
-            {/* ── DURATION CARD ── */}
-            <div className="border border-white/10 bg-[#080808] w-[120px] mt-0.5">
-              <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-yellow-400" />
-                  {d.label}
-                </span>
-                <span className="text-[9px] text-gray-700 tracking-[0.15em]">
-                  ::0{i + 1}
-                </span>
-              </div>
-              <div className="px-3 py-2">
-                <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                  Unwind
+              {/* ── DURATION CARD ── */}
+              <div className="border border-white/10 bg-[#080808] w-[120px] mt-0.5">
+                <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-yellow-400" />
+                    {d.label}
+                  </span>
+                  <span className="text-[9px] text-gray-700 tracking-[0.15em]">
+                    ::0{i + 1}
+                  </span>
                 </div>
-                <div className="h-1.5 w-full bg-white/5 border border-white/10">
-                  <div
-                    className="h-full bg-yellow-500/50"
-                    style={{ width: `${d.fill * 100}%` }}
-                  />
+                <div className="px-3 py-2">
+                  <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+                    Unwind
+                  </div>
+                  <div className="h-1.5 w-full bg-white/5 border border-white/10">
+                    <div
+                      className="h-full bg-yellow-500/50"
+                      style={{ width: `${d.fill * 100}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div className="px-3 py-1.5 border-t border-white/5 flex items-center justify-between">
-                <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
-                  TWAMM
-                </span>
-                <div className="w-1 h-1 bg-green-500/60" />
+                <div className="px-3 py-1.5 border-t border-white/5 flex items-center justify-between">
+                  <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
+                    TWAMM
+                  </span>
+                  <div className="w-1 h-1 bg-green-500/60" />
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      {/* ── TIMELINE LABEL ── */}
-      <div className="mt-3 w-full flex items-center justify-between text-[9px] text-gray-600 uppercase tracking-[0.2em]">
-        <span>← 1 block</span>
-        <div className="flex-1 mx-2 border-t border-dashed border-white/10" />
-        <span>5 years →</span>
+        {/* ── TIMELINE LABEL ── */}
+        <div
+          className="mt-3 w-full flex items-center justify-between text-[9px] text-gray-600 uppercase tracking-[0.2em]"
+          style={step(5)}
+        >
+          <span>← 1 block</span>
+          <div className="flex-1 mx-2 border-t border-dashed border-white/10" />
+          <span>5 years →</span>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 /** Leveraged basis trade diagram */
 const BasisTradeDiagram = () => {
+  const containerRef = React.useRef(null);
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.3 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const step = (i) => ({
+    opacity: visible ? 1 : 0,
+    transform: visible ? "translateY(0)" : "translateY(18px)",
+    transition: `opacity 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 120}ms`,
+  });
+
   /* Horizontal connector */
   const hConnector = (labelTop, labelBottom) => (
     <div className="flex flex-col items-center gap-1 shrink-0 px-1">
@@ -677,13 +781,16 @@ const BasisTradeDiagram = () => {
   );
 
   return (
-    <div className="w-full h-full flex items-center justify-center">
+    <div
+      className="w-full h-full flex items-center justify-center"
+      ref={containerRef}
+    >
       <div
         className="flex flex-col items-center"
         style={{ transform: "scale(1.25)", transformOrigin: "center" }}
       >
         {/* Top row: Trader ←→ Lending */}
-        <div className="flex items-center gap-0">
+        <div className="flex items-center gap-0" style={step(0)}>
           {/* Trader Panel */}
           <div className="border border-white/10 bg-[#080808] w-[120px]">
             <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
@@ -724,7 +831,7 @@ const BasisTradeDiagram = () => {
         </div>
 
         {/* Vertical: Rate risk */}
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center" style={step(1)}>
           <div className="h-3 w-px bg-white/20" />
           <div className="border border-red-500/20 bg-red-500/5 px-4 py-1.5 pb-2.5">
             <span className="text-[9px] text-red-400 uppercase tracking-[0.15em]">
@@ -738,7 +845,10 @@ const BasisTradeDiagram = () => {
         </div>
 
         {/* Hedge: Long RLP */}
-        <div className="border border-white/10 bg-[#080808] w-[160px] mt-0.5">
+        <div
+          className="border border-white/10 bg-[#080808] w-[160px] mt-0.5"
+          style={step(2)}
+        >
           <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400 flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500" />
@@ -752,12 +862,11 @@ const BasisTradeDiagram = () => {
             <span className="text-[9px] text-gray-700 uppercase tracking-[0.2em]">
               Rate_Hedge
             </span>
-            <div className="w-1.5 h-1.5 bg-cyan-400 animate-pulse" />
           </div>
         </div>
 
         {/* Connector down */}
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center" style={step(3)}>
           <div className="h-4 w-px bg-green-500/30" />
           <svg width="8" height="6">
             <polygon points="0,0 8,0 4,6" fill="#22c55e" fillOpacity="0.5" />
@@ -765,7 +874,10 @@ const BasisTradeDiagram = () => {
         </div>
 
         {/* Result */}
-        <div className="border border-green-500/20 bg-[#080808] w-[220px] mt-0.5">
+        <div
+          className="border border-green-500/20 bg-[#080808] w-[220px] mt-0.5"
+          style={step(4)}
+        >
           <div className="px-3 py-1.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400 flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500" />
@@ -1284,6 +1396,16 @@ const StreamChartPanel = () => (
 );
 
 export default function Homepage() {
+  const [heroVisible, setHeroVisible] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setHeroVisible(true), 100);
+    return () => clearTimeout(t);
+  }, []);
+  const heroStep = (i) => ({
+    opacity: heroVisible ? 1 : 0,
+    transform: heroVisible ? "translateY(0)" : "translateY(18px)",
+    transition: `opacity 0.6s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms, transform 0.6s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms`,
+  });
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono">
       {/* HERO */}
@@ -1326,7 +1448,7 @@ export default function Homepage() {
           </div>
           <div className="hidden lg:flex flex-col items-center">
             {/* Application Cards — 3 use cases */}
-            <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="grid grid-cols-3 gap-3 mb-3" style={heroStep(0)}>
               {/* BONDS */}
               <div className="w-[280px] border border-white/10 bg-[#080808]">
                 <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
@@ -1461,7 +1583,10 @@ export default function Homepage() {
             </div>
 
             {/* Protocol Stack — Terminal Panel Style */}
-            <div className="w-[380px] border border-white/10 bg-[#080808]">
+            <div
+              className="w-[380px] border border-white/10 bg-[#080808]"
+              style={heroStep(1)}
+            >
               {/* Panel header */}
               <div className="px-5 py-3 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white flex items-center gap-2">
