@@ -42,7 +42,7 @@ export default function AccountModal({
   const {
     requestFaucet,
     loading: faucetLoading,
-    error: faucetError,
+    error: _faucetError,
     waUsdcBalance,
   } = useFaucet(account, waUsdcAddr);
 

@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useMemo,
-  useEffect,
-  useRef,
-  useCallback,
-} from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import {
   Loader2,
@@ -47,6 +41,7 @@ import SettingsButton from "./SettingsButton";
 
 // ── Sub-components ────────────────────────────────────────────
 
+// eslint-disable-next-line no-unused-vars
 function SimMetricBox({ label, value, sub, Icon = Activity, dimmed }) {
   return (
     <div
@@ -164,11 +159,11 @@ export default function SimulationTerminal() {
     marketInfo,
     brokers,
     chartData,
-    events,
-    blockChanged,
-    blockNumber,
-    totalBlocks,
-    totalEvents,
+    events: _events,
+    blockChanged: _blockChanged,
+    blockNumber: _blockNumber,
+    totalBlocks: _totalBlocks,
+    totalEvents: _totalEvents,
   } = sim;
 
   // Use dynamic addresses from the indexer API — no hardcoded overrides.
@@ -195,7 +190,7 @@ export default function SimulationTerminal() {
     hasBroker,
     brokerAddress,
     brokerBalance,
-    creating: brokerCreating,
+    creating: _brokerCreating,
     fetchBrokerBalance,
   } = useBrokerAccount(
     account,
@@ -216,7 +211,7 @@ export default function SimulationTerminal() {
   const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
   const [closeShortAmount, setCloseShortAmount] = useState(""); // waUSDC to spend (close short)
   const [closeShortDebt, setCloseShortDebt] = useState(""); // wRLP debt to repay (close short)
-  const [lastCloseShortEdit, setLastCloseShortEdit] = useState(null); // 'debt' or 'collateral'
+  const [_lastCloseShortEdit, setLastCloseShortEdit] = useState(null); // 'debt' or 'collateral'
   const [closeShortRepayMode, setCloseShortRepayMode] = useState("wRLP"); // 'wRLP' or 'waUSDC'
   const [payDropdownOpen, setPayDropdownOpen] = useState(false);
   const payDropdownRef = useRef(null);

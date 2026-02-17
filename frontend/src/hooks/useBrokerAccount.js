@@ -141,7 +141,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       console.warn("Broker check failed:", e);
       setHasBroker(null);
     }
-  }, [account, brokerFactoryAddr]);
+  }, [account, brokerFactoryAddr, fetchBrokerBalance]);
 
   useEffect(() => {
     checkBroker();
@@ -303,7 +303,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
         setDepositing(false);
       }
     },
-    [account, brokerAddress, waUsdcAddr],
+    [account, brokerAddress, waUsdcAddr, fetchBrokerBalance],
   );
 
   return {
