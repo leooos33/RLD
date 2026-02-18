@@ -16,6 +16,7 @@ import {
   Download,
   Calculator,
   ChevronDown,
+  Link2,
 } from "lucide-react";
 import { useSimulation } from "../hooks/useSimulation";
 import { useChartControls } from "../hooks/useChartControls";
@@ -49,14 +50,14 @@ function SimMetricBox({ label, value, sub, Icon = Activity, dimmed }) {
         dimmed ? "opacity-30" : ""
       }`}
     >
-      <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
         {label} <Icon size={15} className="opacity-90" />
       </div>
       <div>
         <div className="text-2xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
           {value}
         </div>
-        <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest">
+        <div className="text-sm text-gray-500 uppercase tracking-widest">
           {sub}
         </div>
       </div>
@@ -71,7 +72,7 @@ function OperationsFeed({
 }) {
   if (!connected) {
     return (
-      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
+      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
         —
       </div>
     );
@@ -79,7 +80,7 @@ function OperationsFeed({
 
   if (loading && operations.length === 0) {
     return (
-      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
+      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
         Loading...
       </div>
     );
@@ -87,7 +88,7 @@ function OperationsFeed({
 
   if (operations.length === 0) {
     return (
-      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
+      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
         No operations yet
       </div>
     );
@@ -123,15 +124,15 @@ function OperationsFeed({
           >
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <span
-                className={`text-[9px] font-bold font-mono px-1.5 py-0.5 tracking-wider w-[72px] text-center inline-block ${op.color}`}
+                className={`text-sm font-bold font-mono px-1.5 py-0.5 tracking-wider w-[72px] text-center inline-block ${op.color}`}
               >
                 {op.label}
               </span>
-              <span className="text-[11px] text-gray-500 font-mono">
+              <span className="text-sm text-gray-500 font-mono">
                 {timeStr}
               </span>
             </div>
-            <div className="text-[10px] font-mono text-gray-400 flex-shrink-0">
+            <div className="text-sm font-mono text-gray-400 flex-shrink-0">
               {detail}
             </div>
           </div>
@@ -299,6 +300,8 @@ export default function SimulationTerminal() {
   );
 
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [positionDropdown, setPositionDropdown] = useState(null);
+  const [accountDropdown, setAccountDropdown] = useState(false);
   const [showSwapConfirm, setShowSwapConfirm] = useState(false);
 
   // Toast notifications
@@ -431,14 +434,14 @@ export default function SimulationTerminal() {
     return (
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="text-red-500 text-xs uppercase tracking-widest">
+          <div className="text-red-500 text-sm uppercase tracking-widest">
             SIM_DISCONNECTED
           </div>
-          <div className="text-gray-600 text-[11px] max-w-xs">
+          <div className="text-gray-600 text-sm max-w-xs">
             Cannot reach simulation indexer. Make sure the Docker simulation
             stack is running.
           </div>
-          <div className="text-[10px] text-gray-700 font-mono">
+          <div className="text-sm text-gray-700 font-mono">
             Expected at: http://localhost:8080
           </div>
         </div>
@@ -451,7 +454,7 @@ export default function SimulationTerminal() {
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
-          <span className="text-[10px] uppercase tracking-widest text-gray-500">
+          <span className="text-sm uppercase tracking-widest text-gray-500">
             Connecting to simulation...
           </span>
         </div>
@@ -463,7 +466,7 @@ export default function SimulationTerminal() {
     <>
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
+      <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
         {/* MAIN CONTENT */}
         <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
@@ -474,7 +477,7 @@ export default function SimulationTerminal() {
                 {/* Branding */}
                 <div className="lg:col-span-4 flex flex-col justify-between p-6 border-b lg:border-b-0 lg:border-r border-white/10 h-full min-h-[180px]">
                   <div>
-                    <div className="text-[10px] text-gray-700 mb-6 font-mono leading-tight tracking-tight">
+                    <div className="text-sm text-gray-700 mb-6 font-mono leading-tight tracking-tight">
                       {(market?.marketId || "").slice(0, 18)}...
                       {(market?.marketId || "").slice(-8)}
                     </div>
@@ -485,13 +488,10 @@ export default function SimulationTerminal() {
                     </h2>
                   </div>
                   <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-widest text-gray-500">
+                    <span className="text-sm uppercase tracking-widest text-gray-500">
                       RLD_Core
                     </span>
-                    <span className="text-[10px] uppercase tracking-widest text-cyan-500 font-mono">
-                      {(market?.marketId || "0x").slice(0, 10)}...
-                      {(market?.marketId || "").slice(-4)}
-                    </span>
+                    <Link2 size={14} className="text-cyan-500 hover:text-cyan-400 transition-colors cursor-pointer" />
                   </div>
                 </div>
 
@@ -499,7 +499,7 @@ export default function SimulationTerminal() {
                 <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
                   {/* PRICE */}
                   <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                    <div className="text-sm text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
                       PRICE <Terminal size={15} className="opacity-90" />
                     </div>
                     <div className="grid grid-cols-2 gap-y-6 gap-x-4">
@@ -539,7 +539,7 @@ export default function SimulationTerminal() {
 
                   {/* PROTOCOL */}
                   <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                    <div className="text-sm text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
                       PROTOCOL <Shield size={15} className="opacity-90" />
                     </div>
                     <div className="grid grid-cols-2 gap-y-6 gap-x-4">
@@ -585,7 +585,7 @@ export default function SimulationTerminal() {
 
                   {/* MARKET */}
                   <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-                    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
+                    <div className="text-sm text-gray-500 uppercase tracking-widest flex justify-between">
                       MARKET <Shield size={15} className="opacity-90" />
                     </div>
                     <div className="grid grid-cols-[3fr_2fr] gap-x-4 gap-y-6 mt-auto">
@@ -621,7 +621,7 @@ export default function SimulationTerminal() {
                     <div className="flex items-center justify-end h-[30px] w-full">
                       <button
                         onClick={() => setPnlModalOpen(true)}
-                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-xs font-mono tracking-widest uppercase w-full justify-center"
+                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-sm font-mono tracking-widest uppercase w-full justify-center"
                       >
                         <Calculator size={14} />
                         Open
@@ -657,7 +657,7 @@ export default function SimulationTerminal() {
                         onClick={() => toggleSeries(s.key)}
                       >
                         <div className={`w-2 h-2 ${s.bg}`}></div>
-                        <span className="text-[11px] uppercase tracking-widest">
+                        <span className="text-sm uppercase tracking-widest">
                           {s.label}
                         </span>
                       </div>
@@ -666,7 +666,7 @@ export default function SimulationTerminal() {
 
                   {/* Period stats */}
                   {chartStats && (
-                    <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
+                    <div className="text-sm font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
                       <span>
                         Range:{" "}
                         <span className="text-white">
@@ -684,7 +684,7 @@ export default function SimulationTerminal() {
                   )}
                 </div>
 
-                <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
+                <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#050505]">
                   {chartData.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <Loader2 className="animate-spin text-gray-700" />
@@ -772,7 +772,7 @@ export default function SimulationTerminal() {
                     <button
                       key={action}
                       onClick={() => setTradeAction(action)}
-                      className={`flex-1 py-2 text-[11px] font-bold tracking-[0.2em] uppercase transition-colors ${
+                      className={`flex-1 py-2 text-sm font-bold tracking-[0.2em] uppercase transition-colors ${
                         tradeAction === action
                           ? action === "CLOSE"
                             ? "bg-pink-500/10 text-pink-400 border-b-2 border-pink-500"
@@ -866,17 +866,17 @@ export default function SimulationTerminal() {
               {tradeSide === "SHORT" && tradeAction === "CLOSE" && (
                 <>
                   {/* PAY WITH custom dropdown */}
-                  <div className="flex items-center justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                  <div className="flex items-center justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
                     <span>Pay_With</span>
                     <div className="relative" ref={payDropdownRef}>
                       <button
                         type="button"
                         onClick={() => setPayDropdownOpen(!payDropdownOpen)}
                         className={`
-                          h-[28px] border border-white/20 bg-black flex items-center justify-between px-2 gap-2
-                          text-[11px] font-mono text-white focus:outline-none uppercase tracking-widest
-                          hover:border-white transition-colors
-                          ${payDropdownOpen ? "border-white" : ""}
+                          h-[28px] border border-white/10 bg-[#0a0a0a] flex items-center justify-between px-2 gap-2
+                          text-sm font-mono text-white focus:outline-none uppercase tracking-widest
+                          hover:border-white/30 transition-colors
+                          ${payDropdownOpen ? "border-white/30" : ""}
                         `}
                       >
                         <span>{closeShortRepayMode}</span>
@@ -886,7 +886,7 @@ export default function SimulationTerminal() {
                         />
                       </button>
                       {payDropdownOpen && (
-                        <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/20 z-50 flex flex-col shadow-xl whitespace-nowrap">
+                        <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/10 z-50 flex flex-col shadow-xl whitespace-nowrap">
                           {[
                             { value: "wRLP", label: "wRLP — Direct Repay" },
                             { value: "waUSDC", label: "waUSDC — Swap & Repay" },
@@ -904,7 +904,7 @@ export default function SimulationTerminal() {
                                   setPayDropdownOpen(false);
                                 }}
                                 className={`
-                                  w-full flex items-center px-3 py-2 text-[11px] text-left uppercase tracking-widest transition-colors
+                                  w-full flex items-center px-3 py-2 text-sm text-left uppercase tracking-widest transition-colors
                                   ${
                                     isSelected
                                       ? "bg-cyan-500/10 text-cyan-400"
@@ -986,7 +986,7 @@ export default function SimulationTerminal() {
 
                   {/* wRLP mode: show broker wRLP balance info */}
                   {closeShortRepayMode === "wRLP" && (
-                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                    <div className="flex justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
                       <span>Broker_wRLP</span>
                       <span className="text-white font-mono">
                         {brokerWrlpBalance != null
@@ -1021,7 +1021,7 @@ export default function SimulationTerminal() {
                   />
 
                   <div className="space-y-2">
-                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                    <div className="flex justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
                       <span>Collateral_Ratio</span>
                       <span className="text-white">{shortCR.toFixed(0)}%</span>
                     </div>
@@ -1036,7 +1036,7 @@ export default function SimulationTerminal() {
                       }
                       className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
                     />
-                    <div className="flex justify-between text-[12px] text-gray-500 font-mono">
+                    <div className="flex justify-between text-sm text-gray-500 font-mono">
                       <span>150%</span>
                       <span>1500%</span>
                     </div>
@@ -1045,7 +1045,7 @@ export default function SimulationTerminal() {
               )}
 
               {/* Stats Box */}
-              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
+              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-sm">
                 <SummaryRow
                   label={
                     tradeAction === "CLOSE" && tradeSide === "LONG"
@@ -1059,10 +1059,10 @@ export default function SimulationTerminal() {
                   }
                 />
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-500 uppercase text-[12px]">
+                  <span className="text-gray-500 uppercase text-sm">
                     Liq. Rate
                   </span>
-                  <span className="font-mono text-orange-500 text-[12px]">
+                  <span className="font-mono text-orange-500 text-sm">
                     {liqRate ? `${liqRate.toFixed(4)}` : "None"}
                   </span>
                 </div>
@@ -1076,7 +1076,7 @@ export default function SimulationTerminal() {
                 />
 
                 {swapError && (
-                  <div className="text-[10px] text-red-400 font-mono truncate mt-1">
+                  <div className="text-sm text-red-400 font-mono truncate mt-1">
                     {swapError}
                   </div>
                 )}
@@ -1084,91 +1084,295 @@ export default function SimulationTerminal() {
             </TradingTerminal>
           </div>
 
-          {/* === BOTTOM ROW: BROKER POSITIONS | FUNDING | EVENTS (full width) === */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Broker Positions */}
-            <div className="border border-white/10 bg-[#080808] flex flex-col">
-              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                  <Layers size={14} className="text-gray-500" />
-                  Broker_Positions
+          {/* === BOTTOM ROW: YOUR POSITION | OPERATIONS === */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Your Position */}
+            <div className="border border-white/10 flex flex-col">
+              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+                <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                  <Wallet size={14} className="text-gray-500" />
+                  Your Position
                 </h3>
-                <span className="text-[11px] text-gray-600 uppercase tracking-widest font-mono">
-                  {brokers.length} Active
-                </span>
-              </div>
-              <div className="p-4 md:p-5 flex-1">
-                <BrokerPositions brokers={brokers} />
-              </div>
-            </div>
-
-            {/* Funding Direction */}
-            <div className="border border-white/10 bg-[#080808] flex flex-col">
-              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                  <ArrowUpDown size={14} className="text-gray-500" />
-                  Funding_Direction
-                </h3>
-                {funding && (
-                  <span
-                    className={`text-[11px] font-bold uppercase tracking-widest ${
-                      funding.direction === "LONGS_PAY"
-                        ? "text-green-500"
-                        : "text-red-500"
-                    }`}
-                  >
-                    {funding.direction.replace("_", " ")}
-                  </span>
+                {account && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setAccountDropdown(!accountDropdown)}
+                      className="flex items-center gap-1.5 text-sm font-mono text-gray-400 hover:text-white transition-colors"
+                    >
+                      Select Account
+                      <ChevronDown size={12} className={`transition-transform ${accountDropdown ? "rotate-180" : ""}`} />
+                    </button>
+                    {accountDropdown && (
+                      <div className="absolute right-0 top-full mt-2 z-50 border border-white/10 bg-[#0a0a0a] min-w-[200px]">
+                        {[
+                          { label: "Broker #1", addr: "0x1a2b...3c4d", active: true },
+                          { label: "Broker #2", addr: "0x5e6f...7a8b", active: false },
+                        ].map((b) => (
+                          <button
+                            key={b.addr}
+                            onClick={() => setAccountDropdown(false)}
+                            className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${
+                              b.active ? "text-cyan-400" : "text-gray-400"
+                            }`}
+                          >
+                            <span>{b.label}</span>
+                            <span className="text-xs text-gray-600">{b.addr}</span>
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setAccountDropdown(false)}
+                          className="w-full text-left px-4 py-2.5 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                        >
+                          + Create New
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="p-4 md:p-5 flex-1">
-                {funding ? (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
-                        Spread
-                      </div>
-                      <div
-                        className={`text-xl font-mono font-bold ${
-                          funding.spread >= 0
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        {funding.spread >= 0 ? "+" : ""}
-                        {funding.spread.toFixed(4)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-gray-500 uppercase tracking-widest mb-2">
-                        Spread %
-                      </div>
-                      <div
-                        className={`text-xl font-mono font-bold ${
-                          funding.spreadPct >= 0
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        {funding.spreadPct >= 0 ? "+" : ""}
-                        {funding.spreadPct.toFixed(2)}%
-                      </div>
-                    </div>
+              <div className="flex-1">
+                {!account ? (
+                  <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-12">
+                    Connect wallet to view
                   </div>
                 ) : (
-                  <div className="text-gray-700 text-xs uppercase tracking-widest">
-                    No funding data
-                  </div>
+                  <>
+                    {/* Top metrics row */}
+                    <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
+                      {[
+                        { label: "NAV", value: "$10,300", color: "text-white" },
+                        { label: "Debt Value", value: "$1,668", color: "text-red-400" },
+                        { label: "Health", value: "6.17x", color: "text-green-400" },
+                        { label: "Liq. Price", value: "12.4500", color: "text-orange-400" },
+                      ].map((m) => (
+                        <div key={m.label} className="p-4 text-center">
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
+                          <div className={`text-lg font-light font-mono tracking-tight ${m.color}`}>{m.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Two-column: Assets | Debt */}
+                    <div className="grid grid-cols-2 divide-x divide-white/10">
+                      {/* Left: Assets */}
+                      <div className="py-6 space-y-5">
+                        {/* Column heading */}
+                        <div className="flex items-center justify-between px-6">
+                          <span className="text-sm text-gray-500 uppercase tracking-widest">Collateral</span>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                              <span className="text-xs text-gray-600">Tracked in NAV</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                              <span className="text-xs text-gray-600">Untracked</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Tokens */}
+                        <div>
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">Tokens</div>
+                          <div className="space-y-1">
+                            {[
+                              { name: "waUSDC", value: "$5,000.00", tracked: true },
+                              { name: "wRLP", value: "$2,100.00", tracked: true },
+                            ].map((t) => (
+                              <div key={t.name} className="relative">
+                                <button
+                                  onClick={() => setPositionDropdown(positionDropdown === `tk-${t.name}` ? null : `tk-${t.name}`)}
+                                  className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-1.5 h-1.5 rounded-full ${t.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                    <span className="text-sm font-mono text-white">{t.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-sm font-mono text-gray-400">{t.value}</span>
+                                    <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tk-${t.name}` ? "rotate-180" : ""}`} />
+                                  </div>
+                                </button>
+                                {positionDropdown === `tk-${t.name}` && (
+                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                    <button
+                                      onClick={() => setPositionDropdown(null)}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                                    >
+                                      Deposit
+                                    </button>
+                                    <button
+                                      onClick={() => setPositionDropdown(null)}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors border-t border-white/5"
+                                    >
+                                      Withdraw
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* LP Positions */}
+                        <div>
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">LP Positions</div>
+                          <div className="space-y-1">
+                            {[
+                              { id: "#12845", value: "$3,200", tracked: true, range: "3.20 — 4.10" },
+                              { id: "#12901", value: "$800", tracked: false, range: "2.80 — 3.50" },
+                              { id: "#12934", value: "$1,450", tracked: false, range: "3.50 — 4.50" },
+                              { id: "#13002", value: "$620", tracked: false, range: "2.90 — 3.30" },
+                              { id: "#13078", value: "$2,100", tracked: false, range: "3.00 — 5.00" },
+                              { id: "#13145", value: "$340", tracked: false, range: "3.60 — 3.80" },
+                              { id: "#13201", value: "$1,800", tracked: false, range: "2.50 — 4.00" },
+                              { id: "#13289", value: "$950", tracked: false, range: "3.10 — 3.90" },
+                              { id: "#13356", value: "$2,750", tracked: false, range: "2.70 — 4.20" },
+                              { id: "#13410", value: "$180", tracked: false, range: "3.40 — 3.60" },
+                            ].map((lp) => (
+                              <div key={lp.id} className="relative">
+                                <button
+                                  onClick={() => setPositionDropdown(positionDropdown === `lp-${lp.id}` ? null : `lp-${lp.id}`)}
+                                  className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-1.5 h-1.5 rounded-full ${lp.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                    <span className="text-sm font-mono text-white">{lp.id}</span>
+                                    <span className="text-sm text-gray-600 font-mono">{lp.range}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-sm font-mono text-gray-400">{lp.value}</span>
+                                    <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `lp-${lp.id}` ? "rotate-180" : ""}`} />
+                                  </div>
+                                </button>
+                                {positionDropdown === `lp-${lp.id}` && (
+                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                    <button
+                                      onClick={() => setPositionDropdown(null)}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                                    >
+                                      {lp.tracked ? "Unregister from Collateral" : "Register as Collateral"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* TWAMM Orders */}
+                        <div>
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">TWAMM Orders</div>
+                          <div className="space-y-1">
+                            {[
+                              { dir: "waUSDC → wRLP", value: "$1,200", tracked: true, progress: 60, timeLeft: "4h 12m" },
+                              { dir: "wRLP → waUSDC", value: "$3,400", tracked: false, progress: 85, timeLeft: "1h 30m" },
+                              { dir: "waUSDC → wRLP", value: "$750", tracked: false, progress: 12, timeLeft: "14h 45m" },
+                              { dir: "wRLP → waUSDC", value: "$2,100", tracked: false, progress: 100, timeLeft: "Done" },
+                              { dir: "waUSDC → wRLP", value: "$500", tracked: false, progress: 33, timeLeft: "8h 20m" },
+                              { dir: "wRLP → waUSDC", value: "$1,800", tracked: false, progress: 45, timeLeft: "6h 05m" },
+                              { dir: "waUSDC → wRLP", value: "$920", tracked: false, progress: 78, timeLeft: "2h 10m" },
+                              { dir: "wRLP → waUSDC", value: "$4,200", tracked: false, progress: 5, timeLeft: "22h 50m" },
+                              { dir: "waUSDC → wRLP", value: "$1,600", tracked: false, progress: 92, timeLeft: "0h 45m" },
+                              { dir: "wRLP → waUSDC", value: "$380", tracked: false, progress: 50, timeLeft: "5h 30m" },
+                            ].map((tw, i) => (
+                              <div key={i} className="relative">
+                                <button
+                                  onClick={() => setPositionDropdown(positionDropdown === `tw-${i}` ? null : `tw-${i}`)}
+                                  className="w-full hover:bg-white/5 py-1.5 px-6 transition-colors group"
+                                >
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${tw.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                      <span className="text-sm font-mono text-white">{tw.dir}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-sm font-mono text-gray-400">{tw.value}</span>
+                                      <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tw-${i}` ? "rotate-180" : ""}`} />
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex-1 h-1 bg-white/5 overflow-hidden">
+                                      <div
+                                        className={`h-full ${tw.tracked ? "bg-cyan-500/40" : "bg-white/10"}`}
+                                        style={{ width: `${tw.progress}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-sm text-gray-600 font-mono whitespace-nowrap">
+                                      {tw.progress}% · {tw.timeLeft}
+                                    </span>
+                                  </div>
+                                </button>
+                                {positionDropdown === `tw-${i}` && (
+                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                    <button
+                                      onClick={() => setPositionDropdown(null)}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                                    >
+                                      {tw.tracked ? "Unregister from Collateral" : "Register as Collateral"}
+                                    </button>
+                                    {tw.progress < 100 && (
+                                      <button
+                                        onClick={() => setPositionDropdown(null)}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors border-t border-white/5"
+                                      >
+                                        Cancel Order
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                      </div>
+
+                      {/* Right: Debt */}
+                      <div className="p-6 space-y-4">
+                        <div className="text-sm text-gray-500 uppercase tracking-widest mb-3">Debt</div>
+                        {[
+                          { label: "Principal", value: "420.00 wRLP", color: "text-white" },
+                          { label: "True Debt", value: "445.00 wRLP", color: "text-white" },
+                          { label: "Debt Value", value: "$1,668.75", color: "text-red-400" },
+                        ].map((d) => (
+                          <div key={d.label} className="flex justify-between items-center">
+                            <span className="text-sm text-gray-500 uppercase tracking-widest">{d.label}</span>
+                            <span className={`text-sm font-mono font-bold ${d.color}`}>{d.value}</span>
+                          </div>
+                        ))}
+
+                        {/* Risk gauge */}
+                        <div className="pt-4 mt-4 border-t border-white/5 space-y-3">
+                          <div className="text-sm text-gray-500 uppercase tracking-widest">Risk</div>
+                          <div>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-sm text-gray-600">Min Col. Ratio</span>
+                              <span className="text-sm font-mono text-gray-400">150%</span>
+                            </div>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-sm text-gray-600">Maintenance</span>
+                              <span className="text-sm font-mono text-gray-400">120%</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">Your Ratio</span>
+                              <span className="text-sm font-mono font-bold text-green-400">617%</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
 
-            {/* Last Operations */}
-            <div className="border border-white/10 bg-[#080808] flex flex-col">
-              <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-                <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
+            {/* Operations */}
+            <div className="border border-white/10 flex flex-col">
+              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+                <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                   <Activity size={14} className="text-gray-500" />
-                  Last_Operations
+                  Operations
                 </h3>
                 {operations.length > 0 && (
                   <button
@@ -1191,14 +1395,14 @@ export default function SimulationTerminal() {
                       a.click();
                       URL.revokeObjectURL(url);
                     }}
-                    className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase px-1.5 py-0.5 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 bg-white/[0.02] hover:bg-white/[0.05] transition-all flex items-center gap-1"
+                    className="text-sm font-mono font-bold tracking-widest uppercase px-2 py-1 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 transition-all flex items-center gap-1.5"
                   >
                     <Download size={10} />
                     CSV
                   </button>
                 )}
               </div>
-              <div className="p-4 md:p-5 flex-1">
+              <div className="p-6 flex-1">
                 <OperationsFeed
                   operations={operations}
                   loading={opsLoading}

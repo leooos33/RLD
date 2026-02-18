@@ -1409,9 +1409,9 @@ export default function Homepage() {
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono">
       {/* HERO */}
-      <section className="h-screen w-screen flex flex-col justify-center px-6 md:px-24 py-20 border-b border-white/10 relative overflow-hidden">
+      <section className="h-screen flex flex-col justify-center border-b border-white/10 relative overflow-hidden">
         <div className="absolute inset-0 pattern-grid opacity-10 pointer-events-none" />
-        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+        <div className="relative z-10 max-w-[1800px] mx-auto w-full px-6 md:px-12 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="max-w-3xl space-y-6">
             <div className="flex items-center gap-3 text-gray-600 text-[10px] font-bold tracking-[0.4em] uppercase">
               <div className="w-2 h-2 bg-white" />
@@ -1733,14 +1733,14 @@ export default function Homepage() {
         return (
           <section
             key={slide.index}
-            className="h-screen w-screen flex items-center px-6 md:px-24 py-20 border-b border-white/10 relative group hover:bg-white/[0.01] transition-colors"
+            className="h-screen flex items-center border-b border-white/10 relative group hover:bg-white/[0.01] transition-colors"
           >
             <div className="absolute top-6 right-6 md:top-10 md:right-10 text-[10px] font-bold text-gray-700 tracking-widest">
               [{slide.index}]
             </div>
 
             <div
-              className={`w-full ${hasVisual ? "grid grid-cols-1 lg:grid-cols-2 gap-12 items-center" : ""}`}
+              className={`w-full max-w-[1800px] mx-auto px-6 md:px-12 ${hasVisual ? "grid grid-cols-1 lg:grid-cols-2 gap-12 items-center" : ""}`}
             >
               {/* Text */}
               <div className="max-w-xl space-y-5">
@@ -1894,7 +1894,8 @@ export default function Homepage() {
                 {[
                   { label: "Terminal", href: "/app" },
                   { label: "Bonds", href: "/bonds" },
-                  { label: "Markets", href: "/markets" },
+                  { label: "Explore", href: "/explore" },
+                  { label: "Vaults", href: "/vaults" },
                   { label: "Portfolio", href: "/portfolio" },
                 ].map(({ label, href }) => (
                   <li key={label}>

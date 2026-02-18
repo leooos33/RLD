@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../context/WalletContext";
 import WalletModal from "./WalletModal";
@@ -44,18 +44,51 @@ export default function Header({ isCapped, ratesLoaded }) {
             <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
 
-              <Link
-                to="/app"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/app" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
-              >
-                TERMINAL
-              </Link>
+              <div className="relative group">
+                <Link
+                  to="/markets"
+                  className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                >
+                  Markets
+                  <svg
+                    width="8"
+                    height="5"
+                    viewBox="0 0 8 5"
+                    fill="none"
+                    className="opacity-50 mt-px"
+                  >
+                    <path
+                      d="M1 1L4 4L7 1"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="square"
+                    />
+                  </svg>
+                </Link>
+                {/* Hover dropdown */}
+                <div className="absolute top-full left-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
+                  <div className="border border-white/10 bg-[#0a0a0a] min-w-[160px] shadow-2xl">
+                    <Link
+                      to="/markets/perps"
+                      className="flex items-center gap-2.5 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
+                    >
+                      Long/Short
+                    </Link>
+                    <Link
+                      to="/markets/pools"
+                      className="flex items-center gap-2.5 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
+                    >
+                      Pools
+                    </Link>
+                  </div>
+                </div>
+              </div>
 
               <span className="text-white/10">|</span>
 
               <Link
                 to="/bonds"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 BONDS
               </Link>
@@ -63,17 +96,17 @@ export default function Header({ isCapped, ratesLoaded }) {
               <span className="text-white/10">|</span>
 
               <Link
-                to="/markets"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/markets" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+                to="/vaults"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/vaults" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
-                MARKETS
+                VAULTS
               </Link>
 
               <span className="text-white/10">|</span>
 
               <Link
                 to="/portfolio"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/portfolio" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/portfolio" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 PORTFOLIO
               </Link>
@@ -81,10 +114,19 @@ export default function Header({ isCapped, ratesLoaded }) {
               <span className="text-white/10">|</span>
 
               <Link
-                to="/sim"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/sim" ? "text-cyan-400 cursor-default" : "text-cyan-700 hover:text-cyan-400 cursor-pointer"}`}
+                to="/explore"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
-                SIM
+                EXPLORE
+              </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/app"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/app" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+              >
+                OLD
               </Link>
             </div>
           </div>
@@ -105,7 +147,7 @@ export default function Header({ isCapped, ratesLoaded }) {
             {/* WALLET BUTTON */}
             <button
               onClick={handleWalletClick}
-              className="flex items-center gap-3 border border-white/10 bg-black hover:bg-white/5 hover:border-white/30 transition-all px-4 md:px-6 py-2 focus:outline-none rounded-none"
+              className="flex items-center gap-3 border border-white/10 hover:bg-white/5 hover:border-white/30 transition-all px-4 md:px-6 py-2 focus:outline-none rounded-none"
             >
               <div
                 className={`w-1.5 h-1.5 rounded-full ${
@@ -114,7 +156,7 @@ export default function Header({ isCapped, ratesLoaded }) {
                     : "bg-gray-600"
                 }`}
               ></div>
-              <span className="text-[10px] md:text-xs font-bold tracking-widest uppercase text-white">
+              <span className="text-sm font-bold tracking-widest uppercase text-white">
                 {account ? `${account.substring(0, 6)}...` : "CONNECT"}
               </span>
             </button>
@@ -154,10 +196,16 @@ export default function Header({ isCapped, ratesLoaded }) {
                 BONDS
               </Link>
               <Link
-                to="/markets"
-                className={`py-2 ${location.pathname === "/markets" ? "text-white" : "text-gray-500"}`}
+                to="/explore"
+                className={`py-2 ${location.pathname === "/explore" ? "text-white" : "text-gray-500"}`}
               >
-                MARKETS
+                EXPLORE
+              </Link>
+              <Link
+                to="/vaults"
+                className={`py-2 ${location.pathname === "/vaults" ? "text-white" : "text-gray-500"}`}
+              >
+                VAULTS
               </Link>
               <Link
                 to="/portfolio"
@@ -165,12 +213,29 @@ export default function Header({ isCapped, ratesLoaded }) {
               >
                 PORTFOLIO
               </Link>
-              <Link
-                to="/sim"
-                className={`py-2 ${location.pathname === "/sim" ? "text-cyan-400" : "text-cyan-700"}`}
-              >
-                SIM
-              </Link>
+              <div>
+                <span
+                  className={`py-2 block ${location.pathname.startsWith("/markets") ? "text-cyan-400" : "text-cyan-700"}`}
+                >
+                  SIM
+                </span>
+                <div className="pl-4 flex flex-col gap-2 mt-1">
+                  <Link
+                    to="/markets/perps"
+                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/perps") ? "text-cyan-400" : "text-cyan-700"}`}
+                  >
+                    <div className="w-1 h-1 bg-cyan-500/50" />
+                    Long/Short
+                  </Link>
+                  <Link
+                    to="/markets/pools"
+                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/pools") ? "text-cyan-400" : "text-cyan-700"}`}
+                  >
+                    <div className="w-1 h-1 bg-cyan-500/50" />
+                    Pools
+                  </Link>
+                </div>
+              </div>
             </nav>
           </div>
         )}

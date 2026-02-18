@@ -2,7 +2,7 @@ import React from "react";
 
 // Helper for summary rows
 export const SummaryRow = ({ label, value, valueColor = "text-white" }) => (
-  <div className="flex justify-between items-center text-[12px]">
+  <div className="flex justify-between items-center text-sm">
     <span className="text-gray-500 uppercase">{label}</span>
     <span className={`font-mono ${valueColor}`}>{value}</span>
   </div>
@@ -20,7 +20,7 @@ export const InputGroup = ({
   placeholder = "0.00",
 }) => (
   <div className="space-y-2">
-    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+    <div className="flex justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
       <span>{label}</span>
       <span>{subLabel}</span>
     </div>
@@ -38,7 +38,7 @@ export const InputGroup = ({
           <button
             type="button"
             onClick={onMax}
-            className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase px-1.5 py-0.5 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 bg-white/[0.02] hover:bg-white/[0.05] transition-all"
+            className="text-sm font-mono font-bold tracking-[0.15em] uppercase text-cyan-600 hover:text-cyan-400 transition-colors"
           >
             MAX
           </button>
@@ -74,14 +74,14 @@ const TradingTerminal = ({
   footer, // Optional footer content
 }) => {
   return (
-    <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
+    <div className="xl:col-span-3 border border-white/10 bg-[#050505] flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
-        <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
+        <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
           {Icon && <Icon size={15} className="text-gray-500" />} {title}
         </h3>
         {subTitle && (
-          <span className="text-[12px] text-gray-600 uppercase tracking-widest">
+          <span className="text-sm text-gray-600 uppercase tracking-widest">
             {subTitle}
           </span>
         )}
@@ -94,10 +94,10 @@ const TradingTerminal = ({
             <button
               key={tab.id}
               onClick={tab.onClick}
-              className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+              className={`py-3 text-sm font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                 tab.isActive
                   ? tab.activeClass || "bg-white text-black"
-                  : "bg-[#080808] text-gray-600 hover:text-gray-400 hover:bg-white/5"
+                  : "bg-[#050505] text-gray-600 hover:text-gray-400 hover:bg-white/5"
               }`}
             >
               {tab.label}
@@ -115,7 +115,7 @@ const TradingTerminal = ({
           <button
             onClick={actionButton.onClick}
             disabled={actionButton.disabled}
-            className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none ${
+            className={`w-full py-4 text-sm font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none ${
               !account
                 ? "border border-white/20 text-gray-400 hover:text-white hover:border-white"
                 : actionButton.variant === "pink"

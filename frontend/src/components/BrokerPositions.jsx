@@ -7,7 +7,7 @@ import { Shield, AlertTriangle, Skull } from "lucide-react";
 export default function BrokerPositions({ brokers = [] }) {
   if (brokers.length === 0) {
     return (
-      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-6">
+      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-6">
         No active positions
       </div>
     );
@@ -35,17 +35,17 @@ export default function BrokerPositions({ brokers = [] }) {
         >
           {/* Left: label + address */}
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-white font-bold tracking-wider truncate">
+            <div className="text-sm text-white font-bold tracking-wider truncate">
               {b.label}
             </div>
-            <div className="text-[10px] text-gray-600 font-mono truncate">
+            <div className="text-sm text-gray-600 font-mono truncate">
               {b.address}
             </div>
           </div>
 
           {/* Center: collateral / debt */}
           <div className="text-right flex-shrink-0">
-            <div className="text-[11px] text-gray-400 font-mono">
+            <div className="text-sm text-gray-400 font-mono">
               {formatCompact(b.collateral)}
               <span className="text-gray-600"> / </span>
               {formatCompact(b.debtValue)}
@@ -57,7 +57,7 @@ export default function BrokerPositions({ brokers = [] }) {
             className={`flex items-center gap-1 flex-shrink-0 ${getHealthColor(b.healthFactor)}`}
           >
             {getHealthIcon(b.healthFactor)}
-            <span className="text-[11px] font-mono font-bold">
+            <span className="text-sm font-mono font-bold">
               {b.healthFactor.toFixed(2)}
             </span>
           </div>

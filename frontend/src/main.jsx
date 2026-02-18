@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 import { WalletProvider } from "./context/WalletContext.jsx";
@@ -15,6 +15,11 @@ const SimulationTerminal = lazy(
   () => import("./components/SimulationTerminal"),
 );
 const Homepage = lazy(() => import("./components/Homepage"));
+const Vaults = lazy(() => import("./components/Vaults"));
+const VaultDetail = lazy(() => import("./components/VaultDetail"));
+const PoolLP = lazy(() => import("./components/PoolLP"));
+const PoolsDirectory = lazy(() => import("./components/PoolsDirectory"));
+const PerpsDirectory = lazy(() => import("./components/PerpsDirectory"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -77,10 +82,26 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 }
               />
               <Route
-                path="/markets"
+                path="/explore"
                 element={
                   <Suspense fallback={<Loading />}>
                     <Markets />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/vaults"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <Vaults />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/vaults/fixed-yield"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <VaultDetail />
                   </Suspense>
                 }
               />
@@ -94,10 +115,38 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 }
               />
               <Route
-                path="/sim"
+                path="/markets"
+                element={<Navigate to="/markets/perps" replace />}
+              />
+              <Route
+                path="/markets/perps"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <PerpsDirectory />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/perps/:address"
                 element={
                   <Suspense fallback={<Loading />}>
                     <SimulationTerminal />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/pools"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <PoolsDirectory />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/pools/:address"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <PoolLP />
                   </Suspense>
                 }
               />

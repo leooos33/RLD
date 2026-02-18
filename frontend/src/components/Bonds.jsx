@@ -1,11 +1,5 @@
 import React, { useMemo } from "react";
-import {
-  Shield,
-  Percent,
-  Terminal,
-  Calendar,
-  AlertTriangle,
-} from "lucide-react";
+import { Shield, Terminal, Calendar, AlertTriangle } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import Header from "./Header";
 import { formatNum } from "../utils/helpers";
@@ -87,7 +81,7 @@ export default function BondsPage() {
                   title="FIXED_YIELD"
                   badge="Synthetic Bond"
                   Icon={Shield}
-                  desc="Transform volatile rates into a fixed-income product. Short RLP + TWAMM."
+                  desc="Fix your yield for any custom duration to protect against market volatility."
                   onClick={() =>
                     tradeLogic.actions.setActiveProduct("FIXED_YIELD")
                   }
@@ -101,18 +95,50 @@ export default function BondsPage() {
                   stats={stats}
                 />
               </div>
-              <div className="lg:col-span-4 h-[200px]">
-                <ProductCard
-                  theme="pink"
-                  title="FIXED_BORROW"
-                  badge="Fixed-Term Debt"
-                  Icon={Percent}
-                  desc="Lock in your borrowing costs. Long RLP + TWAMM."
-                  onClick={() =>
-                    tradeLogic.actions.setActiveProduct("FIXED_BORROW")
-                  }
-                  isActive={tradeLogic.state.activeProduct === "FIXED_BORROW"}
-                />
+              <div className="lg:col-span-4 h-full">
+                <div className="border border-white/10 bg-[#080808] h-full flex flex-col">
+                  <div className="px-4 py-2.5 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+                    <span className="text-[10px] md:text-[12px] font-bold uppercase tracking-widest text-gray-500">
+                      Mechanism
+                    </span>
+                    <span className="text-[10px] text-gray-700 tracking-[0.15em]">
+                      ::FLOW
+                    </span>
+                  </div>
+                  <div className="p-4 md:p-6 flex flex-col">
+                    {[
+                      { step: "1", label: "Select Asset", accent: true },
+                      { step: "2", label: "Select Maturity" },
+                      { step: "3", label: "Deposit Funds" },
+                      { step: "4", label: "Position opens" },
+                      { step: "5", label: "Optional: register as collateral" },
+                      { step: "6", label: "Position linearly unwinds" },
+                      { step: "7", label: "Collect fixed yield", accent: true },
+                    ].map((s, i, arr) => (
+                      <div key={i} className="flex items-start gap-2.5">
+                        <div className="flex flex-col items-center shrink-0">
+                          <div
+                            className={`w-5 h-5 border ${s.accent ? "border-cyan-500/50 bg-cyan-500/10" : "border-white/10 bg-[#0a0a0a]"} flex items-center justify-center`}
+                          >
+                            <span
+                              className={`text-[9px] font-bold ${s.accent ? "text-cyan-400" : "text-gray-600"}`}
+                            >
+                              {s.step}
+                            </span>
+                          </div>
+                          {i < arr.length - 1 && (
+                            <div className="w-px h-6 bg-white/10" />
+                          )}
+                        </div>
+                        <span
+                          className={`text-[11px] pt-0.5 ${s.accent ? "text-cyan-400" : "text-gray-500"} uppercase tracking-widest`}
+                        >
+                          {s.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
               <div className="lg:col-span-8 h-[350px] md:h-[500px]">
                 <WealthProjectionChart

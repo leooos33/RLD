@@ -116,14 +116,14 @@ export default function ChartControlBar({
               type="date"
               value={tempStart}
               onChange={(e) => setTempStart(e.target.value)}
-              className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
+              className="bg-transparent border-b border-white/20 text-sm text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
             />
-            <span className="text-gray-600 text-xs">-</span>
+            <span className="text-gray-600 text-sm">-</span>
             <input
               type="date"
               value={tempEnd}
               onChange={(e) => setTempEnd(e.target.value)}
-              className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
+              className="bg-transparent border-b border-white/20 text-sm text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
             />
             <SettingsButton
               onClick={handleApplyDate}
