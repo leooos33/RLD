@@ -11,7 +11,9 @@ import {FixedPointMath} from "../../shared/libraries/FixedPointMath.sol";
 import {IERC20} from "../../shared/interfaces/IERC20.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
-import {ILiquidationModule} from "../../shared/interfaces/ILiquidationModule.sol";
+import {
+    ILiquidationModule
+} from "../../shared/interfaces/ILiquidationModule.sol";
 
 import {PositionToken} from "../tokens/PositionToken.sol";
 import {IBrokerVerifier} from "../../shared/interfaces/IBrokerVerifier.sol";
@@ -19,7 +21,9 @@ import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title RLD Core Singleton
 /// @author RLD Protocol
@@ -117,28 +121,40 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param addresses The immutable addresses defining market infrastructure
     /// @param config The risk parameters and market configuration
     /// @return The unique MarketId for this market
-    function createMarket(MarketAddresses calldata addresses, MarketConfig calldata config) external override onlyFactory returns (MarketId) {
-
+    function createMarket(
+        MarketAddresses calldata addresses,
+        MarketConfig calldata config
+    ) external override onlyFactory returns (MarketId) {
         // === Validate Critical Addresses ===
         // All core addresses must be non-zero to ensure market functions correctly
-        if (addresses.collateralToken == address(0)) revert InvalidParam("Collateral");
-        if (addresses.underlyingToken == address(0)) revert InvalidParam("Underlying");
-        if (addresses.rateOracle == address(0)) revert InvalidParam("Rate Oracle");
+        if (addresses.collateralToken == address(0))
+            revert InvalidParam("Collateral");
+        if (addresses.underlyingToken == address(0))
+            revert InvalidParam("Underlying");
+        if (addresses.rateOracle == address(0))
+            revert InvalidParam("Rate Oracle");
         //if (addresses.spotOracle == address(0)) revert InvalidParam("Spot Oracle");
-        if (addresses.fundingModel == address(0)) revert InvalidParam("Funding");
-        if (addresses.positionToken == address(0)) revert InvalidParam("Position Token");
-        if (addresses.liquidationModule == address(0)) revert InvalidParam("LiqModule");
-        
+        if (addresses.fundingModel == address(0))
+            revert InvalidParam("Funding");
+        if (addresses.positionToken == address(0))
+            revert InvalidParam("Position Token");
+        if (addresses.liquidationModule == address(0))
+            revert InvalidParam("LiqModule");
+
         // === Generate Deterministic MarketId ===
         // Hash of (collateral, underlying, pool) ensures:
         // 1. Same tokens with different pools = different markets
         // 2. Predictable IDs for off-chain systems
         // 3. No duplicate markets possible
-        MarketId id = MarketId.wrap(keccak256(abi.encode(
-            addresses.collateralToken,
-            addresses.underlyingToken,
-            addresses.underlyingPool // Pool distinguishes markets
-        )));
+        MarketId id = MarketId.wrap(
+            keccak256(
+                abi.encode(
+                    addresses.collateralToken,
+                    addresses.underlyingToken,
+                    addresses.underlyingPool // Pool distinguishes markets
+                )
+            )
+        );
 
         // === Duplicate Check ===
         if (marketExists[id]) revert MarketAlreadyExists();
@@ -148,12 +164,17 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         marketAddresses[id] = addresses;
         marketConfigs[id] = config;
         marketStates[id] = MarketState({
-            normalizationFactor: 1e18,  // Start at 1:1 (no accrued interest)
-            totalDebt: 0,  // No debt initially
+            normalizationFactor: 1e18, // Start at 1:1 (no accrued interest)
+            totalDebt: 0, // No debt initially
             lastUpdateTimestamp: uint48(block.timestamp)
         });
 
-        emit MarketCreated(id, addresses.collateralToken, addresses.underlyingToken, addresses.underlyingPool);
+        emit MarketCreated(
+            id,
+            addresses.collateralToken,
+            addresses.underlyingToken,
+            addresses.underlyingPool
+        );
         return id;
     }
 
@@ -207,16 +228,18 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     ///
     /// @param data Arbitrary data passed to the lockAcquired callback
     /// @return Result of the lockAcquired callback
-    function lock(bytes calldata data) external override returns (bytes memory) {
+    function lock(
+        bytes calldata data
+    ) external override returns (bytes memory) {
         // HIGH-001 FIX: Prevent nested locks (reentrancy protection)
         // If a lock is already active, revert to prevent solvency check bypass
         if (TransientStorage.tload(LOCK_ACTIVE_KEY) != 0) {
             revert ReentrancyGuardActive();
         }
-        
+
         // Mark lock as active
         TransientStorage.tstore(LOCK_ACTIVE_KEY, 1);
-        
+
         // 1. Enter Lock - Store caller as lock holder
         TransientStorage.tstore(LOCK_HOLDER_KEY, uint256(uint160(msg.sender)));
 
@@ -236,21 +259,20 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
                 revert(add(reason, 32), mload(reason))
             }
         }
-
         // 3. Exit Lock & Enforce Solvency
         // All positions touched during the callback must be solvent
         _checkSolvencyOfTouched();
-        
+
         // 4. Clear lock active flag
         TransientStorage.tstore(LOCK_ACTIVE_KEY, 0);
-        
+
         // 4. Cleanup - Clear transient storage
         TransientStorage.tstore(LOCK_HOLDER_KEY, 0);
         TransientStorage.tstore(TOUCHED_COUNT_KEY, 0);
-        
+
         return result;
     }
-    
+
     /// @notice Default callback implementation - always reverts.
     /// @dev The actual callback is implemented by the caller (e.g., PrimeBroker).
     /// @dev This exists to satisfy the IRLDCore interface.
@@ -276,10 +298,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID
     /// @param deltaCollateral Unused - kept for interface compatibility (collateral in broker)
     /// @param deltaDebt Change in debt principal (positive = borrow, negative = repay)
-    function modifyPosition(MarketId id, int256 deltaCollateral, int256 deltaDebt) external onlyLock onlyLockHolder {
+    function modifyPosition(
+        MarketId id,
+        int256 deltaCollateral,
+        int256 deltaDebt
+    ) external onlyLock onlyLockHolder {
         // Note: deltaCollateral is unused - collateral is managed by PrimeBroker
         // Parameter kept for interface compatibility
-        
+
         // 1. Update Funding (Lazy) - Applies accrued interest to normalization factor
         _applyFunding(id);
 
@@ -291,21 +317,30 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         if (deltaDebt != 0) {
             uint256 newDebt = _applyDelta(pos.debtPrincipal, deltaDebt);
             pos.debtPrincipal = uint128(newDebt);
-            
+
             // Update total debt and check debt cap
             if (deltaDebt > 0) {
-                // Increasing debt - check debt cap
-                uint256 newTotalDebt = uint256(state.totalDebt) + uint256(deltaDebt);
-                
-                MarketConfig memory config = _getEffectiveConfig(id);
-                if (config.debtCap > 0 && newTotalDebt > config.debtCap) {
-                    revert DebtCapExceeded();
+                // Increasing debt - check debt cap against TRUE debt (economic USD)
+                uint256 newTotalDebt = uint256(state.totalDebt) +
+                    uint256(deltaDebt);
+
+                // Debt cap check — type(uint128).max = unlimited (skip entirely)
+                uint128 cap = _getEffectiveConfig(id).debtCap;
+                if (cap < type(uint128).max) {
+                    uint256 trueTotalDebt = newTotalDebt.mulWad(
+                        state.normalizationFactor
+                    );
+                    if (trueTotalDebt > cap) {
+                        revert DebtCapExceeded();
+                    }
                 }
-                
+
                 state.totalDebt = uint128(newTotalDebt);
             } else {
                 // Decreasing debt
-                state.totalDebt = uint128(uint256(state.totalDebt) - uint256(-deltaDebt));
+                state.totalDebt = uint128(
+                    uint256(state.totalDebt) - uint256(-deltaDebt)
+                );
             }
         }
 
@@ -313,10 +348,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // wRLP tokens represent debt obligations and can be traded
         if (deltaDebt > 0) {
             // Minting debt = creating short position
-            PositionToken(addresses.positionToken).mint(msg.sender, uint256(deltaDebt));
+            PositionToken(addresses.positionToken).mint(
+                msg.sender,
+                uint256(deltaDebt)
+            );
         } else if (deltaDebt < 0) {
             // Repaying debt = closing short position
-            PositionToken(addresses.positionToken).burn(msg.sender, uint256(-deltaDebt));
+            PositionToken(addresses.positionToken).burn(
+                msg.sender,
+                uint256(-deltaDebt)
+            );
         }
 
         // 4. Track Action Type for Solvency Ratio Selection
@@ -324,21 +365,25 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // - Type 2: New minting → uses minColRatio (more strict)
         bytes32 actionKey = keccak256(abi.encode(id, msg.sender, ACTION_SALT));
         uint256 currentType = TransientStorage.tload(actionKey);
-        uint256 newType = deltaDebt > 0 ? 2 : 1; 
-        
+        uint256 newType = deltaDebt > 0 ? 2 : 1;
+
         // Only upgrade action type, never downgrade (most restrictive wins)
         if (newType > currentType) {
             TransientStorage.tstore(actionKey, newType);
         }
-        
+
         // 5. Add to Touched List for Post-Lock Solvency Check
         _addTouchedPosition(id, msg.sender);
 
         emit PositionModified(id, msg.sender, deltaCollateral, deltaDebt);
-        
+
         // Emit market state update for indexer
         if (deltaDebt != 0) {
-            emit MarketStateUpdated(id, state.normalizationFactor, state.totalDebt);
+            emit MarketStateUpdated(
+                id,
+                state.normalizationFactor,
+                state.totalDebt
+            );
         }
     }
 
@@ -354,17 +399,17 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         for (uint256 i = 0; i < count; i++) {
             (MarketId id, address user) = _getTouchedPosition(i);
             MarketConfig memory config = _getEffectiveConfig(id);
-            
+
             // Retrieve action type to determine which ratio to use
             bytes32 actionKey = keccak256(abi.encode(id, user, ACTION_SALT));
             uint256 actionType = TransientStorage.tload(actionKey);
-            
+
             // Type 2 (minting) = stricter minColRatio
             // Type 1 or 0 (default) = more lenient maintenanceMargin
-            uint256 requiredRatio = actionType == 2 
-                ? uint256(config.minColRatio) 
+            uint256 requiredRatio = actionType == 2
+                ? uint256(config.minColRatio)
                 : uint256(config.maintenanceMargin);
-            
+
             _checkSolvency(id, user, requiredRatio);
         }
     }
@@ -374,7 +419,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID
     /// @param user The user to check
     /// @param minRatio The minimum collateralization ratio required (WAD format)
-    function _checkSolvency(MarketId id, address user, uint256 minRatio) internal view {
+    function _checkSolvency(
+        MarketId id,
+        address user,
+        uint256 minRatio
+    ) internal view {
         if (!_isSolvent(id, user, minRatio)) {
             revert Insolvent(user);
         }
@@ -393,9 +442,13 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param user The user to check (must be a PrimeBroker)
     /// @param minRatio The minimum ratio (1.5e18 = 150%)
     /// @return True if position meets the minimum ratio
-    function _isSolvent(MarketId id, address user, uint256 minRatio) internal view returns (bool) {
+    function _isSolvent(
+        MarketId id,
+        address user,
+        uint256 minRatio
+    ) internal view returns (bool) {
         Position memory pos = positions[id][user];
-        
+
         // No debt = always solvent
         if (pos.debtPrincipal == 0) return true;
 
@@ -406,15 +459,18 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // 1. Verify Broker Status (Strict)
         // Only verified brokers can have positions - prevents arbitrary contracts
         if (config.brokerVerifier == address(0)) return false;
-        if (!IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) return false;
+        if (!IBrokerVerifier(config.brokerVerifier).isValidBroker(user))
+            return false;
 
         // 2. Calculate Debt Value
         // True Debt = Principal * NormalizationFactor (accounts for accrued interest)
-        uint256 trueDebt = uint256(pos.debtPrincipal).mulWad(state.normalizationFactor);
-        
+        uint256 trueDebt = uint256(pos.debtPrincipal).mulWad(
+            state.normalizationFactor
+        );
+
         // Get price in collateral terms
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-            addresses.underlyingPool, 
+            addresses.underlyingPool,
             addresses.underlyingToken
         );
         uint256 debtValue = trueDebt.mulWad(indexPrice);
@@ -430,13 +486,12 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             // Broker reverted - treat as insolvent to allow liquidation
             return false;
         }
-        
         // 4. CRITICAL FIX: Calculate Net Worth
         // Net worth = Assets - Liabilities
         // This prevents double-counting wRLP (which appears in both assets and debt)
         if (totalAssets < debtValue) return false; // Underwater
         uint256 netWorth = totalAssets - debtValue;
-        
+
         // 5. Check Margin Requirement
         // Net worth must be at least (minRatio - 100%) of debt
         // Example: 150% ratio → net worth ≥ 50% of debt
@@ -458,29 +513,36 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     function _applyFunding(MarketId id) internal {
         MarketState storage state = marketStates[id];
         MarketAddresses storage addresses = marketAddresses[id];
-        
+
         uint256 oldNormFactor = state.normalizationFactor;
         uint256 timeDelta = block.timestamp - state.lastUpdateTimestamp;
-        
+
         // 1. Calculate new normalization factor via external model
-        (uint256 newNormFactor, int256 fundingRate) = IFundingModel(addresses.fundingModel).calculateFunding(
-            MarketId.unwrap(id),
-            address(this),
-            oldNormFactor,
-            state.lastUpdateTimestamp
-        );
+        (uint256 newNormFactor, int256 fundingRate) = IFundingModel(
+            addresses.fundingModel
+        ).calculateFunding(
+                MarketId.unwrap(id),
+                address(this),
+                oldNormFactor,
+                state.lastUpdateTimestamp
+            );
 
         // 2. Update storage with overflow protection
         if (newNormFactor != oldNormFactor) {
             require(newNormFactor <= type(uint128).max, "NormFactor overflow");
             state.normalizationFactor = uint128(newNormFactor);
-            
+
             // Emit for indexer tracking
-            emit FundingApplied(id, oldNormFactor, newNormFactor, fundingRate, timeDelta);
+            emit FundingApplied(
+                id,
+                oldNormFactor,
+                newNormFactor,
+                fundingRate,
+                timeDelta
+            );
         }
         state.lastUpdateTimestamp = uint48(block.timestamp);
     }
-
 
     /// @notice External wrapper to apply funding for testing purposes.
     /// @dev TODO: REMOVE BEFORE PRODUCTION - This is only for testnet debugging.
@@ -491,13 +553,15 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         _applyFunding(id);
     }
 
-
     /// @notice Applies a signed delta to a value with underflow protection.
     /// @dev Used for adjusting collateral and debt values.
     /// @param start The starting value
     /// @param delta The change to apply (can be negative)
     /// @return The new value after applying delta
-    function _applyDelta(uint128 start, int256 delta) internal pure returns (uint256) {
+    function _applyDelta(
+        uint128 start,
+        int256 delta
+    ) internal pure returns (uint256) {
         int256 result = int256(uint256(start)) + delta;
         if (result < 0) revert("Underflow");
         return uint256(result);
@@ -529,48 +593,82 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID
     /// @param user The user to liquidate (must be a PrimeBroker)
     /// @param debtToCover Amount of debt principal to liquidate
-    function liquidate(MarketId id, address user, uint256 debtToCover) external override nonReentrant {
+    function liquidate(
+        MarketId id,
+        address user,
+        uint256 debtToCover
+    ) external override nonReentrant {
         _applyFunding(id);
-        
+
         MarketConfig memory config = _getEffectiveConfig(id);
-        
+
         // 1. Validation
         _validateLiquidationChecks(id, user, config);
-        _validateLiquidationAmount(debtToCover);
+        _validateLiquidationAmount(debtToCover, config);
 
         // 2. Debt Calculations & Updates
-        (uint256 principalToCover, uint256 normFactor) = _updateLiquidationDebt(id, user, debtToCover, config);
+        (uint256 principalToCover, uint256 normFactor) = _updateLiquidationDebt(
+            id,
+            user,
+            debtToCover,
+            config
+        );
 
         // 3. Seize Calculation via Oracle & Module
-        uint256 seizeAmount = _calculateLiquidationSeize(id, user, debtToCover, normFactor, config);
+        uint256 seizeAmount = _calculateLiquidationSeize(
+            id,
+            user,
+            debtToCover,
+            normFactor,
+            config
+        );
 
         // 4. Execution & Settlement (with negative equity protection)
-        _settleLiquidation(id, user, seizeAmount, principalToCover, debtToCover, normFactor);
+        _settleLiquidation(
+            id,
+            user,
+            seizeAmount,
+            principalToCover,
+            debtToCover,
+            normFactor
+        );
     }
 
     /* ============================================================================================ */
     /*                                   LIQUIDATION HELPERS                                        */
     /* ============================================================================================ */
 
-    function _validateLiquidationChecks(MarketId id, address user, MarketConfig memory config) internal view {
+    function _validateLiquidationChecks(
+        MarketId id,
+        address user,
+        MarketConfig memory config
+    ) internal view {
+        // 1. Broker validity first — reject non-brokers before solvency check
+        if (
+            config.brokerVerifier == address(0) ||
+            !IBrokerVerifier(config.brokerVerifier).isValidBroker(user)
+        ) {
+            revert InvalidBroker(user);
+        }
+        // 2. Solvency check — only reached for valid brokers
         if (_isSolvent(id, user, uint256(config.maintenanceMargin))) {
             revert UserSolvent(user);
         }
-        if (config.brokerVerifier == address(0) || !IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
-            revert InvalidBroker(user);
-        }
     }
 
-    function _validateLiquidationAmount(uint256 debtToCover) internal pure {
-        if (debtToCover < MIN_LIQUIDATION) {
+    function _validateLiquidationAmount(
+        uint256 debtToCover,
+        MarketConfig memory config
+    ) internal pure {
+        if (debtToCover < config.minLiquidation) {
             revert("Liquidation amount too small");
         }
     }
 
     function _updateLiquidationDebt(
-        MarketId id, 
-        address user, 
-        uint256 debtToCover, 
+        MarketId id,
+        address user,
+        uint256 debtToCover,
         MarketConfig memory config
     ) internal returns (uint256 principalToCover, uint256 normFactor) {
         // Cache storage
@@ -578,16 +676,40 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         normFactor = state.normalizationFactor;
         Position storage pos = positions[id][user];
         uint128 principal = pos.debtPrincipal;
+        MarketAddresses storage addresses = marketAddresses[id];
 
-        // Verify Close Factor against True Debt
+        // Calculate true debt
         uint256 trueDebt = uint256(principal).mulWad(normFactor);
-        if (debtToCover > trueDebt.mulWad(uint256(config.liquidationCloseFactor))) {
-            revert CloseFactorExceeded();
+
+        // Dynamic close factor (Aave-style):
+        // If position is underwater (assets < debt), allow 100% liquidation
+        // Otherwise, enforce the configured close factor (e.g. 50%)
+        uint256 totalAssets;
+        try IPrimeBroker(user).getNetAccountValue() returns (uint256 v) {
+            totalAssets = v;
+        } catch {
+            totalAssets = 0; // Reverted broker = treat as underwater
         }
+        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+            addresses.underlyingPool,
+            addresses.underlyingToken
+        );
+        uint256 debtValue = trueDebt.mulWad(indexPrice);
+
+        if (totalAssets >= debtValue) {
+            // Not underwater — enforce close factor
+            if (
+                debtToCover >
+                trueDebt.mulWad(uint256(config.liquidationCloseFactor))
+            ) {
+                revert CloseFactorExceeded();
+            }
+        }
+        // else: underwater — skip close factor check (allow up to 100%)
 
         // Calculate Principal to burn
         principalToCover = debtToCover.divWad(normFactor);
-        
+
         // Update Storage (Optimistic Reduction)
         pos.debtPrincipal = principal - uint128(principalToCover);
     }
@@ -599,40 +721,49 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 normFactor,
         MarketConfig memory config
     ) internal view returns (uint256 seizeAmount) {
-         MarketAddresses storage addresses = marketAddresses[id];
-         
-         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-            addresses.underlyingPool, 
+        MarketAddresses storage addresses = marketAddresses[id];
+
+        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+            addresses.underlyingPool,
             addresses.underlyingToken
         );
-        
+
         uint256 spotPrice = addresses.spotOracle != address(0)
-            ? ISpotOracle(addresses.spotOracle).getSpotPrice(addresses.collateralToken, addresses.underlyingToken)
+            ? ISpotOracle(addresses.spotOracle).getSpotPrice(
+                addresses.collateralToken,
+                addresses.underlyingToken
+            )
             : 1e18;
 
         // PRICE PROTECTION: Use min(spot, index) for liquidator benefit (conservative debt valuation)
         // and max(spot, index) for borrower protection (generous collateral valuation)
         // This prevents arbitrage from price divergence
         uint256 debtPrice = indexPrice < spotPrice ? indexPrice : spotPrice;
-        uint256 collateralPrice = indexPrice > spotPrice ? indexPrice : spotPrice;
+        uint256 collateralPrice = indexPrice > spotPrice
+            ? indexPrice
+            : spotPrice;
 
-        ILiquidationModule.PriceData memory priceData = ILiquidationModule.PriceData({
-            indexPrice: debtPrice,
-            spotPrice: collateralPrice,
-            normalizationFactor: normFactor
-        });
+        ILiquidationModule.PriceData memory priceData = ILiquidationModule
+            .PriceData({
+                indexPrice: debtPrice,
+                spotPrice: collateralPrice,
+                normalizationFactor: normFactor
+            });
 
         // Use updated debt principal for remaining debt calculation
-        uint256 remainingTrueDebt = uint256(positions[id][user].debtPrincipal).mulWad(normFactor).mulWad(debtPrice);
+        uint256 remainingTrueDebt = uint256(positions[id][user].debtPrincipal)
+            .mulWad(normFactor)
+            .mulWad(debtPrice);
 
-        ( , seizeAmount) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
-            debtToCover, 
-            IPrimeBroker(user).getNetAccountValue(),
-            remainingTrueDebt,
-            priceData, 
-            config, 
-            config.liquidationParams
-        );
+        (, seizeAmount) = ILiquidationModule(addresses.liquidationModule)
+            .calculateSeizeAmount(
+                debtToCover,
+                IPrimeBroker(user).getNetAccountValue(),
+                remainingTrueDebt,
+                priceData,
+                config,
+                config.liquidationParams
+            );
     }
 
     function _settleLiquidation(
@@ -647,38 +778,47 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
         uint256 actualSeizeAmount = seizeAmount;
         uint256 actualPrincipalToCover = principalToCover;
-        
+
         if (seizeAmount > availableCollateral) {
             // Adjust seize amount to available collateral
             actualSeizeAmount = availableCollateral;
-            
+
             // Proportionally reduce debt coverage
             // actualDebtCovered = (availableCollateral * debtToCover) / seizeAmount
-            uint256 actualDebtCovered = availableCollateral.mulWad(debtToCover).divWad(seizeAmount);
+            uint256 actualDebtCovered = availableCollateral
+                .mulWad(debtToCover)
+                .divWad(seizeAmount);
             actualPrincipalToCover = actualDebtCovered.divWad(normFactor);
-            
+
             // Revert the optimistic debt reduction and apply correct amount
             Position storage pos = positions[id][user];
-            pos.debtPrincipal = pos.debtPrincipal + uint128(principalToCover) - uint128(actualPrincipalToCover);
+            pos.debtPrincipal =
+                pos.debtPrincipal +
+                uint128(principalToCover) -
+                uint128(actualPrincipalToCover);
         }
-        
-        IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(actualSeizeAmount, msg.sender);
-        
-        uint256 wRLPFromBroker = seizeOutput.wRLPExtracted > actualPrincipalToCover 
-            ? actualPrincipalToCover 
+
+        IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(
+            actualSeizeAmount,
+            msg.sender
+        );
+
+        uint256 wRLPFromBroker = seizeOutput.wRLPExtracted >
+            actualPrincipalToCover
+            ? actualPrincipalToCover
             : seizeOutput.wRLPExtracted;
-        
+
         address positionToken = marketAddresses[id].positionToken;
-        
+
         if (wRLPFromBroker > 0) {
             PositionToken(positionToken).burn(address(this), wRLPFromBroker);
         }
-        
+
         uint256 liquidatorOwes = actualPrincipalToCover - wRLPFromBroker;
         if (liquidatorOwes > 0) {
             PositionToken(positionToken).burn(msg.sender, liquidatorOwes);
         }
-        
+
         emit PositionModified(id, user, 0, -int256(actualPrincipalToCover));
     }
 
@@ -691,7 +831,10 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID
     /// @param user The user to check
     /// @return True if position is solvent (above maintenance margin)
-    function isSolvent(MarketId id, address user) external view override returns (bool) {
+    function isSolvent(
+        MarketId id,
+        address user
+    ) external view override returns (bool) {
         MarketConfig memory config = _getEffectiveConfig(id);
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
@@ -706,14 +849,18 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @notice Returns the current state of a market.
     /// @param id The market ID
     /// @return The market state (normalizationFactor, lastUpdateTimestamp)
-    function getMarketState(MarketId id) external view returns (MarketState memory) {
+    function getMarketState(
+        MarketId id
+    ) external view returns (MarketState memory) {
         return marketStates[id];
     }
 
     /// @notice Returns the addresses associated with a market.
     /// @param id The market ID
     /// @return All market addresses
-    function getMarketAddresses(MarketId id) external view returns (MarketAddresses memory) {
+    function getMarketAddresses(
+        MarketId id
+    ) external view returns (MarketAddresses memory) {
         return marketAddresses[id];
     }
 
@@ -721,7 +868,9 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev Auto-applies pending risk updates if timelock has expired.
     /// @param id The market ID
     /// @return The market configuration (with pending updates applied if ready)
-    function getMarketConfig(MarketId id) external view returns (MarketConfig memory) {
+    function getMarketConfig(
+        MarketId id
+    ) external view returns (MarketConfig memory) {
         return _getEffectiveConfig(id);
     }
 
@@ -729,7 +878,10 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID
     /// @param user The user's address
     /// @return The user's position (debtPrincipal only - collateral is in broker)
-    function getPosition(MarketId id, address user) external view returns (Position memory) {
+    function getPosition(
+        MarketId id,
+        address user
+    ) external view returns (Position memory) {
         return positions[id][user];
     }
 
@@ -746,7 +898,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param maintenanceMargin New maintenance margin (must be >= 100%)
     /// @param liquidationCloseFactor New liquidation close factor (must be > 0 and <= 100%)
     /// @param fundingPeriod New funding period (must be between 1 day and 365 days)
-    /// @param debtCap New debt cap (0 = unlimited)
+    /// @param debtCap New debt cap in economic USD (0 = unlimited)
+    /// @param minLiquidation New minimum liquidation amount in collateral decimals
     /// @param liquidationParams New liquidation parameters
     function proposeRiskUpdate(
         MarketId id,
@@ -755,6 +908,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
         uint128 debtCap,
+        uint128 minLiquidation,
         bytes32 liquidationParams
     ) external onlyCurator(id) nonReentrant {
         if (!marketExists[id]) revert InvalidMarket();
@@ -762,7 +916,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // Validate parameters (same rules as factory)
         if (minColRatio <= 1e18) revert InvalidParam("MinCol <= 100%");
         if (maintenanceMargin < 1e18) revert InvalidParam("Maintenance < 100%");
-        if (minColRatio <= maintenanceMargin) revert InvalidParam("Risk Config Error");
+        if (minColRatio <= maintenanceMargin)
+            revert InvalidParam("Risk Config Error");
         if (liquidationCloseFactor == 0 || liquidationCloseFactor > 1e18) {
             revert InvalidParam("Invalid CloseFactor");
         }
@@ -772,13 +927,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         // Store pending update
         uint48 executeAt = uint48(block.timestamp + CONFIG_TIMELOCK);
-        
+
         pendingRiskUpdates[id] = PendingRiskUpdate({
             minColRatio: minColRatio,
             maintenanceMargin: maintenanceMargin,
             liquidationCloseFactor: liquidationCloseFactor,
             fundingPeriod: fundingPeriod,
             debtCap: debtCap,
+            minLiquidation: minLiquidation,
             liquidationParams: liquidationParams,
             executeAt: executeAt,
             pending: true
@@ -791,6 +947,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             liquidationCloseFactor,
             fundingPeriod,
             debtCap,
+            minLiquidation,
             liquidationParams,
             executeAt
         );
@@ -799,9 +956,12 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @notice Cancels a pending risk parameter update.
     /// @dev Only callable by market curator.
     /// @param id The market ID
-    function cancelRiskUpdate(MarketId id) external onlyCurator(id) nonReentrant {
-        if (!pendingRiskUpdates[id].pending) revert InvalidParam("No pending update");
-        
+    function cancelRiskUpdate(
+        MarketId id
+    ) external onlyCurator(id) nonReentrant {
+        if (!pendingRiskUpdates[id].pending)
+            revert InvalidParam("No pending update");
+
         delete pendingRiskUpdates[id];
         emit RiskUpdateCancelled(id);
     }
@@ -811,23 +971,26 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev Requires pool to support dynamic fees and TWAMM to be configured.
     /// @param id The market ID
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    function updatePoolFee(MarketId id, uint24 newFee) external onlyCurator(id) nonReentrant {
+    function updatePoolFee(
+        MarketId id,
+        uint24 newFee
+    ) external onlyCurator(id) nonReentrant {
         if (!marketExists[id]) revert InvalidMarket();
         if (twamm == address(0)) revert InvalidParam("TWAMM not configured");
-        
+
         // Validate fee (V4 max is 100% = 1000000)
         if (newFee > 1000000) revert InvalidParam("Fee too high");
-        
+
         // Get market addresses to build PoolKey
         MarketAddresses storage addresses = marketAddresses[id];
-        
+
         // Build PoolKey (currencies must be sorted)
         address token0 = addresses.collateralToken;
         address token1 = addresses.underlyingToken;
         if (token0 > token1) {
             (token0, token1) = (token1, token0);
         }
-        
+
         // Note: We use fundingPeriod/60 as tick spacing approximation
         // Real implementation should store tickSpacing in MarketAddresses
         PoolKey memory key = PoolKey({
@@ -837,7 +1000,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             tickSpacing: 60, // Default tick spacing
             hooks: IHooks(twamm)
         });
-        
+
         // Call TWAMM to update the dynamic LP fee
         // TWAMM will call poolManager.updateDynamicLPFee()
         (bool success, bytes memory reason) = twamm.call(
@@ -852,14 +1015,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
                 revert(add(reason, 32), mload(reason))
             }
         }
-        
+
         emit PoolFeeUpdated(id, newFee);
     }
 
     /// @notice Gets the pending risk update for a market.
     /// @param id The market ID
     /// @return The pending update struct
-    function getPendingRiskUpdate(MarketId id) external view returns (PendingRiskUpdate memory) {
+    function getPendingRiskUpdate(
+        MarketId id
+    ) external view returns (PendingRiskUpdate memory) {
         return pendingRiskUpdates[id];
     }
 
@@ -872,24 +1037,27 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev If a pending update exists and timelock has expired, returns the new config.
     /// @param id The market ID
     /// @return The effective market configuration
-    function _getEffectiveConfig(MarketId id) internal view returns (MarketConfig memory) {
+    function _getEffectiveConfig(
+        MarketId id
+    ) internal view returns (MarketConfig memory) {
         PendingRiskUpdate storage pending = pendingRiskUpdates[id];
-        
+
         // Auto-apply if timelock expired
         if (pending.pending && block.timestamp >= pending.executeAt) {
             MarketConfig memory config = marketConfigs[id];
-            
+
             // Apply pending changes
             config.minColRatio = pending.minColRatio;
             config.maintenanceMargin = pending.maintenanceMargin;
             config.liquidationCloseFactor = pending.liquidationCloseFactor;
             config.fundingPeriod = pending.fundingPeriod;
             config.debtCap = pending.debtCap;
+            config.minLiquidation = pending.minLiquidation;
             config.liquidationParams = pending.liquidationParams;
-            
+
             return config;
         }
-        
+
         // Return current config if no pending update or timelock not expired
         return marketConfigs[id];
     }

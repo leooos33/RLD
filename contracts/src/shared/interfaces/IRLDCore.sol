@@ -9,8 +9,6 @@ interface IRLDCore {
     /*                                           STRUCTS                                            */
     /* ============================================================================================ */
 
-
-
     struct MarketAddresses {
         address collateralToken;
         address underlyingToken;
@@ -20,8 +18,6 @@ interface IRLDCore {
         address markOracle; // Restored (Required by FundingModel)
         address fundingModel;
         address curator; // Renamed from feeHook
-
-
         address liquidationModule;
         address positionToken; // ERC20 token representing debt (WrappedRLP)
     }
@@ -31,7 +27,8 @@ interface IRLDCore {
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
         uint32 fundingPeriod; // Configurable Funding Period (e.g. 30 days)
-        uint128 debtCap; // Maximum total debt allowed in this market (in debt token units)
+        uint128 debtCap; // Max TRUE debt in economic USD (type(uint128).max = unlimited)
+        uint128 minLiquidation; // Minimum liquidation amount in collateral decimals
         bytes32 liquidationParams; // Packed params for the module
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
@@ -53,6 +50,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor;
         uint32 fundingPeriod;
         uint128 debtCap;
+        uint128 minLiquidation;
         bytes32 liquidationParams;
         uint48 executeAt; // Timestamp when update auto-applies
         bool pending; // Whether an update is pending
@@ -62,11 +60,25 @@ interface IRLDCore {
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
     // --- Events ---
-    event MarketCreated(MarketId indexed id, address indexed collateral, address indexed underlying, address pool); // Indexed pool
+    event MarketCreated(
+        MarketId indexed id,
+        address indexed collateral,
+        address indexed underlying,
+        address pool
+    ); // Indexed pool
 
-    event PositionModified(MarketId indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt);
-    event SecurityUpdate(MarketId indexed id, string indexed action, address indexed operator);
-    
+    event PositionModified(
+        MarketId indexed id,
+        address indexed user,
+        int256 deltaCollateral,
+        int256 deltaDebt
+    );
+    event SecurityUpdate(
+        MarketId indexed id,
+        string indexed action,
+        address indexed operator
+    );
+
     // Curator Events
     event RiskUpdateProposed(
         MarketId indexed id,
@@ -75,6 +87,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
         uint128 debtCap,
+        uint128 minLiquidation,
         bytes32 liquidationParams,
         uint48 executeAt
     );
@@ -106,7 +119,6 @@ interface IRLDCore {
         bytes32 stateHash
     );
 
-    
     // --- Errors ---
     error Unauthorized();
     error InvalidMarket();
@@ -132,23 +144,34 @@ interface IRLDCore {
     /// @param addresses The address parameters for the market
     /// @param config The configuration parameters for the market
     /// @return marketId The unique identifier of the created market
-    function createMarket(MarketAddresses calldata addresses, MarketConfig calldata config) external returns (MarketId);
+    function createMarket(
+        MarketAddresses calldata addresses,
+        MarketConfig calldata config
+    ) external returns (MarketId);
 
     /// @notice Checks if a market exists and is valid
     function isValidMarket(MarketId id) external view returns (bool);
 
     /// @notice Returns the current state of a market
-    function getMarketState(MarketId id) external view returns (MarketState memory);
+    function getMarketState(
+        MarketId id
+    ) external view returns (MarketState memory);
 
     /// @notice Returns the addresses of a market
-    function getMarketAddresses(MarketId id) external view returns (MarketAddresses memory);
+    function getMarketAddresses(
+        MarketId id
+    ) external view returns (MarketAddresses memory);
 
     /// @notice Returns the config of a market
-    function getMarketConfig(MarketId id) external view returns (MarketConfig memory);
+    function getMarketConfig(
+        MarketId id
+    ) external view returns (MarketConfig memory);
 
     /// @notice Returns the position of a user in a market
-    function getPosition(MarketId id, address user) external view returns (Position memory);
-
+    function getPosition(
+        MarketId id,
+        address user
+    ) external view returns (Position memory);
 
     /* ============================================================================================ */
     /*                                      FLASH ACCOUNTING                                        */
@@ -158,7 +181,7 @@ interface IRLDCore {
     /// @dev Sets the `LOCK_HOLDER` and enables `modifyPosition`. Checks solvency at the end.
     /// @param data Arbitrary data passed to the callback.
     function lock(bytes calldata data) external returns (bytes memory);
-    
+
     /// @notice Callback function that must be implemented by the caller of `lock`.
     function lockAcquired(bytes calldata data) external returns (bytes memory);
 
@@ -167,16 +190,18 @@ interface IRLDCore {
     /// @param deltaCollateral Change in collateral (+Deposit, -Withdraw).
     /// @param deltaDebt Change in debt (+Mint, -Burn/Repay).
     /// @dev Can only be called *inside* the `lock` context.
-    function modifyPosition(MarketId id, int256 deltaCollateral, int256 deltaDebt) external;
-    
+    function modifyPosition(
+        MarketId id,
+        int256 deltaCollateral,
+        int256 deltaDebt
+    ) external;
+
     /// @notice Checks if a user is solvent.
     function isSolvent(MarketId id, address user) external view returns (bool);
 
     /* ============================================================================================ */
     /*                                      SETTLEMENT / LIQ                                        */
     /* ============================================================================================ */
-
-
 
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
     function liquidate(MarketId id, address user, uint256 debtToCover) external;
@@ -191,7 +216,8 @@ interface IRLDCore {
     /// @param maintenanceMargin New maintenance margin
     /// @param liquidationCloseFactor New liquidation close factor
     /// @param fundingPeriod New funding period (1 day to 365 days)
-    /// @param debtCap New debt cap (0 = unlimited)
+    /// @param debtCap New debt cap in economic USD (0 = unlimited)
+    /// @param minLiquidation New minimum liquidation amount in collateral decimals
     /// @param liquidationParams New liquidation parameters
     function proposeRiskUpdate(
         MarketId id,
@@ -200,6 +226,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
         uint128 debtCap,
+        uint128 minLiquidation,
         bytes32 liquidationParams
     ) external;
 
@@ -215,5 +242,7 @@ interface IRLDCore {
     /// @notice Gets the pending risk update for a market
     /// @param id The market ID
     /// @return The pending update struct
-    function getPendingRiskUpdate(MarketId id) external view returns (PendingRiskUpdate memory);
+    function getPendingRiskUpdate(
+        MarketId id
+    ) external view returns (PendingRiskUpdate memory);
 }

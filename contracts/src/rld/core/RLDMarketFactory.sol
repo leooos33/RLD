@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IRLDCore, MarketId} from "../../shared/interfaces/IRLDCore.sol";
 import {PositionToken} from "../tokens/PositionToken.sol";
-import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol"; 
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -12,11 +12,15 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PrimeBrokerFactory} from "./PrimeBrokerFactory.sol";
 import {BrokerVerifier} from "../modules/verifier/BrokerVerifier.sol";
-import {UniswapV4SingletonOracle} from "../modules/oracles/UniswapV4SingletonOracle.sol";
+import {
+    UniswapV4SingletonOracle
+} from "../modules/oracles/UniswapV4SingletonOracle.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "../../shared/utils/FixedPointMathLib.sol";
 import {TWAMM as TwammHook} from "../../twamm/TWAMM.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title RLDMarketFactory
@@ -48,16 +52,16 @@ contract RLDMarketFactory is ReentrancyGuard {
 
     /// @notice The owner of the factory with exclusive market creation rights
     address public owner;
-    
+
     /// @dev Restricts function access to the contract owner
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
     }
-    
+
     /// @notice Thrown when a non-owner attempts a restricted action
     error NotOwner();
-    
+
     /// @notice Thrown when an invalid address is provided
     error InvalidAddress();
 
@@ -71,28 +75,28 @@ contract RLDMarketFactory is ReentrancyGuard {
     /// @notice The RLDCore contract that manages all markets
     /// @dev Initialized via initializeCore() after RLDCore deployment
     address public CORE;
-    
+
     /// @notice The deployer address with one-time initialization rights
     address private immutable DEPLOYER;
-    
+
     /// @notice Flag to prevent re-initialization of CORE
     bool private coreInitialized;
-    
+
     /// @notice Uniswap V4 PoolManager for pool operations
     address public immutable POOL_MANAGER;
-    
+
     /// @notice Implementation contract for PositionToken clones
     address public immutable POSITION_TOKEN_IMPL;
-    
+
     /// @notice Implementation contract for PrimeBroker clones
     address public immutable PRIME_BROKER_IMPL;
-    
+
     /// @notice Singleton oracle for Uniswap V4 TWAP price queries
     address public immutable SINGLETON_V4_ORACLE;
-    
+
     /// @notice TWAMM hook for time-weighted AMM functionality (can be address(0) for testing)
     address public immutable TWAMM;
-    
+
     /// @notice Standard funding model for interest rate calculations
     address public immutable STD_FUNDING_MODEL;
 
@@ -100,7 +104,6 @@ contract RLDMarketFactory is ReentrancyGuard {
     /// @dev Passed as defaultOperator to PrimeBrokerFactory during market creation.
     ///      Can be address(0) if no router is deployed yet.
     address public immutable BROKER_ROUTER;
-
 
     /// @notice Metadata renderer for Bond NFT display (CURRENTLY UNUSED)
     /// @dev Reserved for future on-chain metadata rendering functionality.
@@ -113,7 +116,7 @@ contract RLDMarketFactory is ReentrancyGuard {
     /// @notice Minimum allowed oracle price: 0.0001 collateral per wRLP (1e14 in WAD)
     /// @dev Used for both oracle price validation and TWAMM bounds calculation
     uint256 public constant MIN_PRICE = 1e14;
-    
+
     /// @notice Maximum allowed oracle price: 100 collateral per wRLP (100e18 in WAD)
     /// @dev Used for both oracle price validation and TWAMM bounds calculation
     uint256 public constant MAX_PRICE = 100e18;
@@ -128,10 +131,10 @@ contract RLDMarketFactory is ReentrancyGuard {
      *      This matches exactly with the MarketId computation in _precomputeId()
      */
     mapping(bytes32 => MarketId) public canonicalMarkets;
-    
+
     /// @notice Thrown when attempting to create a market that already exists
     error MarketAlreadyExists();
-    
+
     /// @notice Thrown when the computed MarketId doesn't match the expected value
     error IDMismatch();
 
@@ -166,23 +169,19 @@ contract RLDMarketFactory is ReentrancyGuard {
         address underlyingToken;
         address collateralToken;
         address curator;
-        
         // --- Token Metadata ---
         string positionTokenName;
         string positionTokenSymbol;
-        
         // --- Risk Parameters ---
         uint64 minColRatio;
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor;
         address liquidationModule;
         bytes32 liquidationParams;
-        
         // --- Oracle Configuration ---
         address spotOracle;
         address rateOracle;
         uint32 oraclePeriod;
-        
         // --- V4 Pool Configuration ---
         uint24 poolFee;
         int24 tickSpacing;
@@ -198,8 +197,8 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @param verifier The deployed BrokerVerifier address
      */
     event MarketDeployed(
-        MarketId indexed id, 
-        address indexed underlyingPool, 
+        MarketId indexed id,
+        address indexed underlyingPool,
         address indexed collateral,
         address positionToken,
         address brokerFactory,
@@ -228,7 +227,7 @@ contract RLDMarketFactory is ReentrancyGuard {
      */
     /// @param brokerRouter BrokerRouter address (pre-approved on all new brokers, can be address(0))
     constructor(
-        address poolManager, 
+        address poolManager,
         address positionTokenImpl,
         address primeBrokerImpl,
         address v4Oracle,
@@ -240,7 +239,7 @@ contract RLDMarketFactory is ReentrancyGuard {
     ) {
         // Store deployer for one-time CORE initialization
         DEPLOYER = msg.sender;
-        
+
         // Validate all critical immutables (TWAMM can be 0 for testing)
         // NOTE: CORE is NOT validated here - it will be set via initializeCore()
         require(poolManager != address(0), "Invalid PoolManager");
@@ -249,12 +248,15 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(v4Oracle != address(0), "Invalid V4Oracle");
         require(fundingModel != address(0), "Invalid FundingModel");
         require(metadataRenderer != address(0), "Invalid MetadataRenderer");
-        
+
         // Validate funding period is within reasonable bounds
-        require(_fundingPeriod >= 1 days && _fundingPeriod <= 365 days, "Invalid period");
-        
+        require(
+            _fundingPeriod >= 1 days && _fundingPeriod <= 365 days,
+            "Invalid period"
+        );
+
         owner = msg.sender;
-        
+
         // CORE will be initialized via initializeCore() after RLDCore deployment
         CORE = address(0);
         POOL_MANAGER = poolManager;
@@ -292,7 +294,7 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(msg.sender == DEPLOYER, "Not deployer");
         require(!coreInitialized, "Already initialized");
         require(_core != address(0), "Invalid core");
-        
+
         CORE = _core;
         coreInitialized = true;
     }
@@ -316,22 +318,23 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @custom:reverts MarketAlreadyExists if market with same params exists
      * @custom:reverts IDMismatch if computed ID differs from RLDCore's
      */
-    function createMarket(DeployParams calldata params) 
-        external 
+    function createMarket(
+        DeployParams calldata params
+    )
+        external
         onlyOwner
-        nonReentrant 
-        returns (MarketId marketId, address brokerFactory) 
+        nonReentrant
+        returns (MarketId marketId, address brokerFactory)
     {
         // 0. Ensure CORE is initialized
         require(CORE != address(0), "Core not initialized");
-        
+
         // 1. Validation Phase (Fail Fast)
         _validateParams(params);
 
-
         // 2. Identification Phase - Compute expected MarketId
         MarketId futureId = _precomputeId(params);
-        
+
         // 2a. Duplicate Check (Fail Fast - Save Gas)
         // Check BEFORE deploying contracts to avoid wasting ~600k gas
         bytes32 canonicalKey = MarketId.unwrap(futureId);
@@ -350,7 +353,12 @@ contract RLDMarketFactory is ReentrancyGuard {
         _initializePool(positionToken, params);
 
         // 6. Registration Phase - Register with RLDCore
-        marketId = _registerMarket(params, positionToken, verifier, brokerFactory);
+        marketId = _registerMarket(
+            params,
+            positionToken,
+            verifier,
+            brokerFactory
+        );
 
         // 7. Post-Condition Check (Critical Security Invariant)
         // Ensures deterministic ID generation is consistent with RLDCore
@@ -380,16 +388,20 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(params.liquidationModule != address(0), "Invalid LiqModule");
         //require(params.spotOracle != address(0), "Invalid SpotOracle");
         require(params.rateOracle != address(0), "Invalid RateOracle");
-        
+
         // Risk Parameter Logic Checks
         require(params.minColRatio > 1e18, "MinCol < 100%");
         require(params.maintenanceMargin >= 1e18, "Maintenance < 100%");
-        require(params.minColRatio > params.maintenanceMargin, "Risk Config Error");
         require(
-            params.liquidationCloseFactor > 0 && params.liquidationCloseFactor <= 1e18, 
+            params.minColRatio > params.maintenanceMargin,
+            "Risk Config Error"
+        );
+        require(
+            params.liquidationCloseFactor > 0 &&
+                params.liquidationCloseFactor <= 1e18,
             "Invalid CloseFactor"
         );
-        
+
         // V4 Configuration Checks
         require(params.tickSpacing > 0, "Invalid TickSpacing");
         require(params.oraclePeriod > 0, "Invalid OraclePeriod");
@@ -403,12 +415,19 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @param params Deployment parameters containing the three key addresses
      * @return The precomputed MarketId
      */
-    function _precomputeId(DeployParams calldata params) internal pure returns (MarketId) {
-        return MarketId.wrap(keccak256(abi.encode(
-            params.collateralToken,
-            params.underlyingToken,
-            params.underlyingPool
-        )));
+    function _precomputeId(
+        DeployParams calldata params
+    ) internal pure returns (MarketId) {
+        return
+            MarketId.wrap(
+                keccak256(
+                    abi.encode(
+                        params.collateralToken,
+                        params.underlyingToken,
+                        params.underlyingPool
+                    )
+                )
+            );
     }
 
     /**
@@ -423,7 +442,7 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @return verifier The deployed BrokerVerifier address
      */
     function _deployInfrastructure(
-        MarketId id, 
+        MarketId id,
         DeployParams calldata params
     ) internal returns (address factory, address verifier) {
         // SECURITY: Use try-catch with gas limit to prevent:
@@ -433,12 +452,13 @@ contract RLDMarketFactory is ReentrancyGuard {
         // CRITICAL for future permissionless market deployment workflow where
         // untrusted tokens may be used to create markets without owner approval
         string memory symbol;
-        try ERC20(params.underlyingToken).symbol{gas: 50000}() returns (string memory s) {
+        try ERC20(params.underlyingToken).symbol{gas: 50000}() returns (
+            string memory s
+        ) {
             symbol = s;
         } catch {
-            symbol = "UNKNOWN";  // Fallback for non-standard tokens
+            symbol = "UNKNOWN"; // Fallback for non-standard tokens
         }
-        
         string memory name = string(abi.encodePacked("RLD: ", symbol));
         string memory nftSymbol = string(abi.encodePacked("RLD-", symbol));
 
@@ -456,16 +476,16 @@ contract RLDMarketFactory is ReentrancyGuard {
         }
 
         PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(
-            PRIME_BROKER_IMPL, 
+            PRIME_BROKER_IMPL,
             id,
             name,
             nftSymbol,
-            METADATA_RENDERER,  // Currently unused, reserved for future
-            CORE,               // Passed to brokers during init
-            operators            // BrokerRouter pre-approved on every broker
+            METADATA_RENDERER, // Currently unused, reserved for future
+            CORE, // Passed to brokers during init
+            operators // BrokerRouter pre-approved on every broker
         );
         factory = address(pbFactory);
-        
+
         // Deploy verifier linked to this factory
         verifier = address(new BrokerVerifier(factory));
     }
@@ -479,18 +499,20 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @param params Deployment parameters
      * @return tokenAddr The deployed PositionToken address
      */
-    function _deployPositionToken(DeployParams calldata params) internal returns (address tokenAddr) {
+    function _deployPositionToken(
+        DeployParams calldata params
+    ) internal returns (address tokenAddr) {
         // Query collateral token decimals for position token
         uint8 collateralDecimals = ERC20(params.collateralToken).decimals();
-        
+
         // Deploy new PositionToken with matching decimals
         PositionToken token = new PositionToken(
-            params.positionTokenName, 
+            params.positionTokenName,
             params.positionTokenSymbol,
-            collateralDecimals,  // Match collateral decimals (e.g., 6 for aUSDC, 18 for aDAI)
-            params.collateralToken  // Backing asset (yield-bearing)
+            collateralDecimals, // Match collateral decimals (e.g., 6 for aUSDC, 18 for aDAI)
+            params.collateralToken // Backing asset (yield-bearing)
         );
-        
+
         tokenAddr = address(token);
     }
 
@@ -514,7 +536,7 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @return The PoolId as bytes32
      */
     function _initializePool(
-        address positionToken, 
+        address positionToken,
         DeployParams calldata params
     ) internal returns (bytes32) {
         // Step 1: Order currencies (V4 requires currency0 < currency1)
@@ -528,14 +550,17 @@ contract RLDMarketFactory is ReentrancyGuard {
         // Returns price in WAD: how many collateral tokens per 1 wRLP
         // NOTE: Use underlyingToken (e.g., USDC) for Aave rate lookup, not collateralToken (aUSDC)
         uint256 indexPrice = IRLDOracle(params.rateOracle).getIndexPrice(
-            params.underlyingPool, 
+            params.underlyingPool,
             params.underlyingToken
         );
-        
+
         // Validate oracle price matches TWAMM bounds
         // This ensures consistency with TWAMM price bounds and prevents extreme prices
-        require(indexPrice >= MIN_PRICE && indexPrice <= MAX_PRICE, "Price out of bounds");
-        
+        require(
+            indexPrice >= MIN_PRICE && indexPrice <= MAX_PRICE,
+            "Price out of bounds"
+        );
+
         // Step 3: Invert if wRLP is token1
         // V4 stores price as token1/token0, so if wRLP is token1, we need 1/price
         if (Currency.wrap(positionToken) == currency1) {
@@ -553,17 +578,17 @@ contract RLDMarketFactory is ReentrancyGuard {
         PoolKey memory key = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: params.poolFee, 
+            fee: params.poolFee,
             tickSpacing: params.tickSpacing,
             hooks: IHooks(TWAMM)
         });
-        
+
         // Step 6: Initialize pool at computed price
         IPoolManager(POOL_MANAGER).initialize(key, initSqrtPrice);
-        
+
         // Step 7: Set price bounds for TWAMM
         // Bounds derived from MIN_PRICE (0.0001) and MAX_PRICE (100) to ensure consistency
-        uint160 minSqrt; 
+        uint160 minSqrt;
         uint160 maxSqrt;
         uint256 Q96 = 1 << 96;
 
@@ -571,46 +596,45 @@ contract RLDMarketFactory is ReentrancyGuard {
             // wRLP is Token0: price = collateral/wRLP
             // Price range: [MIN_PRICE, MAX_PRICE] = [0.0001, 100]
             // sqrtPrice range: [sqrt(0.0001), sqrt(100)] = [0.01, 10]
-            minSqrt = uint160(Q96 / 100);   // sqrt(MIN_PRICE) = sqrt(0.0001) = 0.01
-            maxSqrt = uint160(Q96 * 10);    // sqrt(MAX_PRICE) = sqrt(100) = 10
+            minSqrt = uint160(Q96 / 100); // sqrt(MIN_PRICE) = sqrt(0.0001) = 0.01
+            maxSqrt = uint160(Q96 * 10); // sqrt(MAX_PRICE) = sqrt(100) = 10
         } else {
             // wRLP is Token1: price = wRLP/collateral (inverted)
             // Price range: [1/MAX_PRICE, 1/MIN_PRICE] = [0.01, 10000]
             // sqrtPrice range: [sqrt(0.01), sqrt(10000)] = [0.1, 100]
-            minSqrt = uint160(Q96 / 10);    // sqrt(1/MAX_PRICE) = sqrt(0.01) = 0.1
-            maxSqrt = uint160(Q96 * 100);   // sqrt(1/MIN_PRICE) = sqrt(10000) = 100
+            minSqrt = uint160(Q96 / 10); // sqrt(1/MAX_PRICE) = sqrt(0.01) = 0.1
+            maxSqrt = uint160(Q96 * 100); // sqrt(1/MIN_PRICE) = sqrt(10000) = 100
         }
-        
+
         // Only set bounds if TWAMM is configured (can be address(0) in tests)
         if (TWAMM != address(0)) {
             TwammHook(TWAMM).setPriceBounds(key, minSqrt, maxSqrt);
         }
-        
-        
+
         // Step 8: Register with singleton oracle for TWAP queries
         // CRITICAL: Oracle uses positionToken (wRLP) as lookup key
         // When queried via getSpotPrice(collateralToken, underlyingToken):
-        //   - collateralToken param = positionToken (wRLP) 
+        //   - collateralToken param = positionToken (wRLP)
         //   - underlyingToken param = actual collateral (e.g., aUSDC)
         // The oracle will validate tokens match pool's currency0/currency1 in either order
-        
+
         // Verify oracle can handle the pool configuration
         // Pool currencies are ordered by address, but oracle queries by semantic meaning
         address token0 = Currency.unwrap(currency0);
         address token1 = Currency.unwrap(currency1);
         require(
             (positionToken == token0 && params.collateralToken == token1) ||
-            (positionToken == token1 && params.collateralToken == token0),
+                (positionToken == token1 && params.collateralToken == token0),
             "Oracle token mismatch"
         );
-        
+
         UniswapV4SingletonOracle(SINGLETON_V4_ORACLE).registerPool(
             positionToken,
             key,
             TWAMM,
             params.oraclePeriod
         );
-        
+
         return PoolId.unwrap(key.toId());
     }
 
@@ -631,20 +655,21 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @return marketId The registered MarketId from RLDCore
      */
     function _registerMarket(
-        DeployParams calldata params, 
-        address positionToken, 
+        DeployParams calldata params,
+        address positionToken,
         address verifier,
         address brokerFactory
     ) internal returns (MarketId marketId) {
         // Compute canonical key (must match _precomputeId exactly)
-        bytes32 canonicalKey = keccak256(abi.encode(
-            params.collateralToken,
-            params.underlyingToken,
-            params.underlyingPool
-        ));
-        
-        // Note: Duplicate check now performed in createMarket() before deployment
+        bytes32 canonicalKey = keccak256(
+            abi.encode(
+                params.collateralToken,
+                params.underlyingToken,
+                params.underlyingPool
+            )
+        );
 
+        // Note: Duplicate check now performed in createMarket() before deployment
 
         // Build addresses struct for RLDCore
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
@@ -652,10 +677,10 @@ contract RLDMarketFactory is ReentrancyGuard {
             underlyingToken: params.underlyingToken,
             underlyingPool: params.underlyingPool,
             rateOracle: params.rateOracle,
-            spotOracle: params.spotOracle, 
+            spotOracle: params.spotOracle,
             markOracle: SINGLETON_V4_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
-            curator: params.curator, 
+            curator: params.curator,
             liquidationModule: params.liquidationModule,
             positionToken: positionToken
         });
@@ -666,7 +691,8 @@ contract RLDMarketFactory is ReentrancyGuard {
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
             fundingPeriod: FUNDING_PERIOD,
-            debtCap: 0,  // Unlimited by default, curator can set later
+            debtCap: type(uint128).max, // Unlimited by default (max sentinel = no cap)
+            minLiquidation: 0, // Default 0. Curator must manually configure based on asset price.
             liquidationParams: params.liquidationParams,
             brokerVerifier: verifier
         });
@@ -674,17 +700,16 @@ contract RLDMarketFactory is ReentrancyGuard {
         // Register with RLDCore
         marketId = IRLDCore(CORE).createMarket(addresses, config);
         canonicalMarkets[canonicalKey] = marketId;
-        
+
         // Link PositionToken to this market
         PositionToken(positionToken).setMarketId(marketId);
-        
+
         // Transfer ownership to RLDCore (for minting/burning control)
         PositionToken(positionToken).transferOwnership(CORE);
-        
-        
+
         emit MarketDeployed(
-            marketId, 
-            params.underlyingPool, 
+            marketId,
+            params.underlyingPool,
             params.collateralToken,
             positionToken,
             brokerFactory,
