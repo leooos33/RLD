@@ -22,8 +22,33 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../../docker/.env"))  # doc
 
 # --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("API_KEY") 
+
+DATA_FILE = "/data/chat_id.txt"
+
+def load_chat_id():
+    # 1. Try file
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception as e:
+            pass
+            
+    # 2. Try env if file missing
+    return os.getenv("TELEGRAM_CHAT_ID")
+
+def save_chat_id(new_id):
+    try:
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        with open(DATA_FILE, "w") as f:
+            f.write(str(new_id))
+    except Exception as e:
+        pass
+
+CHAT_ID = load_chat_id()
 PORT = os.getenv("PORT", "8080")  # Default to 8080 for local testing
 API_URL = os.getenv("API_URL", f"http://localhost:{PORT}")  # Allow override via env
 RATES_API_URL = os.getenv("RATES_API_URL", "http://localhost:8081")  # Rates Indexer
@@ -331,7 +356,10 @@ def monitor_loop():
                         text = msg.get("text", "")
                         
                         if chat:
-                            CHAT_ID = str(chat) # Auto-save chat ID
+                            new_chat = str(chat)
+                            if CHAT_ID != new_chat:
+                                CHAT_ID = new_chat
+                                save_chat_id(CHAT_ID) # Auto-save chat ID to file
                         
                         if text == "/start":
                             send_message(CHAT_ID, "🤖 **Monitor Bot**\nCommands:\n/status - System Health")
