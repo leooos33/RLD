@@ -185,10 +185,10 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
     PoolKey public twammPoolKey;
 
     // ----------------------------------------------------------------
-    //  Tokens  (mock ERC20s matching production decimal conventions)
+    //  Tokens  (mock ERC20s — factory forces PT.decimals == CT.decimals)
     // ----------------------------------------------------------------
-    MockERC20 public pt; // Position Token  (e.g. wRLP)    — 18 dec
-    MockERC20 public ct; // Collateral Token (e.g. waUSDC) —  6 dec
+    MockERC20 public pt; // Position Token  (e.g. wRLP)    — 6 dec
+    MockERC20 public ct; // Collateral Token (e.g. waUSDC) — 6 dec
 
     // ----------------------------------------------------------------
     //  RLD Market
@@ -244,10 +244,10 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
             IWETH9(address(0)) // no WETH9
         );
 
-        // Test tokens — PT (position token, 18-dec) and CT (collateral token, 6-dec)
-        pt = new MockERC20("Position Token", "PT", 18); // e.g. wRLP
+        // Test tokens — both 6-dec (factory clones PT with CT's decimals)
+        pt = new MockERC20("Position Token", "PT", 6); // e.g. wRLP
         ct = new MockERC20("Collateral Token", "CT", 6); // e.g. waUSDC
-        pt.mint(address(this), 1_000_000 ether);
+        pt.mint(address(this), 1_000_000_000e6);
         ct.mint(address(this), 1_000_000_000e6);
 
         // ─────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ import "forge-std/console.sol";
  *
  *  Phase 0b – Token Order Variations
  *    ✓ PT/CT always sorts correctly regardless of deployment order
- *    ✓ 1:1 sqrtPrice documents the asymmetric-decimal semantic gap (PT=18, CT=6)
+ *    ✓ 1:1 sqrtPrice matches true 1:1 economic price (same decimals)
  *
  *  Phase 0c – Oracle → sqrtPriceX96 Math Correctness
  *    ✓ Aave oracle formula at 5% rate
@@ -40,8 +40,8 @@ import "forge-std/console.sol";
  *
  *  Phase 1  – Exhaustive Oracle-Price Pipeline Validation
  *    ✓ Formula correctness at 6 representative Aave rates (0.5% … 50%)
- *    ✓ Decimal adjustment symmetry: same economic price regardless of which
- *      token is currency0 vs currency1
+ *    ✓ Decimal adjustment symmetry: same economic price (decimals match,
+ *      adjustment factor is 1)
  *    ✓ Precision: all round-trips within 1 bip at every tested rate
  *    ✓ Tick-level consistency: sqrtPriceX96 → tick → sqrtPriceAtTick is
  *      within 1 tick of the target price
@@ -149,15 +149,11 @@ contract TwammInitializationTest is RLDIntegrationBase {
     }
 
     /**
-     * @notice At SQRT_PRICE_1_1 with an 18-dec PT / 6-dec CT pair, the "true" price
-     *         is NOT 1:1. This test documents that semantic gap:
-     *
-     *         1:1 sqrtPrice  ⟹  1 raw-token0 = 1 raw-token1
-     *         For PT(18 dec)/CT(6 dec): 1 PT-atom = 1 CT-atom → 1 whole PT = 1e12 whole CT
-     *
-     *         Any realistic price seed MUST apply the decimal adjustment first.
+     * @notice At SQRT_PRICE_1_1 with matching-decimal PT/CT pair, the
+     *         raw 1:1 sqrtPrice correctly represents 1:1 economic price.
+     *         No decimal adjustment needed when both tokens share decimals.
      */
-    function test_Phase0b_Price_InitializedAt_SqrtX96_ForAsymmetricDecimals()
+    function test_Phase0b_Price_InitializedAt_SqrtX96_ForMatchingDecimals()
         public
     {
         vm.warp(block.timestamp + 1);
@@ -171,7 +167,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
         );
         console.log("[Phase 0b] sqrtPriceX96:", sqrtPriceX96);
         console.log(
-            "[Phase 0b] Semantic: 1:1 at 18/6 dec => 1e12 CT per PT"
+            "[Phase 0b] Semantic: 1:1 at 6/6 dec => true 1:1 economic price"
         );
     }
 
@@ -232,10 +228,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
             indexPrice_WAD
         );
 
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
 
         uint256 rawPriceWAD = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 targetSqrt = _computeSqrtPriceX96(rawPriceWAD);
@@ -317,10 +311,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *         the pool actually placed as currency0 (PT or CT, lower address).
      */
     function test_Phase1b_RoundTrip_AllRates_ActualCurrencyOrder() public view {
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
 
         uint256[7] memory indexPrices = [
             uint256(0.5e18),
@@ -373,86 +365,56 @@ contract TwammInitializationTest is RLDIntegrationBase {
 
     // ────────────────────────────────────────────────────────────────
     //  1c: Decimal adjustment symmetry
-    //      When PT is currency0 (18-dec):  rawPrice = index × 1e12
-    //      When PT is currency1 (6-dec pool-perspective inverse):
-    //        rawPrice = index / 1e12
-    //      Both must yield the SAME economic price (CT per PT).
+    //      When both tokens have matching decimals (6/6), the decimal
+    //      adjustment factor is 1 — rawPrice == indexPrice.
+    //      Both currency orderings must produce the SAME economic price.
     // ────────────────────────────────────────────────────────────────
 
     /**
-     * @notice The same oracle index price (e.g. 5 WAD) must converge to the
-     *         SAME CT/PT economic price regardless of which address happened
-     *         to be lower at deployment time.
-     *
-     *         Concretely: if we hypothetically swapped the pool token order,
-     *         the economic mark price (CT per 1 PT) is still ~5 CT.
-     *
-     *         This verifies _decimalAdjustPrice and its inverse are true inverses.
+     * @notice With matching decimals (6/6), the decimal adjustment is trivially 1.
+     *         Both currency orderings produce the same rawPrice = indexPrice.
+     *         This test verifies the adjustment is a no-op.
      */
     function test_Phase1c_DecimalAdjust_IsSymmetric() public pure {
         uint256 indexPrice_WAD = 5e18; // e.g. 5 CT per PT
 
-        // Case A: PT(18) is token0, CT(6) is token1
-        //   rawPrice = 5e18 × 10^12 = 5e30  (CT-atoms per PT-atom)
-        uint256 rawA = _decimalAdjustPrice(indexPrice_WAD, 18, 6);
-        assertEq(rawA, 5e30, "PT-as-token0: rawPrice must be 5e30");
+        // Both orderings: dec0 == dec1 == 6 → adjustment factor = 10^0 = 1
+        uint256 rawA = _decimalAdjustPrice(indexPrice_WAD, 6, 6);
+        assertEq(rawA, 5e18, "6/6 pair: rawPrice must equal indexPrice (5e18)");
 
-        // Case B: CT(6) is token0, PT(18) is token1
-        //   rawPrice = 5e18 / 10^12 = 5e6   (PT-atoms per CT-atom)
-        //   to get CT-per-PT we invert: 1 PT = 1e18 atoms; 1 CT = 1e6 atoms
-        //   economic price from rawB = 1 / rawB expressed properly
-        uint256 rawB = _decimalAdjustPrice(indexPrice_WAD, 6, 18);
-        assertEq(rawB, 5e6, "CT-as-token0: rawPrice must be 5e6");
+        uint256 rawB = _decimalAdjustPrice(indexPrice_WAD, 6, 6);
+        assertEq(
+            rawB,
+            5e18,
+            "Reversed 6/6: rawPrice must also equal indexPrice"
+        );
 
-        // Both cases encode the same economic price from TWAP perspective:
-        //   sqrtPriceX96_A = sqrt(5e30 × 2^192 / 1e18)
-        //   sqrtPriceX96_B = sqrt(5e6  × 2^192 / 1e18)
-        // Recovering the correct WAD index price from each case:
-        //   from A (token0=PT): rawBack / 1e12         = 5e18  ✓
-        //   from B (token0=CT): rawBack × 1e12         = 5e18  ✓
-
+        // Both cases encode the exact same sqrtPriceX96
         uint160 sqrtA = _computeSqrtPriceX96(rawA);
         uint160 sqrtB = _computeSqrtPriceX96(rawB);
+        assertEq(
+            uint256(sqrtA),
+            uint256(sqrtB),
+            "Both orderings must produce identical sqrtPrice"
+        );
 
-        // Recover economic CT-per-PT price from sqrtA (PT=token0)
-        uint256 rawBackA = FullMath.mulDiv(
+        // Recover economic price — trivially indexPrice since no adjustment
+        uint256 rawBack = FullMath.mulDiv(
             uint256(sqrtA) * uint256(sqrtA),
             1e18,
             1 << 192
         );
-        uint256 ecoA = FullMath.mulDiv(rawBackA, 1, 10 ** (18 - 6)); // /1e12
-
-        // Recover economic CT-per-PT price from sqrtB (CT=token0)
-        // Pool price = PT-per-CT. Invert: CT-per-PT = 1 / rawBackB (in atom terms)
-        // = rawBackB represents PT-atoms per CT-atom → ×1e12 to get WAD
-        uint256 rawBackB = FullMath.mulDiv(
-            uint256(sqrtB) * uint256(sqrtB),
-            1e18,
-            1 << 192
-        );
-        uint256 ecoB = FullMath.mulDiv(rawBackB, 10 ** (18 - 6), 1); // ×1e12
-
-        // Both must converge to 5e18 (5 CT per PT) within 1 bip
-        uint256 diffA = indexPrice_WAD > ecoA
-            ? indexPrice_WAD - ecoA
-            : ecoA - indexPrice_WAD;
-        uint256 diffB = indexPrice_WAD > ecoB
-            ? indexPrice_WAD - ecoB
-            : ecoB - indexPrice_WAD;
-
+        uint256 diff = indexPrice_WAD > rawBack
+            ? indexPrice_WAD - rawBack
+            : rawBack - indexPrice_WAD;
         assertLe(
-            diffA * 10_000,
+            diff * 10_000,
             indexPrice_WAD,
-            "PT-as-token0: economic price must be within 1 bip"
-        );
-        assertLe(
-            diffB * 10_000,
-            indexPrice_WAD,
-            "CT-as-token0: economic price must be within 1 bip"
+            "Round-trip must be within 1 bip"
         );
 
-        console.log("[Phase 1c] PT-as-token0 eco:", ecoA);
-        console.log("[Phase 1c] CT-as-token0 eco:", ecoB);
+        console.log("[Phase 1c] rawPrice (6/6):", rawA);
+        console.log("[Phase 1c] recovered    :", rawBack);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -468,10 +430,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *         most 1 tick, which corresponds to ~0.01% price error per tick.
      */
     function test_Phase1d_TickConsistency_SqrtPriceAtTick() public view {
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
 
         uint256[5] memory indexPrices = [
             uint256(1e18), // 1% rate
@@ -592,14 +552,14 @@ contract TwammInitializationTest is RLDIntegrationBase {
         // Simulate by ensuring we pick the right decimalAdjust direction
         bool ptIsC0 = ptAddr < ctAddr;
 
-        uint256 dec0A = ptIsC0 ? 18 : 6;
-        uint256 dec1A = ptIsC0 ?  6 : 18;
+        uint256 dec0A = 6;
+        uint256 dec1A = 6;
         uint256 rawA = _decimalAdjustPrice(indexPrice_WAD, dec0A, dec1A);
         uint160 sqrtA = _computeSqrtPriceX96(rawA);
 
         // ── Case B: hypothetical reversed order (CT is currency0) ──
-        uint256 dec0B = ptIsC0 ?  6 : 18;
-        uint256 dec1B = ptIsC0 ? 18 : 6;
+        uint256 dec0B = 6;
+        uint256 dec1B = 6;
         uint256 rawB = _decimalAdjustPrice(indexPrice_WAD, dec0B, dec1B);
         uint160 sqrtB = _computeSqrtPriceX96(rawB);
 
@@ -673,10 +633,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
      */
     function test_Phase1g_EdgeCase_VeryLowRate_0_1pct() public view {
         uint256 indexPrice_WAD = 0.1e18;
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
         uint256 rawAdj = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 sqrtP = _computeSqrtPriceX96(rawAdj);
         assertTrue(sqrtP > 0, "sqrtP must be > 0 even for 0.1% rate");
@@ -696,10 +654,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
      */
     function test_Phase1g_EdgeCase_HighRate_50pct() public view {
         uint256 indexPrice_WAD = 50e18;
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
         uint256 rawAdj = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 sqrtP = _computeSqrtPriceX96(rawAdj);
         assertTrue(sqrtP > 0, "sqrtP must be non-zero at 50%");
@@ -730,10 +686,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
         public
         view
     {
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
 
         uint256[4] memory rates = [
             uint256(1e18),
@@ -784,10 +738,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint24 fee,
         int24 tickSpacing
     ) internal {
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
-        uint256 dec0 = token0IsPT ? 18 : 6;
-        uint256 dec1 = token0IsPT ? 6 : 18;
+        uint256 dec0 = 6;
+        uint256 dec1 = 6;
 
         uint256 rawAdj = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 sqrtSeed = _computeSqrtPriceX96(rawAdj);

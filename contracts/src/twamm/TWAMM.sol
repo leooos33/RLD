@@ -8,7 +8,9 @@ import {SqrtPriceMath} from "@uniswap/v4-core/src/libraries/SqrtPriceMath.sol";
 import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
-import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {
+    IERC20Minimal
+} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
@@ -18,13 +20,25 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
-import {ProtocolFeeLibrary} from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {
+    TransientStateLibrary
+} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
+import {
+    ProtocolFeeLibrary
+} from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
+import {
+    BeforeSwapDelta,
+    BeforeSwapDeltaLibrary
+} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {LiquidityMath} from "@uniswap/v4-core/src/libraries/LiquidityMath.sol";
-import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {
+    ModifyLiquidityParams,
+    SwapParams
+} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
@@ -36,7 +50,9 @@ import {TransferHelper} from "./libraries/TransferHelper.sol";
 
 import {TwapOracle} from "./libraries/TwapOracle.sol";
 
-import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {
+    IUnlockCallback
+} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
 /// @dev Scaling factor for sell rates to maintain precision (1e18)
 /// All sell rates are multiplied by this to avoid rounding errors in calculations
@@ -46,7 +62,7 @@ uint256 constant RATE_SCALER = 1e18;
  * @title TWAMM Hook - Time-Weighted Average Market Maker
  * @notice Implements Paradigm's TWAMM algorithm as a Uniswap V4 hook, enabling large orders
  *         to be executed gradually over time without significant price impact.
- * 
+ *
  * @dev Architecture Overview:
  *      - Users submit long-term orders with a sell rate (tokens/second) and expiration
  *      - Orders are grouped into two pools per AMM: 0→1 and 1→0
@@ -54,19 +70,19 @@ uint256 constant RATE_SCALER = 1e18;
  *      - Opposing orders are matched internally first (no swap needed)
  *      - Remaining imbalance swaps against the AMM pool
  *      - Earnings are distributed proportionally via an earnings factor
- * 
+ *
  * @dev Key Mechanisms:
  *      1. Interval-based execution: Orders execute at fixed time intervals to batch processing
  *      2. Virtual matching: Opposing orders cancel out without touching the pool
  *      3. Earnings factor: Tracks cumulative earnings per unit of sell rate (like Compound's index)
  *      4. Lazy execution: Orders only execute when someone triggers executeTWAMMOrders()
- * 
+ *
  * @dev Security Features:
  *      - Price bounds: Optional min/max price limits to prevent manipulation
  *      - Protocol fees: Configurable fee on swaps (max 0.05%)
  *      - Trading fee: Static fee applied to TWAMM order execution
  *      - Oracle integration: TWAP oracle for price history
- * 
+ *
  * @author Uniswap Labs
  * @author Zaha Studio
  */
@@ -100,29 +116,29 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @notice Core TWAMM state for each pool (order pools, last execution time, orders)
     /// @dev Contains two OrderPool.State structs (0→1 and 1→0) and order mappings
     mapping(PoolId poolId => TWAMMState twammState) internal twammStates;
-    
+
     /// @notice Tracks tokens owed to users from order earnings and cancellations
     /// @dev Updated during sync() and claimed via claimTokens()
     ///      Format: tokensOwed[currency][user] = amount
-    mapping(Currency token => mapping(address owner => uint256 amountOwed)) public tokensOwed;
+    mapping(Currency token => mapping(address owner => uint256 amountOwed))
+        public tokensOwed;
 
     /// @notice TWAP oracle observations for price history
     /// @dev Stores tick observations at different timestamps for TWAP calculations
-    mapping(PoolId => mapping(uint256 => TwapOracle.Observation)) public observations;
-    
+    mapping(PoolId => mapping(uint256 => TwapOracle.Observation))
+        public observations;
+
     /// @notice Oracle state tracking (cardinality, index)
     mapping(PoolId => TwapOracle.State) public oracleStates;
-
-
 
     /// @notice Optional price bounds to prevent manipulation attacks
     /// @dev If set, swaps that would move price outside [min, max] will revert
     ///      Bounds are in sqrtPriceX96 format (Q64.96 fixed point)
     struct PriceBounds {
-        uint160 min;  // Minimum allowed sqrtPriceX96
-        uint160 max;  // Maximum allowed sqrtPriceX96
+        uint160 min; // Minimum allowed sqrtPriceX96
+        uint160 max; // Maximum allowed sqrtPriceX96
     }
-    
+
     /// @notice Price bounds per pool (if bounds.max == 0, no bounds are set)
     mapping(PoolId => PriceBounds) public priceBounds;
 
@@ -136,7 +152,11 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param key The pool key
     /// @param min Minimum allowed sqrtPriceX96
     /// @param max Maximum allowed sqrtPriceX96
-    function setPriceBounds(PoolKey calldata key, uint160 min, uint160 max) external {
+    function setPriceBounds(
+        PoolKey calldata key,
+        uint160 min,
+        uint160 max
+    ) external {
         PriceBounds storage bounds = priceBounds[key.toId()];
         if (bounds.max != 0) revert("Bounds already set");
         bounds.min = min;
@@ -148,10 +168,12 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param _expirationInterval Time interval for order expiration (e.g., 3600 for 1 hour)
     /// @param initialOwner Address that will own this contract (for admin functions)
     /// @param _rldCore The RLDCore contract address (immutable after deployment)
-    constructor(IPoolManager _manager, uint256 _expirationInterval, address initialOwner, address _rldCore)
-        BaseHook(_manager)
-        Owned(initialOwner)
-    {
+    constructor(
+        IPoolManager _manager,
+        uint256 _expirationInterval,
+        address initialOwner,
+        address _rldCore
+    ) BaseHook(_manager) Owned(initialOwner) {
         if (_expirationInterval == 0) {
             revert InvalidExpirationInterval();
         }
@@ -159,8 +181,6 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         expirationInterval = _expirationInterval;
         rldCore = _rldCore;
     }
-
-
 
     /* ============================================================================ */
     /*                          UNISWAP V4 HOOK LIFECYCLE                          */
@@ -173,29 +193,39 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     ///      - beforeAddLiquidity/beforeRemoveLiquidity: Execute pending orders before LP changes
     ///      - beforeSwap: Execute pending orders before regular swaps
     ///      - afterSwap: Validate price bounds and collect fees on exact output swaps
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
-        return Hooks.Permissions({
-            beforeInitialize: true,
-            afterInitialize: false,
-            beforeAddLiquidity: true,
-            beforeRemoveLiquidity: true,
-            afterAddLiquidity: false,
-            afterRemoveLiquidity: false,
-            beforeSwap: true,
-            afterSwap: true,
-            beforeDonate: false,
-            afterDonate: false,
-            beforeSwapReturnDelta: false,
-            afterSwapReturnDelta: false,
-            afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: false
-        });
+    function getHookPermissions()
+        public
+        pure
+        override
+        returns (Hooks.Permissions memory)
+    {
+        return
+            Hooks.Permissions({
+                beforeInitialize: true,
+                afterInitialize: false,
+                beforeAddLiquidity: true,
+                beforeRemoveLiquidity: true,
+                afterAddLiquidity: false,
+                afterRemoveLiquidity: false,
+                beforeSwap: true,
+                afterSwap: true,
+                beforeDonate: false,
+                afterDonate: false,
+                beforeSwapReturnDelta: false,
+                afterSwapReturnDelta: false,
+                afterAddLiquidityReturnDelta: false,
+                afterRemoveLiquidityReturnDelta: false
+            });
     }
 
     /// @notice Called when a pool is first initialized
     /// @dev Rejects pools with native ETH (only ERC20 supported)
     ///      Initializes TWAMM state and oracle for the pool
-    function _beforeInitialize(address, PoolKey calldata key, uint160) internal override returns (bytes4) {
+    function _beforeInitialize(
+        address,
+        PoolKey calldata key,
+        uint160
+    ) internal override returns (bytes4) {
         if (key.currency0.isAddressZero()) {
             revert PoolWithNativeNotSupported();
         }
@@ -223,7 +253,8 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         if (bounds.min != 0) {
             uint160 lowerSqrt = TickMath.getSqrtPriceAtTick(params.tickLower);
             uint160 upperSqrt = TickMath.getSqrtPriceAtTick(params.tickUpper);
-            if (lowerSqrt < bounds.min || upperSqrt > bounds.max) revert("LP Range Out of Bounds");
+            if (lowerSqrt < bounds.min || upperSqrt > bounds.max)
+                revert("LP Range Out of Bounds");
         }
 
         return BaseHook.beforeAddLiquidity.selector;
@@ -242,7 +273,6 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         _updateOracle(key);
         // Liquidity removal must always be unblocked.
         try this.executeTWAMMOrders(key) {} catch {}
-
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
@@ -253,10 +283,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @notice Protocol fee per pool (in pips, denominator is 1,000,000)
     /// @dev Example: 500 = 0.05% fee
     mapping(PoolId => uint24) public protocolFees;
-    
+
     /// @notice Accumulated protocol fees per currency
     mapping(Currency => uint256) public collectedFees;
-    
+
     /// @notice Maximum protocol fee (0.05% = 500 pips)
     uint24 public constant MAX_PROTOCOL_FEE = 500;
 
@@ -264,7 +294,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @dev Only owner can call. Fee is capped at 0.05%
     /// @param key The pool key
     /// @param newFee Fee in pips (e.g., 500 = 0.05%)
-    function setProtocolFee(PoolKey calldata key, uint24 newFee) external onlyOwner {
+    function setProtocolFee(
+        PoolKey calldata key,
+        uint24 newFee
+    ) external onlyOwner {
         if (newFee > MAX_PROTOCOL_FEE) revert("Fee exceeds 0.05%");
         protocolFees[key.toId()] = newFee;
     }
@@ -273,7 +306,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @dev Only owner can call. Transfers all collected fees for a currency
     /// @param currency The currency to claim
     /// @param recipient Address to receive the fees
-    function claimProtocolFees(Currency currency, address recipient) external onlyOwner {
+    function claimProtocolFees(
+        Currency currency,
+        address recipient
+    ) external onlyOwner {
         uint256 amount = collectedFees[currency];
         collectedFees[currency] = 0;
         currency.transfer(recipient, amount);
@@ -305,13 +341,18 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param marketId The RLD market ID that this pool belongs to
     /// @param key The pool key
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    function updateDynamicLPFee(MarketId marketId, PoolKey calldata key, uint24 newFee) external nonReentrant {
+    function updateDynamicLPFee(
+        MarketId marketId,
+        PoolKey calldata key,
+        uint24 newFee
+    ) external nonReentrant {
         // Verify caller is the curator for this market
         if (rldCore == address(0)) revert Unauthorized();
-        
-        IRLDCore.MarketAddresses memory addresses = IRLDCore(rldCore).getMarketAddresses(marketId);
+
+        IRLDCore.MarketAddresses memory addresses = IRLDCore(rldCore)
+            .getMarketAddresses(marketId);
         if (msg.sender != addresses.curator) revert Unauthorized();
-        
+
         // V4 max fee is 100% = 1000000 (in hundredths of bips)
         // LPFeeLibrary will validate the actual fee value
         poolManager.updateDynamicLPFee(key, newFee);
@@ -329,28 +370,40 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @return selector Function selector to confirm execution
     /// @return delta BeforeSwapDelta (always zero for this hook)
     /// @return lpFeeOverride LP fee override (always 0, we don't override)
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
-        internal
-        override
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
+    function _beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        bytes calldata
+    ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         _updateOracle(key);
         executeTWAMMOrders(key);
 
         uint24 fee = protocolFees[key.toId()];
         if (fee > 0 && params.amountSpecified < 0) {
             // Exact Input: Charge fee on input token upfront
-            Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
-            uint256 feeAmount = (uint256(-params.amountSpecified) * fee) / 1000000;
-            
+            Currency feeCurrency = params.zeroForOne
+                ? key.currency0
+                : key.currency1;
+            uint256 feeAmount = (uint256(-params.amountSpecified) * fee) /
+                1000000;
+
             if (feeAmount > 0) {
-                IERC20Minimal(Currency.unwrap(feeCurrency)).transferFrom(sender, address(this), feeAmount);
+                IERC20Minimal(Currency.unwrap(feeCurrency)).transferFrom(
+                    sender,
+                    address(this),
+                    feeAmount
+                );
                 collectedFees[feeCurrency] += feeAmount;
             }
         }
         // Note: Exact output fees are handled in _afterSwap
 
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        return (
+            BaseHook.beforeSwap.selector,
+            BeforeSwapDeltaLibrary.ZERO_DELTA,
+            0
+        );
     }
 
     /// @notice Called after a swap is executed
@@ -361,16 +414,19 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param delta The balance changes from the swap
     /// @return selector Function selector to confirm execution
     /// @return hookDelta Amount to adjust user's output (negative = take fee from user)
-    function _afterSwap(address, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata)
-        internal
-        override
-        returns (bytes4, int128)
-    {
-        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(key.toId());
-        
+    function _afterSwap(
+        address,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata
+    ) internal override returns (bytes4, int128) {
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(key.toId());
+
         PriceBounds memory bounds = priceBounds[key.toId()];
         if (bounds.min != 0) {
-             if (sqrtPriceX96 < bounds.min || sqrtPriceX96 > bounds.max) revert("Price Out of Bounds");
+            if (sqrtPriceX96 < bounds.min || sqrtPriceX96 > bounds.max)
+                revert("Price Out of Bounds");
         }
 
         // Handle protocol fee for exact output swaps
@@ -378,15 +434,23 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         if (fee > 0 && params.amountSpecified > 0) {
             // Exact Output: Charge fee on output token
             // The output is what the user receives, we take a cut
-            Currency feeCurrency = params.zeroForOne ? key.currency1 : key.currency0;
-            int128 outputAmount = params.zeroForOne ? delta.amount1() : delta.amount0();
-            
+            Currency feeCurrency = params.zeroForOne
+                ? key.currency1
+                : key.currency0;
+            int128 outputAmount = params.zeroForOne
+                ? delta.amount1()
+                : delta.amount0();
+
             if (outputAmount > 0) {
-                uint256 feeAmount = (uint256(uint128(outputAmount)) * fee) / 1000000;
+                uint256 feeAmount = (uint256(uint128(outputAmount)) * fee) /
+                    1000000;
                 if (feeAmount > 0) {
                     collectedFees[feeCurrency] += feeAmount;
                     // Return negative delta to take fee from user's output
-                    return (BaseHook.afterSwap.selector, -int128(int256(feeAmount)));
+                    return (
+                        BaseHook.afterSwap.selector,
+                        -int128(int256(feeAmount))
+                    );
                 }
             }
         }
@@ -401,7 +465,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @inheritdoc ITWAMM
     /// @notice Returns the last timestamp at which virtual orders were executed for a pool
     /// @dev This is rounded down to the nearest interval boundary
-    function lastVirtualOrderTimestamp(PoolId key) external view returns (uint256) {
+    function lastVirtualOrderTimestamp(
+        PoolId key
+    ) external view returns (uint256) {
         return twammStates[key].lastVirtualOrderTimestamp;
     }
 
@@ -410,7 +476,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param poolKey The pool containing the order
     /// @param orderKey The order identifier (owner, expiration, direction)
     /// @return Order struct with sellRate and earningsFactorLast
-    function getOrder(PoolKey calldata poolKey, OrderKey calldata orderKey) external view returns (Order memory) {
+    function getOrder(
+        PoolKey calldata poolKey,
+        OrderKey calldata orderKey
+    ) external view returns (Order memory) {
         return _getOrder(twammStates[poolKey.toId()], _orderId(orderKey));
     }
 
@@ -420,16 +489,26 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param zeroForOne True for 0→1 pool, false for 1→0 pool
     /// @return sellRateCurrent Total sell rate across all active orders (scaled by RATE_SCALER)
     /// @return earningsFactorCurrent Cumulative earnings factor for profit distribution
-    function getOrderPool(PoolKey calldata key, bool zeroForOne)
+    function getOrderPool(
+        PoolKey calldata key,
+        bool zeroForOne
+    )
         external
         view
         returns (uint256 sellRateCurrent, uint256 earningsFactorCurrent)
     {
         TWAMMState storage twamm = _getTWAMM(key);
 
-        return zeroForOne
-            ? (twamm.orderPool0For1.sellRateCurrent, twamm.orderPool0For1.earningsFactorCurrent)
-            : (twamm.orderPool1For0.sellRateCurrent, twamm.orderPool1For0.earningsFactorCurrent);
+        return
+            zeroForOne
+                ? (
+                    twamm.orderPool0For1.sellRateCurrent,
+                    twamm.orderPool0For1.earningsFactorCurrent
+                )
+                : (
+                    twamm.orderPool1For0.sellRateCurrent,
+                    twamm.orderPool1For0.earningsFactorCurrent
+                );
     }
 
     /* ============================================================================ */
@@ -452,8 +531,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     ///      4. Updates order pool state and earnings factors
     /// @param key The pool key
     /// @param targetTimestamp The timestamp to execute orders up to (rounded to interval)
-    function executeTWAMMOrders(PoolKey memory key, uint256 targetTimestamp) public {
-
+    function executeTWAMMOrders(
+        PoolKey memory key,
+        uint256 targetTimestamp
+    ) public {
         PoolId poolId = key.toId();
         TWAMMState storage twamm = twammStates[poolId];
 
@@ -461,18 +542,37 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
             revert NotInitialized();
         }
 
-        (uint160 sqrtPriceX96,, uint24 protocolFee, uint24 lpFee) = poolManager.getSlot0(poolId);
-        (bool zeroForOne, uint160 sqrtPriceLimitX96, uint256 maxSwapAmount) = _executeTWAMMOrders(
-            twamm,
-            key,
-            PoolParamsOnExecute(sqrtPriceX96, protocolFee, lpFee, poolManager.getLiquidity(poolId), 0, 0),
-            targetTimestamp
-        );
+        (uint160 sqrtPriceX96, , uint24 protocolFee, uint24 lpFee) = poolManager
+            .getSlot0(poolId);
+        (
+            bool zeroForOne,
+            uint160 sqrtPriceLimitX96,
+            uint256 maxSwapAmount
+        ) = _executeTWAMMOrders(
+                twamm,
+                key,
+                PoolParamsOnExecute(
+                    sqrtPriceX96,
+                    protocolFee,
+                    lpFee,
+                    poolManager.getLiquidity(poolId),
+                    0,
+                    0
+                ),
+                targetTimestamp
+            );
 
         // If virtual matching left an imbalance, execute swap against pool
-        if (sqrtPriceLimitX96 != 0 && sqrtPriceLimitX96 != sqrtPriceX96 && maxSwapAmount != 0) {
-            SwapParams memory swapParams =
-                SwapParams(zeroForOne, -maxSwapAmount.toInt256(), sqrtPriceLimitX96);
+        if (
+            sqrtPriceLimitX96 != 0 &&
+            sqrtPriceLimitX96 != sqrtPriceX96 &&
+            maxSwapAmount != 0
+        ) {
+            SwapParams memory swapParams = SwapParams(
+                zeroForOne,
+                -maxSwapAmount.toInt256(),
+                sqrtPriceLimitX96
+            );
 
             if (poolManager.isUnlocked()) {
                 _processSwap(key, swapParams);
@@ -480,7 +580,11 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                 poolManager.unlock(abi.encode(key, swapParams));
             }
 
-            emit Fulfillment(poolId, twamm.orderPool0For1.sellRateCurrent, twamm.orderPool1For0.sellRateCurrent);
+            emit Fulfillment(
+                poolId,
+                twamm.orderPool0For1.sellRateCurrent,
+                twamm.orderPool1For0.sellRateCurrent
+            );
         }
     }
 
@@ -501,7 +605,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     /// @param orders Array of order parameters
     /// @return orderIds Array of generated order IDs
     /// @return orderKeys Array of order keys (owner, expiration, direction)
-    function batchSubmitOrders(SubmitOrderParams[] calldata orders)
+    function batchSubmitOrders(
+        SubmitOrderParams[] calldata orders
+    )
         external
         returns (bytes32[] memory orderIds, OrderKey[] memory orderKeys)
     {
@@ -514,25 +620,23 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
-    function submitOrder(SubmitOrderParams calldata params)
-        external
-        returns (bytes32 orderId, OrderKey memory orderKey)
-    {
+    function submitOrder(
+        SubmitOrderParams calldata params
+    ) external returns (bytes32 orderId, OrderKey memory orderKey) {
         return _submitOrder(params);
     }
 
-    function _submitOrder(SubmitOrderParams calldata params)
-        internal
-        returns (bytes32 orderId, OrderKey memory orderKey)
-    {
-
+    function _submitOrder(
+        SubmitOrderParams calldata params
+    ) internal returns (bytes32 orderId, OrderKey memory orderKey) {
         executeTWAMMOrders(params.key);
 
         PoolId poolId = params.key.toId();
         uint256 currentTimestampAtInterval = _getIntervalTime(block.timestamp);
         orderKey = OrderKey({
             owner: msg.sender,
-            expiration: (currentTimestampAtInterval + params.duration).toUint160(),
+            expiration: (currentTimestampAtInterval + params.duration)
+                .toUint160(),
             zeroForOne: params.zeroForOne
         });
 
@@ -560,16 +664,30 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
             revert OrderAlreadyExists(orderKey);
         }
 
-        OrderPool.State storage orderPool = params.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
+        OrderPool.State storage orderPool = params.zeroForOne
+            ? twamm.orderPool0For1
+            : twamm.orderPool1For0;
 
         orderPool.sellRateCurrent += scaledSellRate;
-        orderPool.sellRateEndingAtInterval[orderKey.expiration] += scaledSellRate;
+        orderPool.sellRateEndingAtInterval[
+            orderKey.expiration
+        ] += scaledSellRate;
 
         uint256 earningsFactorLast = orderPool.earningsFactorCurrent;
-        twamm.orders[orderId] = Order({sellRate: scaledSellRate, earningsFactorLast: earningsFactorLast});
+        twamm.orders[orderId] = Order({
+            sellRate: scaledSellRate,
+            earningsFactorLast: earningsFactorLast
+        });
 
-        IERC20Minimal(params.zeroForOne ? Currency.unwrap(params.key.currency0) : Currency.unwrap(params.key.currency1))
-            .safeTransferFrom(msg.sender, address(this), sellRate * params.duration);
+        IERC20Minimal(
+            params.zeroForOne
+                ? Currency.unwrap(params.key.currency0)
+                : Currency.unwrap(params.key.currency1)
+        ).safeTransferFrom(
+                msg.sender,
+                address(this),
+                sellRate * params.duration
+            );
 
         emit SubmitOrder(
             poolId,
@@ -584,12 +702,12 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
 
         return (orderId, orderKey);
     }
-    
+
     /// @inheritdoc ITWAMM
-    function cancelOrder(PoolKey calldata key, OrderKey calldata orderKey)
-        external
-        returns (uint256 buyTokensOut, uint256 sellTokensRefund)
-    {
+    function cancelOrder(
+        PoolKey calldata key,
+        OrderKey calldata orderKey
+    ) external returns (uint256 buyTokensOut, uint256 sellTokensRefund) {
         if (msg.sender != orderKey.owner) {
             revert Unauthorized();
         }
@@ -614,27 +732,32 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         }
 
         // 4. Update OrderPool State (CRITICAL: Remove from current AND future expiration)
-        OrderPool.State storage orderPool = orderKey.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
-        
+        OrderPool.State storage orderPool = orderKey.zeroForOne
+            ? twamm.orderPool0For1
+            : twamm.orderPool1For0;
+
         orderPool.sellRateCurrent -= sellRate;
         orderPool.sellRateEndingAtInterval[orderKey.expiration] -= sellRate;
-        
+
         // 5. Calculate Refund
         // Refund is for the time remaining from the last processed interval until expiration
-        uint256 remainingSeconds = orderKey.expiration - twamm.lastVirtualOrderTimestamp;
+        uint256 remainingSeconds = orderKey.expiration -
+            twamm.lastVirtualOrderTimestamp;
         sellTokensRefund = (sellRate * remainingSeconds) / RATE_SCALER;
 
         // 6. Delete Order
         delete twamm.orders[orderId];
 
         // 7. Transfer Refund (Sell Token) to User
-        Currency sellToken = orderKey.zeroForOne ? key.currency0 : key.currency1;
+        Currency sellToken = orderKey.zeroForOne
+            ? key.currency0
+            : key.currency1;
         sellToken.transfer(msg.sender, sellTokensRefund);
 
         // 8. Claim Owed Tokens (Buy Token + any previously owed Sell Token)
         // Note: sync() updated tokensOwed. We use claimTokensByPoolKey to flush everything.
         (uint256 c0, uint256 c1) = claimTokensByPoolKey(key);
-        
+
         // Return total buy tokens claimed (one of c0 or c1 will be the buy token)
         buyTokensOut = orderKey.zeroForOne ? c1 : c0;
 
@@ -642,11 +765,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
-    function getCancelOrderState(PoolKey calldata key, OrderKey calldata orderKey)
-        external
-        view
-        returns (uint256 buyTokensOwed, uint256 sellTokensRefund)
-    {
+    function getCancelOrderState(
+        PoolKey calldata key,
+        OrderKey calldata orderKey
+    ) external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund) {
         PoolId poolId = key.toId();
         TWAMMState storage twamm = twammStates[poolId];
         bytes32 orderId = _orderId(orderKey);
@@ -661,7 +783,7 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         // We simulate the time that WOULD be used if synced now.
         // sync() -> executeTWAMMOrders() -> uses _getIntervalTime(block.timestamp)
         uint256 currentTimestampAtInterval = _getIntervalTime(block.timestamp);
-        
+
         // The lastVirtualOrderTimestamp is where the system IS.
         // The effective processing time for refund calculation is the max of the two.
         // If lastVirtual is AHEAD of current interval (unlikely unless future manip), use that.
@@ -669,13 +791,18 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         uint256 lastProcessedTime = twamm.lastVirtualOrderTimestamp;
         // If intervals have passed, they will be executed upon cancel.
         // So the refund starts from the END of the current executing interval.
-        uint256 effectiveStartTime = currentTimestampAtInterval > lastProcessedTime ? currentTimestampAtInterval : lastProcessedTime;
+        uint256 effectiveStartTime = currentTimestampAtInterval >
+            lastProcessedTime
+            ? currentTimestampAtInterval
+            : lastProcessedTime;
 
         if (effectiveStartTime >= orderKey.expiration) {
             sellTokensRefund = 0;
         } else {
             uint256 remainingSeconds = orderKey.expiration - effectiveStartTime;
-            sellTokensRefund = (order.sellRate * remainingSeconds) / RATE_SCALER;
+            sellTokensRefund =
+                (order.sellRate * remainingSeconds) /
+                RATE_SCALER;
         }
 
         // Calculate Pending Earnings
@@ -690,29 +817,41 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         // So we can only return earnings based on `earningsFactorCurrent` stored in state.
         // This means `buyTokensOwed` will be UNDER-estimated if `lastVirtual` is old.
         // However, this is the best we can do in a view function without simulating swaps.
-        
-        OrderPool.State storage orderPool = orderKey.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
+
+        OrderPool.State storage orderPool = orderKey.zeroForOne
+            ? twamm.orderPool0For1
+            : twamm.orderPool1For0;
         bool isOrderExpired = orderKey.expiration <= lastProcessedTime;
-        
-        uint256 earningsFactorLast = isOrderExpired ? orderPool.earningsFactorAtInterval[orderKey.expiration] : orderPool.earningsFactorCurrent;
-        
+
+        uint256 earningsFactorLast = isOrderExpired
+            ? orderPool.earningsFactorAtInterval[orderKey.expiration]
+            : orderPool.earningsFactorCurrent;
+
         if (earningsFactorLast > order.earningsFactorLast) {
-             buyTokensOwed += (Math.mulDiv(earningsFactorLast - order.earningsFactorLast, order.sellRate, RATE_SCALER))
-                >> FixedPoint96.RESOLUTION;
+            buyTokensOwed +=
+                (
+                    Math.mulDiv(
+                        earningsFactorLast - order.earningsFactorLast,
+                        order.sellRate,
+                        RATE_SCALER
+                    )
+                ) >>
+                FixedPoint96.RESOLUTION;
         }
     }
 
     /// @inheritdoc ITWAMM
-    function claimTokensByPoolKey(PoolKey calldata key)
-        public
-        returns (uint256 tokens0Claimed, uint256 tokens1Claimed)
-    {
+    function claimTokensByPoolKey(
+        PoolKey calldata key
+    ) public returns (uint256 tokens0Claimed, uint256 tokens1Claimed) {
         tokens0Claimed = _claimTokens(key.currency0);
         tokens1Claimed = _claimTokens(key.currency1);
     }
 
     /// @inheritdoc ITWAMM
-    function claimTokensByCurrencies(Currency[] calldata currencies) public returns (uint256[] memory tokensClaimed) {
+    function claimTokensByCurrencies(
+        Currency[] calldata currencies
+    ) public returns (uint256[] memory tokensClaimed) {
         tokensClaimed = new uint256[](currencies.length);
 
         for (uint256 i = 0; i < currencies.length; i++) {
@@ -721,10 +860,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
-    function syncAndClaimTokens(SyncParams calldata params)
-        external
-        returns (uint256 tokens0Claimed, uint256 tokens1Claimed)
-    {
+    function syncAndClaimTokens(
+        SyncParams calldata params
+    ) external returns (uint256 tokens0Claimed, uint256 tokens1Claimed) {
         // Calls executeTWAMMOrders
         sync(params);
 
@@ -732,10 +870,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
-    function batchSyncAndClaimTokens(SyncParams[] calldata params, Currency[] calldata currencies)
-        external
-        returns (uint256[] memory)
-    {
+    function batchSyncAndClaimTokens(
+        SyncParams[] calldata params,
+        Currency[] calldata currencies
+    ) external returns (uint256[] memory) {
         for (uint256 i = 0; i < params.length; i++) {
             // Calls executeTWAMMOrders
             sync(params[i]);
@@ -745,7 +883,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     }
 
     /// @inheritdoc ITWAMM
-    function sync(SyncParams memory params) public returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta) {
+    function sync(
+        SyncParams memory params
+    ) public returns (uint256 tokens0OwedDelta, uint256 tokens1OwedDelta) {
         if (params.orderKey.owner != msg.sender) {
             revert Unauthorized();
         }
@@ -768,8 +908,12 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
             tokens1OwedDelta += sellTokensOwed;
         }
 
-        tokensOwed[params.key.currency0][params.orderKey.owner] += tokens0OwedDelta;
-        tokensOwed[params.key.currency1][params.orderKey.owner] += tokens1OwedDelta;
+        tokensOwed[params.key.currency0][
+            params.orderKey.owner
+        ] += tokens0OwedDelta;
+        tokensOwed[params.key.currency1][
+            params.orderKey.owner
+        ] += tokens1OwedDelta;
 
         emit SyncOrder(
             params.key.toId(),
@@ -781,7 +925,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         );
     }
 
-    function _sync(PoolKey memory key, OrderKey memory orderKey)
+    function _sync(
+        PoolKey memory key,
+        OrderKey memory orderKey
+    )
         internal
         returns (
             uint256 buyTokensOwed,
@@ -796,29 +943,40 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         orderId = _orderId(orderKey);
         Order storage order = _getOrder(twamm, orderId);
 
-        OrderPool.State storage orderPool = orderKey.zeroForOne ? twamm.orderPool0For1 : twamm.orderPool1For0;
-        bool isOrderExpired = orderKey.expiration <= twamm.lastVirtualOrderTimestamp;
+        OrderPool.State storage orderPool = orderKey.zeroForOne
+            ? twamm.orderPool0For1
+            : twamm.orderPool1For0;
+        bool isOrderExpired = orderKey.expiration <=
+            twamm.lastVirtualOrderTimestamp;
 
         if (order.sellRate == 0) {
             revert OrderDoesNotExist(orderKey);
         }
 
-        earningsFactorLast =
-            isOrderExpired ? orderPool.earningsFactorAtInterval[orderKey.expiration] : orderPool.earningsFactorCurrent;
+        earningsFactorLast = isOrderExpired
+            ? orderPool.earningsFactorAtInterval[orderKey.expiration]
+            : orderPool.earningsFactorCurrent;
 
-        buyTokensOwed = (Math.mulDiv(earningsFactorLast - order.earningsFactorLast, order.sellRate, RATE_SCALER))
-            >> FixedPoint96.RESOLUTION;
+        buyTokensOwed =
+            (
+                Math.mulDiv(
+                    earningsFactorLast - order.earningsFactorLast,
+                    order.sellRate,
+                    RATE_SCALER
+                )
+            ) >>
+            FixedPoint96.RESOLUTION;
 
         if (isOrderExpired) {
             delete twamm.orders[orderId];
         } else {
             order.earningsFactorLast = earningsFactorLast;
         }
-
-
     }
 
-    function _claimTokens(Currency token) internal returns (uint256 amountTransferred) {
+    function _claimTokens(
+        Currency token
+    ) internal returns (uint256 amountTransferred) {
         amountTransferred = tokensOwed[token][msg.sender];
 
         if (amountTransferred != 0) {
@@ -836,42 +994,73 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         }
     }
 
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(
+        bytes calldata data
+    ) external returns (bytes memory) {
         return _unlockCallback(data);
     }
 
-    function _unlockCallback(bytes calldata rawData) internal returns (bytes memory) {
-        (PoolKey memory key, SwapParams memory swapParams) =
-            abi.decode(rawData, (PoolKey, SwapParams));
+    function _unlockCallback(
+        bytes calldata rawData
+    ) internal returns (bytes memory) {
+        (PoolKey memory key, SwapParams memory swapParams) = abi.decode(
+            rawData,
+            (PoolKey, SwapParams)
+        );
 
         _processSwap(key, swapParams);
 
         return ZERO_BYTES;
     }
 
-    function _processSwap(PoolKey memory key, SwapParams memory swapParams) internal {
+    function _processSwap(
+        PoolKey memory key,
+        SwapParams memory swapParams
+    ) internal {
         BalanceDelta delta = poolManager.swap(key, swapParams, ZERO_BYTES);
 
         if (swapParams.zeroForOne) {
             if (delta.amount0() < 0) {
-                key.currency0.settle(poolManager, address(this), uint256(uint128(-delta.amount0())), false);
+                key.currency0.settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(-delta.amount0())),
+                    false
+                );
             }
             if (delta.amount1() > 0) {
-                key.currency1.take(poolManager, address(this), uint256(uint128(delta.amount1())), false);
+                key.currency1.take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(delta.amount1())),
+                    false
+                );
             }
         } else {
             if (delta.amount1() < 0) {
-                key.currency1.settle(poolManager, address(this), uint256(uint128(-delta.amount1())), false);
+                key.currency1.settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(-delta.amount1())),
+                    false
+                );
             }
             if (delta.amount0() > 0) {
-                key.currency0.take(poolManager, address(this), uint256(uint128(delta.amount0())), false);
+                key.currency0.take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(delta.amount0())),
+                    false
+                );
             }
         }
 
         emit SwapExecuted(key.toId(), delta);
     }
 
-    function _getTWAMM(PoolKey memory key) internal view returns (TWAMMState storage) {
+    function _getTWAMM(
+        PoolKey memory key
+    ) internal view returns (TWAMMState storage) {
         return twammStates[key.toId()];
     }
 
@@ -891,11 +1080,20 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         PoolKey memory key,
         PoolParamsOnExecute memory pool,
         uint256 targetTimestamp
-    ) internal returns (bool zeroForOne, uint160 newSqrtPriceX96, uint256 maxSwapAmount) {
+    )
+        internal
+        returns (
+            bool zeroForOne,
+            uint160 newSqrtPriceX96,
+            uint256 maxSwapAmount
+        )
+    {
         uint256 currentTimestampAtInterval = _getIntervalTime(targetTimestamp);
 
-        if (currentTimestampAtInterval > block.timestamp || currentTimestampAtInterval < self.lastVirtualOrderTimestamp)
-        {
+        if (
+            currentTimestampAtInterval > block.timestamp ||
+            currentTimestampAtInterval < self.lastVirtualOrderTimestamp
+        ) {
             revert InvalidTargetTimestamp();
         }
 
@@ -910,7 +1108,9 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         uint256 nextExpirationTimestamp = prevTimestamp + expirationInterval;
 
         while (nextExpirationTimestamp <= currentTimestampAtInterval) {
-            if (_hasOutstandingOrdersAtInterval(self, nextExpirationTimestamp)) {
+            if (
+                _hasOutstandingOrdersAtInterval(self, nextExpirationTimestamp)
+            ) {
                 pool = _advanceTimestampForSinglePoolSell(
                     self,
                     key,
@@ -925,8 +1125,14 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                 );
 
                 // Finalize interval accounting and expire orders at this boundary
-                self.orderPool0For1.advanceToInterval(nextExpirationTimestamp, 0);
-                self.orderPool1For0.advanceToInterval(nextExpirationTimestamp, 0);
+                self.orderPool0For1.advanceToInterval(
+                    nextExpirationTimestamp,
+                    0
+                );
+                self.orderPool1For0.advanceToInterval(
+                    nextExpirationTimestamp,
+                    0
+                );
 
                 prevTimestamp = nextExpirationTimestamp;
             }
@@ -938,7 +1144,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
             }
         }
 
-        if (prevTimestamp < currentTimestampAtInterval && _hasOutstandingOrders(self)) {
+        if (
+            prevTimestamp < currentTimestampAtInterval &&
+            _hasOutstandingOrders(self)
+        ) {
             pool = _advanceTimestampForSinglePoolSell(
                 self,
                 key,
@@ -952,8 +1161,14 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                 )
             );
             // Finalize interval accounting for the current boundary
-            self.orderPool0For1.advanceToInterval(currentTimestampAtInterval, 0);
-            self.orderPool1For0.advanceToInterval(currentTimestampAtInterval, 0);
+            self.orderPool0For1.advanceToInterval(
+                currentTimestampAtInterval,
+                0
+            );
+            self.orderPool1For0.advanceToInterval(
+                currentTimestampAtInterval,
+                0
+            );
         }
 
         self.lastVirtualOrderTimestamp = currentTimestampAtInterval;
@@ -971,32 +1186,60 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         PoolParamsOnExecute pool;
     }
 
-    function _exhaustMatchedOrders(TWAMMState storage self, AdvanceParams memory params)
-        private
-        returns (bool remainingZeroForOne)
-    {
-        uint256 priceX96 = Math.mulDiv(params.pool.sqrtPriceX96, params.pool.sqrtPriceX96, FixedPoint96.Q96);
+    function _exhaustMatchedOrders(
+        TWAMMState storage self,
+        AdvanceParams memory params
+    ) private returns (bool remainingZeroForOne) {
+        uint256 priceX96 = Math.mulDiv(
+            params.pool.sqrtPriceX96,
+            params.pool.sqrtPriceX96,
+            FixedPoint96.Q96
+        );
 
         uint256 sellRate0To1 = self.orderPool0For1.sellRateCurrent;
         uint256 sellRate1To0 = self.orderPool1For0.sellRateCurrent;
 
-        uint256 sellRate0To1As1 = Math.mulDiv(sellRate0To1, priceX96, FixedPoint96.Q96);
-        uint256 sellRate1To0As0 = Math.mulDiv(sellRate1To0, FixedPoint96.Q96, priceX96);
+        uint256 sellRate0To1As1 = Math.mulDiv(
+            sellRate0To1,
+            priceX96,
+            FixedPoint96.Q96
+        );
+        uint256 sellRate1To0As0 = Math.mulDiv(
+            sellRate1To0,
+            FixedPoint96.Q96,
+            priceX96
+        );
 
         // Need to figure out how much sell rate we can adjust between the two of them.
         uint256 maxAdjustable0To1 = Math.min(sellRate0To1, sellRate1To0As0);
         uint256 maxAdjustable1To0 = Math.min(sellRate1To0, sellRate0To1As1);
 
         if (maxAdjustable0To1 != 0 && maxAdjustable1To0 != 0) {
-            sellRate0To1As1 = Math.mulDiv(maxAdjustable0To1, priceX96, FixedPoint96.Q96);
-            sellRate1To0As0 = Math.mulDiv(maxAdjustable1To0, FixedPoint96.Q96, priceX96);
+            sellRate0To1As1 = Math.mulDiv(
+                maxAdjustable0To1,
+                priceX96,
+                FixedPoint96.Q96
+            );
+            sellRate1To0As0 = Math.mulDiv(
+                maxAdjustable1To0,
+                FixedPoint96.Q96,
+                priceX96
+            );
 
             self.orderPool0For1.advanceWithoutCommit(
-                Math.mulDiv(sellRate0To1As1 * params.secondsElapsed, FixedPoint96.Q96, sellRate0To1), // Earnings
+                Math.mulDiv(
+                    sellRate0To1As1 * params.secondsElapsed,
+                    FixedPoint96.Q96,
+                    sellRate0To1
+                ), // Earnings
                 maxAdjustable0To1
             );
             self.orderPool1For0.advanceWithoutCommit(
-                Math.mulDiv(sellRate1To0As0 * params.secondsElapsed, FixedPoint96.Q96, sellRate1To0), // Earnings
+                Math.mulDiv(
+                    sellRate1To0As0 * params.secondsElapsed,
+                    FixedPoint96.Q96,
+                    sellRate1To0
+                ), // Earnings
                 maxAdjustable1To0
             );
 
@@ -1029,25 +1272,34 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
     ) private returns (PoolParamsOnExecute memory) {
         // Including zeroForOne & activeFee in the params because stack-too-deep
         params.zeroForOne = _exhaustMatchedOrders(
-            self, AdvanceParams(expirationInterval, params.nextTimestamp, params.secondsElapsed, params.pool)
+            self,
+            AdvanceParams(
+                expirationInterval,
+                params.nextTimestamp,
+                params.secondsElapsed,
+                params.pool
+            )
         );
-        
-        // If tradingFee is set, use it. Otherwise fall back to protocol/LP fee logic? 
+
+        // If tradingFee is set, use it. Otherwise fall back to protocol/LP fee logic?
         // User request said: "only thing that the contract owner will be able to change is the trading fee of the twamm pool. we will make it static."
         // This implies the fee used for the swap simulation should be this static fee if set, or maybe ALWAYS this static fee.
         // Let's assume valid fee overrides everything.
-        
-        uint24 fee = tradingFee; 
-        
-        // If tradingFee is 0, should we fall back? The request says "make it static". 
+
+        uint24 fee = tradingFee;
+
+        // If tradingFee is 0, should we fall back? The request says "make it static".
         // Let's assume if it is set (non-zero? or just use it), it's the fee.
         // Actually typically "static" means it doesn't change based on volatility etc, but here it likely means "fixed value set by owner".
         // Use tradingFee directly.
-        
+
         params.activeFee = fee;
 
-        OrderPool.State storage orderPool = params.zeroForOne ? self.orderPool0For1 : self.orderPool1For0;
-        uint256 sellRateCurrent = orderPool.sellRateCurrent - orderPool.sellRateAccounted;
+        OrderPool.State storage orderPool = params.zeroForOne
+            ? self.orderPool0For1
+            : self.orderPool1For0;
+        uint256 sellRateCurrent = orderPool.sellRateCurrent -
+            orderPool.sellRateAccounted;
 
         uint256 amountSelling = Math.mulDiv(
             Math.mulDiv(sellRateCurrent, params.secondsElapsed, RATE_SCALER),
@@ -1058,53 +1310,100 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
 
         while (true) {
             uint160 finalSqrtPriceX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-                params.pool.sqrtPriceX96, params.pool.liquidity, amountSelling, params.zeroForOne
+                params.pool.sqrtPriceX96,
+                params.pool.liquidity,
+                amountSelling,
+                params.zeroForOne
             );
 
-            (bool crossingInitializedTick, int24 tick) =
-                _isCrossingInitializedTick(params.pool, poolKey, finalSqrtPriceX96);
+            (
+                bool crossingInitializedTick,
+                int24 tick
+            ) = _isCrossingInitializedTick(
+                    params.pool,
+                    poolKey,
+                    finalSqrtPriceX96
+                );
 
             if (crossingInitializedTick) {
-                (, int128 liquidityNetAtTick) = poolManager.getTickLiquidity(poolKey.toId(), tick);
-                uint160 initializedSqrtPrice = TickMath.getSqrtPriceAtTick(tick);
+                (, int128 liquidityNetAtTick) = poolManager.getTickLiquidity(
+                    poolKey.toId(),
+                    tick
+                );
+                uint160 initializedSqrtPrice = TickMath.getSqrtPriceAtTick(
+                    tick
+                );
 
                 uint256 swapDelta0 = SqrtPriceMath.getAmount0Delta(
-                    params.pool.sqrtPriceX96, initializedSqrtPrice, params.pool.liquidity, true
+                    params.pool.sqrtPriceX96,
+                    initializedSqrtPrice,
+                    params.pool.liquidity,
+                    true
                 );
                 uint256 swapDelta1 = SqrtPriceMath.getAmount1Delta(
-                    params.pool.sqrtPriceX96, initializedSqrtPrice, params.pool.liquidity, true
+                    params.pool.sqrtPriceX96,
+                    initializedSqrtPrice,
+                    params.pool.liquidity,
+                    true
                 );
 
                 params.pool.sqrtPriceX96 = initializedSqrtPrice;
 
                 unchecked {
-                    totalEarnings += params.zeroForOne ? swapDelta1 : swapDelta0;
-                    amountSelling -= params.zeroForOne ? swapDelta0 : swapDelta1;
+                    totalEarnings += params.zeroForOne
+                        ? swapDelta1
+                        : swapDelta0;
+                    amountSelling -= params.zeroForOne
+                        ? swapDelta0
+                        : swapDelta1;
                 }
 
                 unchecked {
-                    if (params.zeroForOne) liquidityNetAtTick = -liquidityNetAtTick;
+                    if (params.zeroForOne)
+                        liquidityNetAtTick = -liquidityNetAtTick;
                 }
-                params.pool.liquidity = LiquidityMath.addDelta(params.pool.liquidity, liquidityNetAtTick);
+                params.pool.liquidity = LiquidityMath.addDelta(
+                    params.pool.liquidity,
+                    liquidityNetAtTick
+                );
 
                 unchecked {
-                    params.pool.sqrtPriceX96 = params.zeroForOne ? initializedSqrtPrice - 1 : initializedSqrtPrice;
+                    params.pool.sqrtPriceX96 = params.zeroForOne
+                        ? initializedSqrtPrice - 1
+                        : initializedSqrtPrice;
                 }
                 continue;
             }
 
             // Calculate the final segment's earnings (from last tick to final price)
             uint256 swapDelta0 = SqrtPriceMath.getAmount0Delta(
-                params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
+                params.pool.sqrtPriceX96,
+                finalSqrtPriceX96,
+                params.pool.liquidity,
+                true
             );
             uint256 swapDelta1 = SqrtPriceMath.getAmount1Delta(
-                params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
+                params.pool.sqrtPriceX96,
+                finalSqrtPriceX96,
+                params.pool.liquidity,
+                true
             );
-            
+
             params.pool.sqrtPriceX96 = finalSqrtPriceX96;
             unchecked {
                 totalEarnings += params.zeroForOne ? swapDelta1 : swapDelta0;
             }
+
+            // Accumulate the unmatched sell amount so executeTWAMMOrders
+            // fires the real pool swap (via _processSwap) to move tokens
+            // into the hook. Without this, earningsFactor is credited but
+            // the hook holds no buy tokens → claimTokens returns 0.
+            if (params.zeroForOne) {
+                params.pool.maxSwap0For1 += amountSelling;
+            } else {
+                params.pool.maxSwap1For0 += amountSelling;
+            }
+
             break;
         }
 
@@ -1120,8 +1419,6 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
 
         return params.pool;
     }
-
-
 
     function _isCrossingInitializedTick(
         PoolParamsOnExecute memory pool,
@@ -1142,10 +1439,16 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
                     nextTickInit -= 1;
                 }
             }
-            (nextTickInit, crossingInitializedTick) = poolManager.getNextInitializedTickWithinOneWord(
-                poolKey.toId(), nextTickInit, poolKey.tickSpacing, searchingLeft
-            );
-            nextTickInitFurtherThanTarget = searchingLeft ? nextTickInit <= targetTick : nextTickInit > targetTick;
+            (nextTickInit, crossingInitializedTick) = poolManager
+                .getNextInitializedTickWithinOneWord(
+                    poolKey.toId(),
+                    nextTickInit,
+                    poolKey.tickSpacing,
+                    searchingLeft
+                );
+            nextTickInitFurtherThanTarget = searchingLeft
+                ? nextTickInit <= targetTick
+                : nextTickInit > targetTick;
             if (crossingInitializedTick == true) {
                 break;
             }
@@ -1156,7 +1459,10 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         }
     }
 
-    function _getOrder(TWAMMState storage self, bytes32 orderId) internal view returns (Order storage) {
+    function _getOrder(
+        TWAMMState storage self,
+        bytes32 orderId
+    ) internal view returns (Order storage) {
         return self.orders[orderId];
     }
 
@@ -1164,41 +1470,66 @@ contract TWAMM is BaseHook, Owned, ReentrancyGuard, ITWAMM, IUnlockCallback {
         return keccak256(abi.encode(key));
     }
 
-    function _hasOutstandingOrders(TWAMMState storage self) internal view returns (bool) {
-        return self.orderPool0For1.sellRateCurrent != 0 || self.orderPool1For0.sellRateCurrent != 0;
+    function _hasOutstandingOrders(
+        TWAMMState storage self
+    ) internal view returns (bool) {
+        return
+            self.orderPool0For1.sellRateCurrent != 0 ||
+            self.orderPool1For0.sellRateCurrent != 0;
     }
 
-    function _hasOutstandingOrdersAtInterval(TWAMMState storage self, uint256 timestamp) internal view returns (bool) {
-        return self.orderPool0For1.sellRateEndingAtInterval[timestamp] != 0
-            || self.orderPool1For0.sellRateEndingAtInterval[timestamp] != 0;
+    function _hasOutstandingOrdersAtInterval(
+        TWAMMState storage self,
+        uint256 timestamp
+    ) internal view returns (bool) {
+        return
+            self.orderPool0For1.sellRateEndingAtInterval[timestamp] != 0 ||
+            self.orderPool1For0.sellRateEndingAtInterval[timestamp] != 0;
     }
 
-    function _getIntervalTime(uint256 timestamp) internal view returns (uint256) {
+    function _getIntervalTime(
+        uint256 timestamp
+    ) internal view returns (uint256) {
         return timestamp - (timestamp % expirationInterval);
     }
 
     function _initializeOracle(PoolKey calldata key) internal {
         PoolId poolId = key.toId();
-        observations[poolId].initialize(oracleStates[poolId], uint32(block.timestamp));
+        observations[poolId].initialize(
+            oracleStates[poolId],
+            uint32(block.timestamp)
+        );
     }
 
     function _updateOracle(PoolKey memory key) internal {
         PoolId poolId = key.toId();
         (, int24 tick, , ) = poolManager.getSlot0(poolId);
-        observations[poolId].write(oracleStates[poolId], uint32(block.timestamp), tick);
+        observations[poolId].write(
+            oracleStates[poolId],
+            uint32(block.timestamp),
+            tick
+        );
     }
 
     /// @inheritdoc ITWAMM
-    function observe(PoolId poolId, uint32[] calldata secondsAgos)
-        external
-        view
-        returns (int56[] memory tickCumulatives)
-    {
-        return observations[poolId].observe(oracleStates[poolId], uint32(block.timestamp), secondsAgos, _getTick(poolId));
+    function observe(
+        PoolId poolId,
+        uint32[] calldata secondsAgos
+    ) external view returns (int56[] memory tickCumulatives) {
+        return
+            observations[poolId].observe(
+                oracleStates[poolId],
+                uint32(block.timestamp),
+                secondsAgos,
+                _getTick(poolId)
+            );
     }
 
     /// @inheritdoc ITWAMM
-    function increaseCardinality(PoolId poolId, uint16 next) external returns (uint16 cardinalityNext) {
+    function increaseCardinality(
+        PoolId poolId,
+        uint16 next
+    ) external returns (uint16 cardinalityNext) {
         return observations[poolId].grow(oracleStates[poolId], next);
     }
 
