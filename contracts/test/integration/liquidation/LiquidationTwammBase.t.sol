@@ -319,4 +319,82 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         uint256 fw = ERC20(ma.positionToken).balanceOf(address(broker));
         console.log("  Setup: cash:", fc / 1e6, "wRLP:", fw / 1e6);
     }
+
+    /// @dev Set up broker with TWAMM order + out-of-range V4 LP.
+    ///      Combines _placeTwammOrder() with _provideV4LPOutOfRange().
+    ///
+    ///      OOR LP returns only one token on unwind:
+    ///        above=true  → token0 only (wRLP or collateral, depends on sorting)
+    ///        above=false → token1 only
+    ///
+    ///      Final state: cash=targetCash, wRLP=targetWRLP, TWAMM active, OOR LP active.
+    function _setupBrokerTwammOOR(
+        uint256 targetCash,
+        uint256 targetWRLP,
+        uint256 twammAmount,
+        uint256 lpAmount,
+        bool sellCollateral,
+        bool lpAbove
+    ) internal returns (PrimeBroker broker, uint256 tokenId) {
+        broker = _createBroker();
+
+        uint256 buffer = 200_000e6;
+        uint256 totalTransfer = targetCash + twammAmount + lpAmount + buffer;
+        collateralMock.transfer(address(broker), totalTransfer);
+
+        broker.modifyPosition(
+            MarketId.unwrap(marketId),
+            int256(totalTransfer),
+            int256(USER_DEBT)
+        );
+
+        // Step 1: Align time to TWAMM interval (no orders yet, skip execute)
+        uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL) + 1) *
+            TWAMM_INTERVAL;
+        vm.warp(nextInterval);
+
+        // Step 2: Provision OOR LP (warps to 1_700_000_000 internally)
+        tokenId = _provideV4LPOutOfRange(broker, lpAmount, lpAbove);
+
+        // Step 3: Re-align to TWAMM interval after LP warp
+        nextInterval =
+            ((block.timestamp / TWAMM_INTERVAL) + 1) *
+            TWAMM_INTERVAL;
+        vm.warp(nextInterval);
+
+        // Step 4: Place TWAMM order
+        _placeTwammOrder(broker, twammAmount, sellCollateral, TWAMM_INTERVAL);
+
+        // Step 5: Drain to targets
+        uint256 currentCash = ERC20(ma.collateralToken).balanceOf(
+            address(broker)
+        );
+        if (currentCash > targetCash) {
+            try
+                broker.withdrawCollateral(
+                    address(this),
+                    currentCash - targetCash
+                )
+            {} catch {}
+        }
+        uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(
+            address(broker)
+        );
+        if (currentWRLP > targetWRLP) {
+            try
+                broker.withdrawPositionToken(
+                    address(this),
+                    currentWRLP - targetWRLP
+                )
+            {} catch {}
+        }
+
+        uint256 fc = ERC20(ma.collateralToken).balanceOf(address(broker));
+        uint256 fw = ERC20(ma.positionToken).balanceOf(address(broker));
+        console.log("  Setup: cash:", fc / 1e6, "wRLP:", fw / 1e6);
+        console.log(
+            "  OOR LP:",
+            lpAbove ? "above (token0 only)" : "below (token1 only)"
+        );
+    }
 }

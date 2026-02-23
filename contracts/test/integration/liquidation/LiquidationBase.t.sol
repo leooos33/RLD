@@ -40,7 +40,7 @@ import "forge-std/console.sol";
 /// @notice Provides broker setup helpers, LP provision, oracle mocking, and
 ///         result logging for all liquidation integration tests.
 ///
-/// @dev ## Test Coverage Matrix (42 tests across 8 files)
+/// @dev ## Test Coverage Matrix (53 tests across 9 files)
 ///
 ///     ### Tier 1: Single-Asset Liquidation  (LiquidationSingleAsset.t.sol)
 ///
@@ -115,6 +115,21 @@ import "forge-std/console.sol";
 ///     | T25 | AccessControl           | only verifier can call      |
 ///     | T26 | DuringLiquidation       | forceSettle mid-liquidation |
 ///     | T27 | ZeroGhost               | no-op when ghost=0          |
+///
+///     ### Tier 9: Exhaustive Permutations  (LiquidationPermutations.t.sol)
+///
+///     | ID  | Test                    | Assets        | LP Range  | TWAMM Dir | UW? |
+///     |-----|-------------------------|---------------|-----------|-----------|-----|
+///     | T28 | TWAMM_OOR_LP_Above      | TWAMM+LP      | Above     | sellCol   | ✓   |
+///     | T29 | TWAMM_OOR_LP_Below      | TWAMM+LP      | Below     | sellCol   | ✓   |
+///     | T30 | Cash_TWAMM_OOR_Above    | Cash+TWAMM+LP | Above     | sellCol   | ✓   |
+///     | T31 | Cash_TWAMM_OOR_Below    | Cash+TWAMM+LP | Below     | sellCol   | ✓   |
+///     | T32 | Full_OOR_Above          | Full stack    | Above     | sellCol   | ✓   |
+///     | T33 | Full_OOR_Below          | Full stack    | Below     | sellCol   | ✓   |
+///     | T34 | Full_OOR_Above_UW       | Full stack    | Above     | sellCol   | ✓   |
+///     | T35 | Full_OOR_Below_UW       | Full stack    | Below     | sellCol   | ✓   |
+///     | T36 | SellPosition_UW         | TWAMM only    | —         | sellPos   | ✗   |
+///     | T37 | SellPosition_NotUW      | TWAMM only    | —         | sellPos   | ✗   |
 ///
 ///     ### Ghost-Aware NAV Coverage
 ///
