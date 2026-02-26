@@ -685,7 +685,50 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
     }
 
-    /* ============================================================================================ */
+    
+    /// @notice Collect accumulated LP fees from a V4 position without removing liquidity.
+    /// @dev Uses DECREASE_LIQUIDITY with 0 liquidity + TAKE_PAIR to collect fees.
+    /// @dev Only callable by authorized operators (owner or approved operator).
+    function collectV4Fees() external onlyAuthorized {
+        require(activeTokenId != 0, "No active LP position");
+        require(
+            IERC721(POSM).ownerOf(activeTokenId) == address(this),
+            "Not position owner"
+        );
+
+        // Build DECREASE_LIQUIDITY(0) + TAKE_PAIR to collect fees
+        bytes memory actions = abi.encodePacked(
+            uint8(0x01), // DECREASE_LIQUIDITY
+            uint8(0x11)  // TAKE_PAIR
+        );
+
+        bytes[] memory actionParams = new bytes[](2);
+        // DECREASE_LIQUIDITY: tokenId, 0 liquidity, 0 min0, 0 min1, bytes32(0) hookData
+        actionParams[0] = abi.encode(
+            activeTokenId,
+            uint128(0),
+            uint128(0),
+            uint128(0),
+            bytes32(0)
+        );
+        // TAKE_PAIR: currency0, currency1, recipient
+        PoolKey memory key;
+        {
+            (key, ) = IPositionManager(POSM).getPoolAndPositionInfo(activeTokenId);
+        }
+        actionParams[1] = abi.encode(
+            Currency.unwrap(key.currency0),
+            Currency.unwrap(key.currency1),
+            address(this)
+        );
+
+        IPositionManager(POSM).modifyLiquidities(
+            abi.encode(actions, actionParams),
+            block.timestamp + 60
+        );
+    }
+
+/* ============================================================================================ */
     /*                                    POSITION TRACKING                                        */
     /* ============================================================================================ */
 

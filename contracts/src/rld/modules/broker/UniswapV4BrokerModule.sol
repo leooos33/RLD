@@ -74,7 +74,7 @@ contract UniswapV4BrokerModule is IValuationModule {
             .poolManager();
         (, int24 currentTick, , ) = pm.getSlot0(poolKey.toId());
 
-        // 4. Calculate Token Amounts
+        // 4. Calculate Token Amounts (principal)
         (uint256 amount0, uint256 amount1) = LiquidityAmounts
             .getAmountsForLiquidity(
                 TickMath.getSqrtPriceAtTick(currentTick),
@@ -82,6 +82,23 @@ contract UniswapV4BrokerModule is IValuationModule {
                 TickMath.getSqrtPriceAtTick(tickUpper),
                 liquidity
             );
+
+        // 4b. Add uncollected fees to amounts (LP fee NAV fix)
+        {
+            (uint256 feeGrowthInside0, uint256 feeGrowthInside1) = pm
+                .getFeeGrowthInside(poolKey.toId(), tickLower, tickUpper);
+            bytes32 positionId = keccak256(
+                abi.encodePacked(params.positionManager, tickLower, tickUpper, bytes32(params.tokenId))
+            );
+            (uint128 posLiquidity, uint256 feeGrowthInside0Last, uint256 feeGrowthInside1Last) = pm
+                .getPositionInfo(poolKey.toId(), positionId);
+            if (posLiquidity > 0) {
+                uint256 fees0 = uint256(posLiquidity) * (feeGrowthInside0 - feeGrowthInside0Last) / (1 << 128);
+                uint256 fees1 = uint256(posLiquidity) * (feeGrowthInside1 - feeGrowthInside1Last) / (1 << 128);
+                amount0 += fees0;
+                amount1 += fees1;
+            }
+        }
 
         // 5. Price each token
         address currency0 = Currency.unwrap(poolKey.currency0);
