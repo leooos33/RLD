@@ -95,6 +95,9 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @notice The TWAMM hook address for V4 pool fee updates
     address public immutable twamm;
 
+    /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
+    uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
+
     /// @notice Initializes RLDCore with the factory, poolManager, and TWAMM addresses
     /// @dev Factory must be deployed first, then RLDCore is deployed with factory address.
     ///      This prevents front-running attacks on factory initialization.
@@ -507,8 +510,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
     // NOTE: Bad debt socialization period is now per-market via config.badDebtPeriod
 
-    /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
-    uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
+    // MIN_CHUNK_DIVISOR defined at contract top (L97)
 
     /// @dev Context struct for liquidation pipeline to avoid multiple oracle/NAV calls (H-1/H-2/H-3 fix)
     struct LiquidationCtx {
@@ -897,10 +899,44 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
 
-    /// @notice F-06 FIX: Checks solvency after simulating pending funding.
-    /// @dev Unlike isSolvent(), this simulates the normFactor update that would
-    ///      occur when _applyFunding() runs, giving off-chain consumers an
-    ///      accurate view of whether a position is liquidatable.
+    /// @dev Simulates normFactor after pending funding + bad debt bleeding (M-4 fix).
+    /// @dev Shared helper used by isSolventAfterFunding and any view that needs future NF.
+    /// @param id The market ID
+    /// @return simNormFactor The projected normalization factor
+    function _simulateNormFactor(
+        MarketId id
+    ) internal view returns (uint256 simNormFactor) {
+        MarketState memory state = marketStates[id];
+        MarketAddresses storage addresses = marketAddresses[id];
+
+        // 1. Simulate funding drift
+        (simNormFactor, ) = IFundingModel(addresses.fundingModel)
+            .calculateFunding(
+                MarketId.unwrap(id),
+                address(this),
+                state.normalizationFactor,
+                state.lastUpdateTimestamp
+            );
+
+        // 2. Simulate bad debt bleeding (same logic as _applyFunding L559-577)
+        uint256 timeDelta = block.timestamp - state.lastUpdateTimestamp;
+        if (state.badDebt > 0 && timeDelta > 0) {
+            uint256 supply = PositionToken(addresses.positionToken)
+                .totalSupply();
+            if (supply > 0) {
+                uint256 minChunk = supply / MIN_CHUNK_DIVISOR;
+                uint256 bdPeriod = uint256(marketConfigs[id].badDebtPeriod);
+                if (bdPeriod == 0) bdPeriod = 7 days;
+                uint256 chunk = (uint256(state.badDebt) * timeDelta) / bdPeriod;
+                if (chunk < minChunk) chunk = minChunk;
+                if (chunk > state.badDebt) chunk = state.badDebt;
+                simNormFactor += (chunk * 1e18) / supply;
+            }
+        }
+    }
+
+    /// @notice F-06 FIX: Checks solvency after simulating pending funding + bad debt bleeding.
+    /// @dev Uses _simulateNormFactor() to project the normFactor including both sources of drift.
     /// @param id The market ID
     /// @param user The user to check
     /// @return True if position would be solvent after funding is applied
@@ -912,19 +948,12 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         if (pos.debtPrincipal == 0) return true;
 
         MarketAddresses storage addresses = marketAddresses[id];
-        MarketState memory state = marketStates[id];
         MarketConfig memory config = _peekEffectiveConfig(id);
 
-        // Simulate funding: call the funding model (it's a view/pure function)
-        (uint256 simNormFactor, ) = IFundingModel(addresses.fundingModel)
-            .calculateFunding(
-                MarketId.unwrap(id),
-                address(this),
-                state.normalizationFactor,
-                state.lastUpdateTimestamp
-            );
+        // Simulate normFactor including both funding drift AND bad debt bleeding (M-4 fix)
+        uint256 simNormFactor = _simulateNormFactor(id);
 
-        // Use simulated normFactor for debt calculation
+        // Broker validity
         if (config.brokerVerifier == address(0)) return false;
         if (!IBrokerVerifier(config.brokerVerifier).isValidBroker(user))
             return false;
