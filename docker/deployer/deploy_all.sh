@@ -103,7 +103,7 @@ echo "  BrokerRouter:  $BROKER_ROUTER"
 
 # ─── Deploy MockOracle ─────────────────────────────────────────
 log_step "1.2" "Deploying MockRLDAaveOracle..."
-MOCK_ORACLE=$(forge create src/rld/modules/oracles/MockRLDAaveOracle.sol:MockRLDAaveOracle \
+MOCK_ORACLE=$(forge create test/mocks/MockRLDAaveOracle.sol:MockRLDAaveOracle \
     --private-key $DEPLOYER_KEY \
     --rpc-url $RPC_URL \
     --broadcast 2>&1 | grep "Deployed to:" | awk '{print $3}')

@@ -277,6 +277,13 @@ contract DeployRLDProtocol is Script {
         twammHook.setRldCore(rldCore);
         console.log("TWAMM linked to Core: OK");
 
+        twammHook.setAuthorizedFactory(rldMarketFactory);
+        console.log("TWAMM authorized Factory: OK");
+
+        // F-04: Transfer oracle ownership to factory (so factory can registerPool)
+        UniswapV4SingletonOracle(v4Oracle).transferOwnership(rldMarketFactory);
+        console.log("V4Oracle ownership transferred to Factory: OK");
+
         vm.stopBroadcast();
 
         // ============================================

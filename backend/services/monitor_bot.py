@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 import threading
 import sys
 
@@ -291,8 +292,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 _start_time = time.time()
 
+class ThreadingHealthServer(ThreadingMixIn, HTTPServer):
+    """Threaded HTTP server so health checks never block on GIL."""
+    daemon_threads = True
+
 def start_health_server(port=8080):
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server = ThreadingHealthServer(("0.0.0.0", port), HealthHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     logger.info(f"🩺 Health endpoint running on :{port}")

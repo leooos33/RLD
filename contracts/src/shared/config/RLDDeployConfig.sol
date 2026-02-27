@@ -186,6 +186,7 @@ library RLDDeployConfig {
                 (1 << 11) | // BEFORE_ADD_LIQUIDITY_FLAG
                 (1 << 9) | // BEFORE_REMOVE_LIQUIDITY_FLAG
                 (1 << 7) | // BEFORE_SWAP_FLAG
-                (1 << 4) // AFTER_SWAP_FLAG
+                (1 << 4) | // AFTER_SWAP_FLAG
+                (1 << 2) // BEFORE_SWAP_RETURNS_DELTA_FLAG
         );
 }
