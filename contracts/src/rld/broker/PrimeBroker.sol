@@ -14,7 +14,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IJTM} from "../../twamm/IJTM.sol";
-import {IJITTWAMM} from "../../twamm/IJITTWAMM.sol";
+
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
@@ -605,7 +605,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     }
 
     /// @notice Best-effort force-settle ghost balance before TWAMM cancel
-    /// @dev Checks if ghost > 0, then calls JITTWAMM.forceSettle to market-sell
+    /// @dev Checks if ghost > 0, then calls JTM.forceSettle to market-sell
     ///      the ghost into the pool. Proceeds are recorded as earnings, making
     ///      getCancelOrderState() return accurate buyTokensOwed.
     ///      Try/catch ensures this never blocks liquidation.
@@ -614,7 +614,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         bool zfo = activeTwammOrder.orderKey.zeroForOne;
 
         // Check if there's ghost worth settling
-        (uint256 a0, uint256 a1, , ) = IJITTWAMM(hook).getStreamState(
+        (uint256 a0, uint256 a1, , ) = IJTM(hook).getStreamState(
             activeTwammOrder.key
         );
         uint256 ghost = zfo ? a0 : a1;
@@ -622,7 +622,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
         // Force-settle: market-sell ghost, record earnings
         try
-            IJITTWAMM(hook).forceSettle(activeTwammOrder.key, zfo, marketId)
+            IJTM(hook).forceSettle(activeTwammOrder.key, zfo, marketId)
         {} catch {} // Best-effort: don't block liquidation
     }
 
@@ -685,7 +685,6 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
     }
 
-    
     /// @notice Collect accumulated LP fees from a V4 position without removing liquidity.
     /// @dev Uses DECREASE_LIQUIDITY with 0 liquidity + TAKE_PAIR to collect fees.
     /// @dev Only callable by authorized operators (owner or approved operator).
@@ -699,7 +698,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         // Build DECREASE_LIQUIDITY(0) + TAKE_PAIR to collect fees
         bytes memory actions = abi.encodePacked(
             uint8(0x01), // DECREASE_LIQUIDITY
-            uint8(0x11)  // TAKE_PAIR
+            uint8(0x11) // TAKE_PAIR
         );
 
         bytes[] memory actionParams = new bytes[](2);
@@ -714,7 +713,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         // TAKE_PAIR: currency0, currency1, recipient
         PoolKey memory key;
         {
-            (key, ) = IPositionManager(POSM).getPoolAndPositionInfo(activeTokenId);
+            (key, ) = IPositionManager(POSM).getPoolAndPositionInfo(
+                activeTokenId
+            );
         }
         actionParams[1] = abi.encode(
             Currency.unwrap(key.currency0),
@@ -728,7 +729,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
     }
 
-/* ============================================================================================ */
+    /* ============================================================================================ */
     /*                                    POSITION TRACKING                                        */
     /* ============================================================================================ */
 
@@ -1339,9 +1340,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             activeTwammOrder.orderKey.owner == address(this)
         ) {
             address twammHook = address(activeTwammOrder.key.hooks);
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(
-                twammHook
-            ).getCancelOrderState(
+            (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(twammHook)
+                .getCancelOrderState(
                     activeTwammOrder.key,
                     activeTwammOrder.orderKey
                 );
