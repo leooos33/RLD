@@ -559,23 +559,27 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         }
 
         // 3. Bad debt bleeding: gradually socialize unbacked debt via NF over configurable period
+        // B-3 FIX: Guard against supply == 0 (all positions closed with badDebt remaining)
         if (state.badDebt > 0 && timeDelta > 0) {
             uint256 supply = PositionToken(addresses.positionToken)
                 .totalSupply();
-            uint256 minChunk = supply / MIN_CHUNK_DIVISOR;
-            uint256 bdPeriod = uint256(marketConfigs[id].badDebtPeriod);
-            if (bdPeriod == 0) bdPeriod = 7 days; // fallback for legacy markets
-            uint256 chunk = (uint256(state.badDebt) * timeDelta) / bdPeriod;
-            if (chunk < minChunk) chunk = minChunk;
-            if (chunk > state.badDebt) chunk = state.badDebt;
-            state.normalizationFactor += uint128((chunk * 1e18) / supply);
-            state.badDebt -= uint128(chunk);
-            emit BadDebtSocialized(
-                id,
-                uint128(chunk),
-                state.badDebt,
-                state.normalizationFactor
-            );
+            if (supply > 0) {
+                uint256 minChunk = supply / MIN_CHUNK_DIVISOR;
+                uint256 bdPeriod = uint256(marketConfigs[id].badDebtPeriod);
+                if (bdPeriod == 0) bdPeriod = 7 days; // fallback for legacy markets
+                uint256 chunk = (uint256(state.badDebt) * timeDelta) / bdPeriod;
+                if (chunk < minChunk) chunk = minChunk;
+                if (chunk > state.badDebt) chunk = state.badDebt;
+                state.normalizationFactor += uint128((chunk * 1e18) / supply);
+                state.badDebt -= uint128(chunk);
+                emit BadDebtSocialized(
+                    id,
+                    uint128(chunk),
+                    state.badDebt,
+                    state.normalizationFactor
+                );
+            }
+            // If supply == 0, bad debt remains frozen until new positions are opened
         }
 
         state.lastUpdateTimestamp = uint48(block.timestamp);
@@ -881,6 +885,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         require(
             seizeOutput.collateralSeized >= minCollateralOut,
             "Slippage: collateral below minimum"
+        );
+
+        // B-2 FIX: Emit dedicated Liquidation event for indexers and liquidators
+        emit Liquidation(
+            id,
+            user,
+            msg.sender,
+            debtToCover,
+            seizeOutput.collateralSeized,
+            wRLPFromBroker
         );
     }
 

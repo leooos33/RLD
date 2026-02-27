@@ -98,6 +98,16 @@ interface IRLDCore {
     event RiskUpdateApplied(MarketId indexed id);
     event PoolFeeUpdated(MarketId indexed id, uint24 newFee);
 
+    /// @notice Emitted when a liquidation is executed
+    event Liquidation(
+        MarketId indexed id,
+        address indexed user,
+        address indexed liquidator,
+        uint256 debtCovered,
+        uint256 collateralSeized,
+        uint256 wRLPBurned
+    );
+
     // Indexing Events
     /// @notice Emitted when funding is applied to a market
     event FundingApplied(
