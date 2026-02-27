@@ -147,10 +147,11 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
     /// @notice Test #4: initialize() pre-approves initial operators (BrokerRouter)
     function test_initialize_sets_initial_operators() public {
-        // BrokerRouter should be a default operator on every new broker
+        // Create a FRESH broker (not transferred) to check initial operators
+        PrimeBroker freshBroker = _createBroker();
         assertTrue(
-            broker.operators(address(brokerRouter)),
-            "BrokerRouter should be operator"
+            freshBroker.operators(address(brokerRouter)),
+            "BrokerRouter should be operator on fresh broker"
         );
     }
 
@@ -193,6 +194,7 @@ contract BrokerInitACL is JITRLDIntegrationBase {
     }
 
     /// @notice Test #7: NFT transfer changes who is recognized as owner
+    ///         and revokes all operators (H-3 fix)
     function test_nft_transfer_changes_owner() public {
         uint256 tokenId = uint256(uint160(brokerAddr));
 
@@ -204,6 +206,12 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         // Transfer NFT from alice to bob
         vm.prank(alice);
         brokerFactory.transferFrom(alice, bob, tokenId);
+
+        // H-3 FIX: All operators should be revoked after transfer
+        assertFalse(
+            broker.operators(bob),
+            "Bob operator should be revoked after transfer"
+        );
 
         // Now alice is NOT owner — cannot add new operators
         vm.prank(alice);

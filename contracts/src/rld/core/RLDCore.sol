@@ -756,7 +756,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
     function _calculateLiquidationSeize(
         MarketId id,
-        address user,
+        address /* user — no longer needed (H-2: NAV cached in ctx) */,
         uint256 debtToCover,
         MarketConfig memory config,
         uint256 principalSnapshot,
@@ -795,7 +795,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         (, seizeAmount) = ILiquidationModule(addresses.liquidationModule)
             .calculateSeizeAmount(
                 debtToCover,
-                IPrimeBroker(user).getNetAccountValue(),
+                ctx.totalAssets, // H-2 FIX: use cached NAV, not a second oracle call
                 remainingPrincipal,
                 priceData,
                 config,
@@ -811,7 +811,9 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 minCollateralOut
     ) internal {
         // NEGATIVE EQUITY PROTECTION: Cap seize at available collateral
-        uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
+        // H-2 FIX: Use cached ctx.totalAssets instead of a second getNetAccountValue() call.
+        // This prevents state divergence between the seize calculation and settlement.
+        uint256 availableCollateral = ctx.totalAssets;
         uint256 seizeAmount = ctx.seizeAmount;
         uint256 principalToCover = ctx.principalToCover;
         uint256 normFactor = ctx.normFactor;

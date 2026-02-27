@@ -5,7 +5,9 @@ import {Clones} from "openzeppelin-v5/contracts/proxy/Clones.sol";
 import {PrimeBroker} from "../broker/PrimeBroker.sol";
 import {MarketId} from "../../shared/interfaces/IRLDCore.sol";
 import {ERC721} from "solmate/src/tokens/ERC721.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @notice Interface for rendering Bond NFT metadata.
 /// @dev Implementations should return a valid data URI or URL.
@@ -14,7 +16,10 @@ interface IBondMetadataRenderer {
     /// @param tokenId The token ID (equals broker address cast to uint256)
     /// @param broker The broker contract address
     /// @return A data URI or URL string for the token metadata
-    function render(uint256 tokenId, address broker) external view returns (string memory);
+    function render(
+        uint256 tokenId,
+        address broker
+    ) external view returns (string memory);
 }
 
 /// @title Prime Broker Factory (NFT)
@@ -74,7 +79,6 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @dev Each market has its own factory, ensuring market isolation.
     MarketId public immutable MARKET_ID;
 
-
     /// @notice Optional metadata renderer for generating Bond NFT artwork (CURRENTLY UNUSED)
     /// @dev Can be address(0). Reserved for future on-chain metadata rendering.
     ///      Currently, tokenURI() returns empty string regardless of this value.
@@ -99,7 +103,11 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @param broker The deployed broker contract address
     /// @param owner The initial owner (who called createBroker)
     /// @param tokenId The NFT token ID (equals uint256(uint160(broker)))
-    event BrokerCreated(address indexed broker, address indexed owner, uint256 tokenId);
+    event BrokerCreated(
+        address indexed broker,
+        address indexed owner,
+        uint256 tokenId
+    );
 
     /* ============================================================================================ */
     /*                                         CONSTRUCTOR                                          */
@@ -154,10 +162,12 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     ///
     /// @param salt Unique salt for deterministic CREATE2 address generation
     /// @return broker The deployed broker contract address
-    function createBroker(bytes32 salt) external nonReentrant returns (address broker) {
+    function createBroker(
+        bytes32 salt
+    ) external nonReentrant returns (address broker) {
         // 1. Deploy minimal proxy clone using CREATE2
         broker = IMPLEMENTATION.cloneDeterministic(salt);
-        
+
         // 2. Initialize the clone with market context + CORE address
         // The broker needs to know which market it serves, who can verify ownership,
         // and the CORE address for solvency checks and position management
@@ -167,12 +177,12 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
             CORE,
             defaultOperators
         );
-        
+
         // 3. Mint NFT with tokenId = broker address
         // This establishes ownership and enables transfer via ERC721
         uint256 tokenId = uint256(uint160(broker));
         _mint(msg.sender, tokenId);
-        
+
         emit BrokerCreated(broker, msg.sender, tokenId);
     }
 
@@ -186,7 +196,9 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     ///      Frontend/indexers should generate metadata dynamically based on broker state.
     /// @param tokenId The token ID (equals broker address cast to uint256)
     /// @return Empty string (metadata handled off-chain)
-    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+    function tokenURI(
+        uint256 tokenId
+    ) public view override returns (string memory) {
         require(ownerOf(tokenId) != address(0), "NOT_MINTED");
         return ""; // Metadata is handled off-chain or by frontend dynamic rendering
     }
@@ -211,5 +223,27 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @return True if the address is a valid broker from this factory
     function isBroker(address broker) external view returns (bool) {
         return _ownerOf[uint256(uint160(broker))] != address(0);
+    }
+
+    /* ============================================================================================ */
+    /*                                    TRANSFER HOOK (H-3 FIX)                                   */
+    /* ============================================================================================ */
+
+    /// @notice Override ERC721 transferFrom to revoke all broker operators on ownership transfer
+    /// @dev H-3 FIX: Prevents previous owner's operators from retaining access after sale.
+    ///      Since solmate's safeTransferFrom calls transferFrom internally, all transfer
+    ///      paths (transferFrom + both safeTransferFrom variants) trigger this hook.
+    ///      Gas cost: bounded by MAX_OPERATORS (8 SSTOREs + 8 events + 1 SSTORE for delete)
+    function transferFrom(
+        address from,
+        address to,
+        uint256 id
+    ) public override {
+        // Revoke all operators BEFORE transfer (while `from` still owns the NFT)
+        address broker = address(uint160(id));
+        PrimeBroker(payable(broker)).revokeAllOperators();
+
+        // Execute standard ERC721 transfer
+        super.transferFrom(from, to, id);
     }
 }

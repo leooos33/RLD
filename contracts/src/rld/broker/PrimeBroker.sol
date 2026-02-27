@@ -253,6 +253,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         _;
     }
 
+    /// @dev Restricts function to the PrimeBrokerFactory that deployed this broker
+    /// Used for: revokeAllOperators() during NFT ownership transfer
+    modifier onlyFactory() {
+        require(msg.sender == factory, "Not Factory");
+        _;
+    }
+
     /// @dev Restricts function to the NFT holder only
     /// Used for: setOperator() - managing who can operate the account
     ///
@@ -1185,6 +1192,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             }
         }
         emit OperatorUpdated(operator, active);
+    }
+
+    /// @notice Revokes all operators atomically — called by factory on NFT transfer
+    /// @dev H-3 FIX: Prevents previous owner's operators from retaining access after
+    ///      ownership transfer. Bounded by MAX_OPERATORS (8) for gas predictability.
+    function revokeAllOperators() external onlyFactory {
+        for (uint256 i = 0; i < operatorList.length; i++) {
+            operators[operatorList[i]] = false;
+            emit OperatorUpdated(operatorList[i], false);
+        }
+        delete operatorList;
     }
 
     /// @notice Set operator via signature from the NFT owner
