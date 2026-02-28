@@ -226,6 +226,7 @@ dim "Log file: $ANVIL_LOG"
 nohup anvil \
     --fork-url "$MAINNET_RPC_URL" \
     --fork-block-number "$FORK_BLOCK" \
+    --chain-id 31337 \
     --block-time 1 \
     --host "$ANVIL_HOST" \
     > "$ANVIL_LOG" 2>&1 &
@@ -265,6 +266,11 @@ if echo "$BALANCE_CHECK" | grep -qi "403\|forbidden\|whitelist\|error"; then
     exit 1
 fi
 ok "Upstream RPC is accessible"
+
+# Force chain ID to 31337 (Anvil fork inherits mainnet chain ID 1, which confuses MetaMask)
+step "2e" "Setting chain ID to 31337..."
+cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
+ok "Chain ID set to 31337"
 
 # ═════════════════════════════════════════════════════════════
 # STEP 3: Start support services (if full restart)

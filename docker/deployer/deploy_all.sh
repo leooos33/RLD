@@ -171,11 +171,33 @@ else
 fi
 log_ok "Token order: TOKEN0=$TOKEN0"
 
-# Prime TWAMM oracle
-log_step "2.2" "Priming TWAMM oracle..."
-cast rpc evm_increaseTime 7200 --rpc-url "$RPC_URL" > /dev/null
-cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
-log_ok "Oracle primed (2h advance)"
+# Prime TWAMM oracle + grow observation cardinality
+log_step "2.2" "Priming TWAMM oracle & growing cardinality..."
+
+# Compute PoolId = keccak256(abi.encode(PoolKey))
+# PoolKey = (currency0, currency1, fee=500, tickSpacing=5, hooks=TWAMM_HOOK)
+POOL_ID=$(cast keccak "$(cast abi-encode "x(address,address,uint24,int24,address)" "$TOKEN0" "$TOKEN1" 500 5 "$TWAMM_HOOK")")
+log_ok "PoolId: $POOL_ID"
+
+# Grow oracle cardinality to max uint16 (65535 slots)
+cast send "$TWAMM_HOOK" "increaseCardinality(bytes32,uint16)" "$POOL_ID" 65535 \
+    --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
+log_ok "Oracle cardinality grown to 65535"
+
+# Warm up oracle: advance time and trigger observation writes
+# Each iteration advances 30 min and writes one observation slot.
+# We need at least 2 populated slots for TWAP to work (cardinality >= 2).
+# Writing 10 slots provides a solid baseline (5 hours of history).
+for i in $(seq 1 10); do
+    cast rpc evm_increaseTime 1800 --rpc-url "$RPC_URL" > /dev/null
+    cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
+    # Trigger an oracle write via executeJTMOrders (no-op swap, just writes observation)
+    cast send "$TWAMM_HOOK" \
+        "executeJTMOrders((address,address,uint24,int24,address))" \
+        "($TOKEN0,$TOKEN1,500,5,$TWAMM_HOOK)" \
+        --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
+done
+log_ok "Oracle warmed up (10 observations over 5h)"
 
 # ─── Configure BrokerRouter deposit route ──────────────────────
 log_step "2.3" "Configuring BrokerRouter deposit route (USDC → aUSDC → waUSDC)..."

@@ -5,9 +5,7 @@ import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {IHooks, Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
-import {
-    IERC20Minimal
-} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -256,7 +254,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             oracleStates[poolId],
             uint32(block.timestamp)
         );
-        observations[poolId].grow(oracleStates[poolId], 10);
+        observations[poolId].grow(oracleStates[poolId], 65535);
 
         return BaseHook.beforeInitialize.selector;
     }

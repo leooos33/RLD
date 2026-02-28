@@ -96,16 +96,8 @@ function OperationsFeed({
   }
 
   return (
-    <div className="space-y-0 divide-y divide-white/5 max-h-[200px] overflow-y-auto custom-scrollbar">
+    <div className="space-y-0 divide-y divide-white/5 max-h-[280px] overflow-y-auto custom-scrollbar">
       {operations.slice(0, 15).map((op) => {
-        const ts = new Date(op.timestamp * 1000);
-        const timeStr = ts.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        });
-
         // Format amounts based on event type
         let detail = "";
         if (op.type === "LongExecuted") {
@@ -114,27 +106,27 @@ function OperationsFeed({
           detail = `${formatOpAmount(op.args[1])} wRLP → ${formatOpAmount(op.args[2])} waUSDC`;
         } else if (op.type === "ShortExecuted") {
           detail = `${formatOpAmount(op.args[1])} debt · ${formatOpAmount(op.args[2])} proceeds`;
+        } else if (op.type === "ShortClosed") {
+          detail = `${formatOpAmount(op.args[1])} repaid · ${formatOpAmount(op.args[2])} spent`;
         } else if (op.type === "Deposited") {
           detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} waUSDC`;
         }
 
         return (
-          <div
-            key={op.id}
-            className="py-2 flex items-center justify-between gap-3"
-          >
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <span
-                className={`text-sm font-bold font-mono px-1.5 py-0.5 tracking-wider w-[72px] text-center inline-block ${op.color}`}
-              >
-                {op.label}
-              </span>
-              <span className="text-sm text-gray-500 font-mono">
-                {timeStr}
-              </span>
-            </div>
-            <div className="text-sm font-mono text-gray-400 flex-shrink-0">
-              {detail}
+          <div key={op.id} className="py-2.5 flex items-center gap-3">
+            {/* Left: Action badge (centered) */}
+            <span
+              className={`text-xs font-bold font-mono px-2 py-1 tracking-wider text-center shrink-0 w-[90px] ${op.color}`}
+            >
+              {op.label}
+            </span>
+            {/* Right: Detail */}
+            <div className="flex-1 min-w-0 text-right">
+              {detail && (
+                <div className="text-sm font-mono text-gray-300 truncate">
+                  {detail}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -194,6 +186,7 @@ export default function SimulationTerminal() {
     brokerBalance,
     creating: _brokerCreating,
     fetchBrokerBalance,
+    checkBroker,
   } = useBrokerAccount(
     account,
     marketInfo?.broker_factory,
@@ -1382,6 +1375,7 @@ export default function SimulationTerminal() {
                 </div>
                 <div className="p-4 flex flex-col gap-2">
                   {[
+                    { id: "mint", label: "Mint", desc: "Mint wRLP from collateral" },
                     { id: "twap", label: "TWAP", desc: "Time-weighted swap" },
                     { id: "lp", label: "LP", desc: "Provide liquidity" },
                     { id: "loop", label: "Loop", desc: "Leveraged position" },
@@ -1411,7 +1405,17 @@ export default function SimulationTerminal() {
                       }`} />
                     </button>
                     {activeAction === action.id && (
-                      <ActionForm type={action.id} onClose={() => setActiveAction(null)} />
+                      <ActionForm
+                        type={action.id}
+                        onClose={() => setActiveAction(null)}
+                        brokerBalance={brokerBalance}
+                        brokerWrlpBalance={brokerWrlpBalance}
+                        currentRate={currentRate}
+                        brokerAddress={brokerAddress}
+                        marketId={market?.marketId}
+                        account={account}
+                        addToast={addToast}
+                      />
                     )}
                     </React.Fragment>
                   ))}
@@ -1474,6 +1478,8 @@ export default function SimulationTerminal() {
         onClose={() => setShowAccountModal(false)}
         onComplete={(addr) => {
           setShowAccountModal(false);
+          // Re-check broker ownership so hasBroker flips to true
+          checkBroker();
           // Refresh broker state & show toast
           if (addr) {
             fetchBrokerBalance(addr);
