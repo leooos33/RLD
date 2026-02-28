@@ -15,6 +15,7 @@ import {
 import { useSimulation } from "../hooks/useSimulation";
 import { useWallet } from "../context/WalletContext";
 import { useBrokerAccount } from "../hooks/useBrokerAccount";
+import { usePoolLiquidity, liquidityToAmounts } from "../hooks/usePoolLiquidity";
 import TradingTerminal, { InputGroup, SummaryRow } from "./TradingTerminal";
 import StatItem from "./StatItem";
 import RLDPerformanceChart from "./RLDChart";
@@ -356,6 +357,18 @@ export default function PoolLP() {
     marketInfo?.collateral?.address,
   );
 
+  // ── Pool liquidity hook (contract integration) ──────────────
+  const {
+    executeAddLiquidity,
+    executeRemoveLiquidity,
+    activePosition,
+    refreshPosition,
+    executing: lpExecuting,
+    executionStep: lpStep,
+    executionError: lpError,
+    clearError: clearLpError,
+  } = usePoolLiquidity(brokerAddress, marketInfo);
+
   // ── Mock liquidity depth distribution ───────────────────────
   const liquidityBins = useMemo(
     () => generateMockLiquidityBins(pool?.markPrice || 0, 40),
@@ -367,6 +380,7 @@ export default function PoolLP() {
   const [activeTab, setActiveTab] = useState("ADD");
   const [token0Amount, setToken0Amount] = useState("");
   const [token1Amount, setToken1Amount] = useState("");
+  const [lastEdited, setLastEdited] = useState(null); // 'token0' | 'token1'
   const [minPrice, setMinPrice] = useState("0.95");
   const [maxPrice, setMaxPrice] = useState("1.05");
   const [removePercent, setRemovePercent] = useState(100);
@@ -416,6 +430,82 @@ export default function PoolLP() {
     const id = setInterval(fetchBalances, 5000);
     return () => clearInterval(id);
   }, [fetchBalances]);
+
+  // ── V4 paired amount calculation ────────────────────────────
+  // When user enters one token amount, auto-compute the other
+  // using standard concentrated liquidity math:
+  //   amount0 = L × (1/√pC − 1/√pU)
+  //   amount1 = L × (√pC − √pL)
+  const currentPrice = pool?.markPrice;
+  const computePairedAmount = useCallback(
+    (sourceAmount, source) => {
+      const pMin = parseFloat(minPrice);
+      const pMax = parseFloat(maxPrice);
+      if (!pMin || !pMax || !currentPrice || pMin >= pMax) return "";
+
+      const sqrtPL = Math.sqrt(pMin);
+      const sqrtPU = Math.sqrt(pMax);
+      const sqrtPC = Math.sqrt(currentPrice);
+      const amt = parseFloat(sourceAmount);
+      if (!amt || amt <= 0) return "";
+
+      if (currentPrice <= pMin) {
+        // Below range: only token0 needed, token1 = 0
+        return source === "token0" ? "0" : "";
+      }
+      if (currentPrice >= pMax) {
+        // Above range: only token1 needed, token0 = 0
+        return source === "token1" ? "0" : "";
+      }
+
+      // In range — both tokens needed
+      if (source === "token0") {
+        // User entered token0 (wRLP), compute token1 (waUSDC)
+        const delta0 = 1 / sqrtPC - 1 / sqrtPU;
+        if (delta0 <= 0) return "";
+        const L = amt / delta0;
+        const paired = L * (sqrtPC - sqrtPL);
+        return paired > 0 ? paired.toFixed(6) : "0";
+      } else {
+        // User entered token1 (waUSDC), compute token0 (wRLP)
+        const delta1 = sqrtPC - sqrtPL;
+        if (delta1 <= 0) return "";
+        const L = amt / delta1;
+        const paired = L * (1 / sqrtPC - 1 / sqrtPU);
+        return paired > 0 ? paired.toFixed(6) : "0";
+      }
+    },
+    [minPrice, maxPrice, currentPrice],
+  );
+
+  // Handlers that auto-compute the paired amount
+  const handleToken0Change = useCallback(
+    (val) => {
+      setToken0Amount(val);
+      setLastEdited("token0");
+      setToken1Amount(computePairedAmount(val, "token0"));
+    },
+    [computePairedAmount],
+  );
+
+  const handleToken1Change = useCallback(
+    (val) => {
+      setToken1Amount(val);
+      setLastEdited("token1");
+      setToken0Amount(computePairedAmount(val, "token1"));
+    },
+    [computePairedAmount],
+  );
+
+  // Recompute whenever price range changes
+  useEffect(() => {
+    if (lastEdited === "token0" && token0Amount) {
+      setToken1Amount(computePairedAmount(token0Amount, "token0"));
+    } else if (lastEdited === "token1" && token1Amount) {
+      setToken0Amount(computePairedAmount(token1Amount, "token1"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minPrice, maxPrice, currentPrice]);
 
   // ── Derived pool data from simulation ───────────────────────
   const poolData = useMemo(() => {
@@ -516,8 +606,43 @@ export default function PoolLP() {
 
   const activeChartConfig = CHART_VIEWS[chartView];
 
-  // ── User LP positions (empty until V4 PositionManager hook is built) ──
-  const userPositions = [];
+  // ── Derive user positions from active on-chain position ─────
+  const userPositions = useMemo(() => {
+    if (!activePosition || activePosition.tokenId === 0n) return [];
+
+    const { tickLower, tickUpper, liquidity, tokenId } = activePosition;
+
+    // Convert ticks back to prices for display
+    const priceLower = Math.pow(1.0001, tickLower);
+    const priceUpper = Math.pow(1.0001, tickUpper);
+
+    // Compute token amounts from position liquidity + tick range + current price
+    const currentTick = currentPrice
+      ? Math.log(currentPrice) / Math.log(1.0001)
+      : 0;
+    const amounts = liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick);
+
+    // Is the current price within this position's range?
+    const inRange = currentTick >= tickLower && currentTick < tickUpper;
+
+    return [
+      {
+        id: Number(tokenId),
+        tokenId,
+        priceLower,
+        priceUpper,
+        liquidity: Number(liquidity),
+        liquidityFormatted: Number(liquidity).toLocaleString(),
+        token0Amount: amounts.amount0.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+        token1Amount: amounts.amount1.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+        value: amounts.amount1 + amounts.amount0 * (currentPrice || 0),
+        feesEarned0: "0",
+        feesEarned1: "0",
+        inRange,
+        apr: poolData?.apr?.toFixed(1) || "—",
+      },
+    ];
+  }, [activePosition, currentPrice, poolData]);
 
   // ── Error / Loading states ──────────────────────────────────
   if (error && !connected) {
@@ -864,17 +989,17 @@ export default function PoolLP() {
                   label={poolData.token0.symbol}
                   subLabel={`Balance: ${token0Balance != null ? token0Balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}`}
                   value={token0Amount}
-                  onChange={setToken0Amount}
+                  onChange={handleToken0Change}
                   suffix={poolData.token0.symbol}
-                  onMax={token0Balance > 0 ? () => setToken0Amount(String(token0Balance)) : undefined}
+                  onMax={token0Balance > 0 ? () => handleToken0Change(String(token0Balance)) : undefined}
                 />
                 <InputGroup
                   label={poolData.token1.symbol}
                   subLabel={`Balance: ${token1Balance != null ? token1Balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}`}
                   value={token1Amount}
-                  onChange={setToken1Amount}
+                  onChange={handleToken1Change}
                   suffix={poolData.token1.symbol}
-                  onMax={token1Balance > 0 ? () => setToken1Amount(String(token1Balance)) : undefined}
+                  onMax={token1Balance > 0 ? () => handleToken1Change(String(token1Balance)) : undefined}
                 />
 
                 {/* Summary */}
@@ -997,7 +1122,7 @@ export default function PoolLP() {
                   <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 text-center">
                     <div className="col-span-1 text-left">#</div>
                     <div className="col-span-2 text-left">Range</div>
-                    <div className="col-span-2">Liquidity</div>
+                    <div className="col-span-2">Value</div>
                     <div className="col-span-2">Token 0</div>
                     <div className="col-span-2">Token 1</div>
                     <div className="col-span-2">Fees Earned</div>
@@ -1019,7 +1144,7 @@ export default function PoolLP() {
                           </div>
                         </div>
                         <div className="col-span-2 text-sm font-mono text-white">
-                          ${pos.liquidity}
+                          ${pos.value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </div>
                         <div className="col-span-2 text-sm font-mono text-white">
                           {pos.token0Amount}{" "}
@@ -1096,23 +1221,52 @@ export default function PoolLP() {
       {/* Withdraw Modal */}
       <WithdrawModal
         isOpen={!!withdrawPosition}
-        onClose={() => setWithdrawPosition(null)}
-        onConfirm={() => {
-          // TODO: execute withdraw transaction
-          setWithdrawPosition(null);
+        onClose={() => {
+          if (!lpExecuting) {
+            setWithdrawPosition(null);
+            clearLpError();
+          }
+        }}
+        onConfirm={(percent) => {
+          if (!withdrawPosition?.tokenId) return;
+          executeRemoveLiquidity(
+            withdrawPosition.tokenId,
+            percent,
+            () => {
+              setWithdrawPosition(null);
+              fetchBalances();
+            },
+          );
         }}
         position={withdrawPosition}
         token0={poolData.token0}
         token1={poolData.token1}
+        executing={lpExecuting}
+        executionStep={lpStep}
+        executionError={lpError}
       />
 
       {/* Add Liquidity Modal */}
       <AddLiquidityModal
         isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => {
+          if (!lpExecuting) {
+            setShowAddModal(false);
+            clearLpError();
+          }
+        }}
         onConfirm={() => {
-          // TODO: execute add liquidity transaction
-          setShowAddModal(false);
+          executeAddLiquidity(
+            minPrice,
+            maxPrice,
+            token0Amount,
+            token1Amount,
+            poolData?.currentPrice || 1,
+            () => {
+              setShowAddModal(false);
+              fetchBalances();
+            },
+          );
         }}
         minPrice={minPrice}
         maxPrice={maxPrice}
@@ -1121,6 +1275,9 @@ export default function PoolLP() {
         token0={poolData.token0}
         token1={poolData.token1}
         pool={poolData}
+        executing={lpExecuting}
+        executionStep={lpStep}
+        executionError={lpError}
       />
     </div>
   );
