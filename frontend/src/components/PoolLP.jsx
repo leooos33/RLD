@@ -328,6 +328,7 @@ export default function PoolLP() {
     error,
     market,
     pool,
+    poolTVL,
     funding,
     fundingFromNF: _fundingFromNF,
     volumeData,
@@ -555,11 +556,8 @@ export default function PoolLP() {
     const feeTier = marketInfo.infrastructure?.pool_fee || 500;
     const feePercent = feeTier / 10000; // 500 → 0.05%
 
-    // TVL estimate: liquidity value in USD terms
-    // Both tokens have 6 decimals; liquidity is raw V4 liquidity units
-    // Rough estimate: use mark price × liquidity converted
-    const rawLiquidity = pool.liquidity || 0;
-    const tvl = protocolStats?.totalCollateral || 0; // waUSDC collateral as TVL proxy
+    // TVL from indexed token balances in PoolManager
+    const tvl = poolTVL || 0;
 
     const volume24h = volumeData?.volume_usd || 0;
     const swapCount = volumeData?.swap_count || 0;
