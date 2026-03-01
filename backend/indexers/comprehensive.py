@@ -21,6 +21,7 @@ from db.comprehensive import (
     insert_pool_state,
     insert_event,
     insert_broker_position,
+    insert_lp_position,
     insert_transaction,
     get_last_indexed_block,
     update_last_indexed_block,
@@ -129,6 +130,50 @@ PRIME_BROKER_ABI = [
          {"name": "healthFactor", "type": "uint256"},
          {"name": "isSolvent", "type": "bool"}
      ], "name": "", "type": "tuple"}],
+     "stateMutability": "view", "type": "function"}
+]
+
+# V4 Position Manager ABI (for LP position tracking)
+POSM_ABI = [
+    {"inputs": [{"name": "tokenId", "type": "uint256"}],
+     "name": "getPositionLiquidity",
+     "outputs": [{"name": "", "type": "uint128"}],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "tokenId", "type": "uint256"}],
+     "name": "ownerOf",
+     "outputs": [{"name": "", "type": "address"}],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "tokenId", "type": "uint256"}],
+     "name": "positionInfo",
+     "outputs": [{"name": "", "type": "bytes32"}],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [],
+     "name": "nextTokenId",
+     "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+    {"anonymous": False, "inputs": [
+        {"indexed": True, "name": "from", "type": "address"},
+        {"indexed": True, "name": "to", "type": "address"},
+        {"indexed": True, "name": "tokenId", "type": "uint256"}
+    ], "name": "Transfer", "type": "event"}
+]
+
+STATE_VIEW_ABI = [
+    {"inputs": [{"name": "poolId", "type": "bytes32"}],
+     "name": "getSlot0",
+     "outputs": [
+         {"name": "sqrtPriceX96", "type": "uint160"},
+         {"name": "tick", "type": "int24"},
+         {"name": "protocolFee", "type": "uint24"},
+         {"name": "lpFee", "type": "uint24"}
+     ],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "poolId", "type": "bytes32"}],
+     "name": "getFeeGrowthGlobals",
+     "outputs": [
+         {"name": "feeGrowthGlobal0", "type": "uint256"},
+         {"name": "feeGrowthGlobal1", "type": "uint256"}
+     ],
      "stateMutability": "view", "type": "function"}
 ]
 
@@ -281,6 +326,28 @@ class ComprehensiveIndexer:
         init_comprehensive_db()
         
         self.running = False
+
+        # V4 Position Manager for LP tracking
+        posm_addr = os.getenv("V4_POSITION_MANAGER")
+        state_view_addr = os.getenv("V4_STATE_VIEW")
+        if posm_addr:
+            self.posm = self.w3.eth.contract(
+                address=Web3.to_checksum_address(posm_addr),
+                abi=POSM_ABI
+            )
+            logger.info(f"   POSM: {posm_addr}")
+        else:
+            self.posm = None
+        if state_view_addr:
+            self.state_view = self.w3.eth.contract(
+                address=Web3.to_checksum_address(state_view_addr),
+                abi=STATE_VIEW_ABI
+            )
+        else:
+            self.state_view = None
+        # Cache: token_id -> mint_block (so we only query entry price once)
+        self._mint_block_cache = {}
+
         logger.info(f"✅ ComprehensiveIndexer initialized")
         logger.info(f"   Market: {market_id[:16]}...")
         logger.info(f"   Token0: {self.token0}")
@@ -477,6 +544,39 @@ class ComprehensiveIndexer:
             if mark_price is None:
                 mark_price = self._mark_price_from_sqrt(sqrt_price_x96)
             
+            # ── Fee growth globals ──────────────────────────────
+            fee_growth0 = 0
+            fee_growth1 = 0
+            if self.state_view:
+                try:
+                    pool_id_b = self.pool_id if isinstance(self.pool_id, bytes) else bytes.fromhex(self.pool_id.replace('0x', ''))
+                    fees = self.state_view.functions.getFeeGrowthGlobals(pool_id_b).call()
+                    fee_growth0 = fees[0]
+                    fee_growth1 = fees[1]
+                except Exception as e:
+                    logger.debug(f"Could not read fee growth: {e}")
+            
+            # ── Token balances in PoolManager ──────────────────
+            token0_balance = 0
+            token1_balance = 0
+            try:
+                t0 = self.w3.eth.contract(
+                    address=Web3.to_checksum_address(self.token0),
+                    abi=ERC20_ABI
+                )
+                t1 = self.w3.eth.contract(
+                    address=Web3.to_checksum_address(self.token1),
+                    abi=ERC20_ABI
+                )
+                token0_balance = t0.functions.balanceOf(
+                    self.pool_manager.address
+                ).call()
+                token1_balance = t1.functions.balanceOf(
+                    self.pool_manager.address
+                ).call()
+            except Exception as e:
+                logger.debug(f"Could not read token balances: {e}")
+            
             return {
                 'token0': self.token0,
                 'token1': self.token1,
@@ -484,8 +584,10 @@ class ComprehensiveIndexer:
                 'tick': tick,
                 'liquidity': liquidity,
                 'mark_price': mark_price,
-                'fee_growth_global0': 0,
-                'fee_growth_global1': 0
+                'fee_growth_global0': fee_growth0,
+                'fee_growth_global1': fee_growth1,
+                'token0_balance': token0_balance,
+                'token1_balance': token1_balance
             }
         except Exception as e:
             logger.warning(f"Could not get pool state: {e}")
@@ -541,6 +643,110 @@ class ComprehensiveIndexer:
         except Exception as e:
             logger.debug(f"Could not get broker position for {broker_address}: {e}")
             return {}
+
+    def _decode_position_info(self, info_bytes32: bytes) -> dict:
+        """Decode tickLower/tickUpper from V4 PositionInfo packed bytes32."""
+        val = int.from_bytes(info_bytes32, 'big') if isinstance(info_bytes32, bytes) else int(info_bytes32, 16) if isinstance(info_bytes32, str) else int(info_bytes32)
+        tick_lower_raw = (val >> 8) & 0xFFFFFF
+        tick_upper_raw = (val >> 32) & 0xFFFFFF
+        tick_lower = tick_lower_raw - 0x1000000 if tick_lower_raw >= 0x800000 else tick_lower_raw
+        tick_upper = tick_upper_raw - 0x1000000 if tick_upper_raw >= 0x800000 else tick_upper_raw
+        return {'tick_lower': tick_lower, 'tick_upper': tick_upper}
+
+    def get_broker_lp_positions(self, broker_address: str, block_number: int) -> List[Dict]:
+        """Get all V4 LP NFTs owned by a broker."""
+        if not self.posm:
+            return []
+        positions = []
+        try:
+            broker_cs = Web3.to_checksum_address(broker_address)
+            # Get active token ID from broker contract
+            broker_contract = self.w3.eth.contract(
+                address=broker_cs,
+                abi=PRIME_BROKER_ABI + [{"inputs": [], "name": "activeTokenId",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view", "type": "function"}]
+            )
+            try:
+                active_token_id = broker_contract.functions.activeTokenId().call()
+            except:
+                active_token_id = 0
+
+            # Scan Transfer events to broker using raw get_logs (web3.py version-agnostic)
+            # ERC-721 Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+            # topics: [0]=sig, [1]=from, [2]=to, [3]=tokenId
+            transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+            broker_padded = '0x' + broker_address.lower().replace('0x', '').zfill(64)
+            logs = self.w3.eth.get_logs({
+                'fromBlock': 0,
+                'toBlock': 'latest',
+                'address': self.posm.address,
+                'topics': [transfer_topic, None, broker_padded],  # Transfer to broker
+            })
+            candidate_ids = list(set(
+                int(log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3], 16)
+                for log in logs if len(log['topics']) > 3
+            ))
+
+            # Build mint block map from raw logs
+            for log in logs:
+                if len(log['topics']) <= 3:
+                    continue
+                tid_hex = log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3]
+                tid = int(tid_hex, 16)
+                if tid not in self._mint_block_cache:
+                    self._mint_block_cache[tid] = log['blockNumber']
+
+            for token_id in candidate_ids:
+                try:
+                    owner = self.posm.functions.ownerOf(token_id).call()
+                    if owner.lower() != broker_address.lower():
+                        continue
+                    liquidity = self.posm.functions.getPositionLiquidity(token_id).call()
+                    if liquidity == 0:
+                        continue
+
+                    tick_lower = 0
+                    tick_upper = 0
+                    try:
+                        info = self.posm.functions.positionInfo(token_id).call()
+                        decoded = self._decode_position_info(info)
+                        tick_lower = decoded['tick_lower']
+                        tick_upper = decoded['tick_upper']
+                    except Exception as e:
+                        logger.debug(f"Could not decode position info for {token_id}: {e}")
+
+                    # Entry price: pool tick at mint block
+                    entry_tick = None
+                    entry_price = None
+                    mint_block = self._mint_block_cache.get(token_id)
+                    if mint_block and self.state_view and self.pool_id:
+                        try:
+                            pool_id_bytes = self.pool_id if isinstance(self.pool_id, bytes) else bytes.fromhex(str(self.pool_id).replace('0x', ''))
+                            slot0 = self.state_view.functions.getSlot0(pool_id_bytes).call(
+                                block_identifier=mint_block
+                            )
+                            entry_tick = slot0[1]  # tick
+                            entry_price = math.pow(1.0001, entry_tick)
+                        except Exception as e:
+                            logger.debug(f"Could not read entry price for token {token_id}: {e}")
+
+                    positions.append({
+                        'token_id': token_id,
+                        'liquidity': liquidity,
+                        'tick_lower': tick_lower,
+                        'tick_upper': tick_upper,
+                        'entry_tick': entry_tick,
+                        'entry_price': entry_price,
+                        'mint_block': mint_block,
+                        'is_active': token_id == active_token_id,
+                    })
+                except Exception:
+                    continue
+
+        except Exception as e:
+            logger.warning(f"Could not get LP positions for {broker_address}: {e}")
+        return positions
     
     def get_events_in_block(self, block_number: int) -> List[Dict]:
         """Get all relevant events in a block using raw topic signatures."""
@@ -929,8 +1135,10 @@ class ComprehensiveIndexer:
                     'tick': swap_tick,
                     'liquidity': swap_liq,
                     'mark_price': swap_mark,
-                    'fee_growth_global0': 0,
-                    'fee_growth_global1': 0
+                    'fee_growth_global0': pool_state.get('fee_growth_global0', 0) if pool_state else 0,
+                    'fee_growth_global1': pool_state.get('fee_growth_global1', 0) if pool_state else 0,
+                    'token0_balance': pool_state.get('token0_balance', 0) if pool_state else 0,
+                    'token1_balance': pool_state.get('token1_balance', 0) if pool_state else 0
                 }
                 
                 pool_id_hex = swap_pool_id or (self.pool_id.hex() if self.pool_id else "")
@@ -951,6 +1159,17 @@ class ComprehensiveIndexer:
         snapshot['broker_positions'] = broker_positions
         if broker_positions:
             logger.info(f"   👤 Brokers: {len(broker_positions)} position(s) tracked")
+
+        # 4b. LP Positions (V4 NFTs for each broker)
+        all_lp = []
+        for broker in self.tracked_brokers:
+            lp_positions = self.get_broker_lp_positions(broker, block_number)
+            for lp in lp_positions:
+                insert_lp_position(block_number, broker, lp)
+                all_lp.append({'broker': broker, **lp})
+        snapshot['lp_positions'] = all_lp
+        if all_lp:
+            logger.info(f"   📌 LP Positions: {len(all_lp)} NFT(s) across {len(self.tracked_brokers)} broker(s)")
         
         # 5. Transactions (all contract interactions)
         transactions = self.get_transactions_in_block(block_number)

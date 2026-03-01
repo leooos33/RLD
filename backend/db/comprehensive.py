@@ -54,6 +54,8 @@ def init_comprehensive_db():
             mark_price REAL,
             fee_growth_global0 TEXT,
             fee_growth_global1 TEXT,
+            token0_balance TEXT,
+            token1_balance TEXT,
             UNIQUE(block_number, pool_id)
         )
     """)
@@ -86,6 +88,24 @@ def init_comprehensive_db():
             debt_value TEXT,
             health_factor REAL,
             UNIQUE(block_number, broker_address, market_id)
+        )
+    """)
+
+    # V4 LP positions per block
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lp_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_number INTEGER NOT NULL,
+            broker_address TEXT NOT NULL,
+            token_id INTEGER NOT NULL,
+            liquidity TEXT,
+            tick_lower INTEGER,
+            tick_upper INTEGER,
+            entry_tick INTEGER,
+            entry_price REAL,
+            mint_block INTEGER,
+            is_active BOOLEAN DEFAULT 0,
+            UNIQUE(block_number, broker_address, token_id)
         )
     """)
     
@@ -127,6 +147,9 @@ def init_comprehensive_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_name ON events(event_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_broker_pos_block ON broker_positions(block_number)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_broker_pos_addr ON broker_positions(broker_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lp_pos_block ON lp_positions(block_number)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lp_pos_broker ON lp_positions(broker_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lp_pos_token ON lp_positions(token_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_block ON transactions(block_number)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_from ON transactions(from_address)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_to ON transactions(to_address)")
@@ -212,8 +235,9 @@ def insert_pool_state(block_number: int, pool_id: str, state: Dict[str, Any]):
             INSERT OR REPLACE INTO pool_state (
                 block_number, pool_id, token0, token1,
                 sqrt_price_x96, tick, liquidity, mark_price,
-                fee_growth_global0, fee_growth_global1
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fee_growth_global0, fee_growth_global1,
+                token0_balance, token1_balance
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             block_number,
             pool_id,
@@ -224,7 +248,9 @@ def insert_pool_state(block_number: int, pool_id: str, state: Dict[str, Any]):
             str(state.get('liquidity', 0)),
             state.get('mark_price', 0.0),
             str(state.get('fee_growth_global0', 0)),
-            str(state.get('fee_growth_global1', 0))
+            str(state.get('fee_growth_global1', 0)),
+            str(state.get('token0_balance', 0)),
+            str(state.get('token1_balance', 0))
         ))
         conn.commit()
         return cursor.lastrowid
@@ -445,6 +471,86 @@ def get_broker_history(broker_address: str, market_id: str = None,
         
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ============================================
+# LP Position Operations
+# ============================================
+
+def insert_lp_position(block_number: int, broker_address: str, position: Dict[str, Any]):
+    """Insert an LP position snapshot."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO lp_positions (
+                block_number, broker_address, token_id,
+                liquidity, tick_lower, tick_upper,
+                entry_tick, entry_price, mint_block, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            block_number,
+            broker_address,
+            position.get('token_id', 0),
+            str(position.get('liquidity', 0)),
+            position.get('tick_lower', 0),
+            position.get('tick_upper', 0),
+            position.get('entry_tick'),
+            position.get('entry_price'),
+            position.get('mint_block'),
+            1 if position.get('is_active') else 0,
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_lp_positions(broker_address: str, block_number: int = None) -> List[Dict]:
+    """Get LP positions for a broker. If block_number is None, returns latest."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if block_number:
+            cursor.execute("""
+                SELECT * FROM lp_positions
+                WHERE broker_address = ? AND block_number = ?
+                ORDER BY token_id ASC
+            """, (broker_address, block_number))
+        else:
+            # Get the latest block for this broker
+            cursor.execute("""
+                SELECT * FROM lp_positions
+                WHERE broker_address = ? AND block_number = (
+                    SELECT MAX(block_number) FROM lp_positions WHERE broker_address = ?
+                )
+                ORDER BY is_active DESC, token_id ASC
+            """, (broker_address, broker_address))
+        results = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            d['liquidity'] = int(d.get('liquidity') or 0)
+            results.append(d)
+        return results
+
+
+def get_all_latest_lp_positions() -> List[Dict]:
+    """Get latest LP positions across all brokers."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Get max block per broker, then join
+        cursor.execute("""
+            SELECT lp.* FROM lp_positions lp
+            INNER JOIN (
+                SELECT broker_address, MAX(block_number) as max_block
+                FROM lp_positions GROUP BY broker_address
+            ) latest ON lp.broker_address = latest.broker_address
+                    AND lp.block_number = latest.max_block
+            WHERE lp.liquidity != '0'
+            ORDER BY lp.is_active DESC, lp.token_id ASC
+        """)
+        results = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            d['liquidity'] = int(d.get('liquidity') or 0)
+            results.append(d)
+        return results
 
 
 # ============================================

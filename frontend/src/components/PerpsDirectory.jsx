@@ -29,6 +29,7 @@ export default function PerpsDirectory() {
     loading,
     market,
     pool,
+    poolTVL,
     volumeData,
     protocolStats,
     marketInfo,
@@ -42,11 +43,8 @@ export default function PerpsDirectory() {
     const posSymbol = marketInfo.position_token?.symbol || "wRLP";
     const colSymbol = marketInfo.collateral?.symbol || "USDC";
 
-    // Liquidity in USD: pool.liquidity is raw Uni V3 liquidity units
-    // Approximate via protocolStats or use pool liquidity as-is
-    const liquidityUsd = pool.liquidity
-      ? (pool.liquidity / 1e12) * (pool.markPrice || market.indexPrice)
-      : 0;
+    // Open Interest = total collateral + total debt in USD
+    const oi = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
 
     return [
       {
@@ -56,13 +54,13 @@ export default function PerpsDirectory() {
         price: market.indexPrice || 0,
         markPrice: pool.markPrice || 0,
         change24h: oracleChange24h ?? 0,
-        openInterest: protocolStats?.totalDebtUsd || 0,
-        volume24h: volumeData?.volume_24h_usd || 0,
-        liquidity: liquidityUsd,
-        protocol: "RLD",
+        openInterest: oi,
+        volume24h: volumeData?.volume_usd || 0,
+        liquidity: poolTVL || 0,
+        protocol: "Aave V3",
       },
     ];
-  }, [market, pool, marketInfo, volumeData, protocolStats, oracleChange24h]);
+  }, [market, pool, poolTVL, marketInfo, volumeData, protocolStats, oracleChange24h]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {

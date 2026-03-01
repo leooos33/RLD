@@ -123,8 +123,23 @@ export function useSimulation({
       tick: ps.tick,
       liquidity: ps.liquidity,
       sqrtPriceX96: ps.sqrt_price_x96,
+      token0Balance: parseInt(ps.token0_balance || '0'),
+      token1Balance: parseInt(ps.token1_balance || '0'),
+      feeGrowthGlobal0: ps.fee_growth_global0,
+      feeGrowthGlobal1: ps.fee_growth_global1,
     };
   }, [latest]);
+
+  // ── Derived: pool TVL ───────────────────────────────────────
+  // TVL = (token0_balance / 1e6) * markPrice + (token1_balance / 1e6)
+  // Both tokens are 6 decimals
+  const poolTVL = useMemo(() => {
+    if (!pool) return 0;
+    const t0 = pool.token0Balance / 1e6;
+    const t1 = pool.token1Balance / 1e6;
+    const price = pool.markPrice || 1;
+    return t0 * price + t1;
+  }, [pool]);
 
   // ── Derived: funding spread ─────────────────────────────────
   const funding = useMemo(() => {
@@ -281,6 +296,7 @@ export function useSimulation({
     // Derived
     market,
     pool,
+    poolTVL,
     funding,
     fundingFromNF,
     oracleChange24h,
