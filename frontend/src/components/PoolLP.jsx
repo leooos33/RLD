@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import {
   Droplets,
@@ -288,21 +288,40 @@ export default function PoolLP() {
   });
   const { appliedStart, appliedEnd, resolution } = chartControls;
 
-  // Convert date strings to unix timestamps for the API
-  const chartStartTime = appliedStart
-    ? Math.floor(new Date(appliedStart).getTime() / 1000)
-    : null;
-  const chartEndTime = appliedEnd
-    ? Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000)
-    : null;
-
   // ── Simulation data ─────────────────────────────────────────
+  // NOTE: The simulation uses Ethereum fork timestamps (Jan 2025), not
+  // wall-clock time (Mar 2026). We compute the time *range* as a delta
+  // from wall-clock "now", then anchor it to the latest simulation
+  // block timestamp so the filter matches the chain's timeline.
+  const [simBlockTs, setSimBlockTs] = useState(null);
+
+  const chartStartTime = useMemo(() => {
+    if (!simBlockTs || !appliedStart) return null;
+    const wallNow = Math.floor(Date.now() / 1000);
+    const wallStart = Math.floor(new Date(appliedStart).getTime() / 1000);
+    return simBlockTs - (wallNow - wallStart);
+  }, [appliedStart, simBlockTs]);
+
+  const chartEndTime = useMemo(() => {
+    if (!simBlockTs || !appliedEnd) return null;
+    const wallNow = Math.floor(Date.now() / 1000);
+    const wallEnd = Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000);
+    return simBlockTs - (wallNow - wallEnd);
+  }, [appliedEnd, simBlockTs]);
+
   const sim = useSimulation({
     pollInterval: 2000,
     chartResolution: resolution,
     chartStartTime,
     chartEndTime,
   });
+
+  // Update simBlockTs once when simulation data first arrives
+  useEffect(() => {
+    if (simBlockTs) return; // only set once
+    const ts = sim?.latest?.market_states?.[0]?.block_timestamp;
+    if (ts) setSimBlockTs(ts);
+  }, [sim?.latest, simBlockTs]);
   const {
     connected,
     loading,
