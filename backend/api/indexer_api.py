@@ -345,18 +345,8 @@ async def get_price_chart(
                 (block_timestamp / ?) * ? as bucket_ts,
                 MIN(block_number) as first_block,
                 MAX(block_number) as last_block,
-                -- Index price OHLC
-                (SELECT CAST(index_price AS INTEGER) FROM block_state b2
-                 WHERE b2.block_number = MIN(block_state.block_number)) as index_open,
-                (SELECT CAST(index_price AS INTEGER) FROM block_state b2
-                 WHERE b2.block_number = MAX(block_state.block_number)) as index_close,
                 MAX(CAST(index_price AS INTEGER)) as index_high,
                 MIN(CAST(index_price AS INTEGER)) as index_low,
-                -- Last values in bucket
-                (SELECT CAST(normalization_factor AS INTEGER) FROM block_state b2
-                 WHERE b2.block_number = MAX(block_state.block_number)) as nf_close,
-                (SELECT CAST(total_debt AS INTEGER) FROM block_state b2
-                 WHERE b2.block_number = MAX(block_state.block_number)) as debt_close,
                 COUNT(*) as sample_count
             FROM block_state
             WHERE 1=1
@@ -374,41 +364,74 @@ async def get_price_chart(
         params.append(limit)
 
         c.execute(ms_query, params)
-        ms_rows = c.fetchall()
+        ms_bucket_rows = c.fetchall()
+
+        # Fetch open/close values per bucket
+        ms_rows = []
+        for row in ms_bucket_rows:
+            fb, lb = row['first_block'], row['last_block']
+            c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = ?', (fb,))
+            open_r = c.fetchone()
+            c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = ?', (lb,))
+            close_r = c.fetchone()
+            ms_rows.append({
+                'bucket_ts': row['bucket_ts'],
+                'first_block': fb,
+                'last_block': lb,
+                'index_high': row['index_high'],
+                'index_low': row['index_low'],
+                'sample_count': row['sample_count'],
+                'index_open': int(open_r['index_price'] or 0) if open_r else 0,
+                'index_close': int(close_r['index_price'] or 0) if close_r else 0,
+                'nf_close': int(close_r['normalization_factor'] or 0) if close_r else 0,
+                'debt_close': int(close_r['total_debt'] or 0) if close_r else 0,
+            })
 
         # ── Bucketed pool state (mark price, tick, liquidity) ──────
+        # pool_state lacks block_timestamp, so join with block_state
         ps_query = '''
             SELECT
-                (block_timestamp / ?) * ? as bucket_ts,
-                -- Mark price OHLC
-                (SELECT mark_price FROM pool_state p2
-                 WHERE p2.block_number = MIN(pool_state.block_number)) as mark_open,
-                (SELECT mark_price FROM pool_state p2
-                 WHERE p2.block_number = MAX(pool_state.block_number)) as mark_close,
-                MAX(mark_price) as mark_high,
-                MIN(mark_price) as mark_low,
-                -- Last values
-                (SELECT tick FROM pool_state p2
-                 WHERE p2.block_number = MAX(pool_state.block_number)) as tick_close,
-                (SELECT liquidity FROM pool_state p2
-                 WHERE p2.block_number = MAX(pool_state.block_number)) as liq_close
-            FROM pool_state
+                (bs.block_timestamp / ?) * ? as bucket_ts,
+                MIN(ps.block_number) as first_block,
+                MAX(ps.block_number) as last_block,
+                MAX(ps.mark_price) as mark_high,
+                MIN(ps.mark_price) as mark_low
+            FROM pool_state ps
+            JOIN block_state bs ON bs.block_number = ps.block_number
             WHERE 1=1
         '''
         ps_params = [bucket_sec, bucket_sec]
 
         if start_time:
-            ps_query += ' AND block_timestamp >= ?'
+            ps_query += ' AND bs.block_timestamp >= ?'
             ps_params.append(start_time)
         if end_time:
-            ps_query += ' AND block_timestamp <= ?'
+            ps_query += ' AND bs.block_timestamp <= ?'
             ps_params.append(end_time)
 
         ps_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT ?'
         ps_params.append(limit)
 
         c.execute(ps_query, ps_params)
-        pool_map = {row['bucket_ts']: dict(row) for row in c.fetchall()}
+        ps_rows = c.fetchall()
+
+        # Fetch open/close values for each bucket using the first/last block numbers
+        pool_map = {}
+        for row in ps_rows:
+            bucket_ts = row['bucket_ts']
+            fb, lb = row['first_block'], row['last_block']
+            c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = ?', (fb,))
+            open_row = c.fetchone()
+            c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = ?', (lb,))
+            close_row = c.fetchone()
+            pool_map[bucket_ts] = {
+                'mark_open': open_row['mark_price'] if open_row else None,
+                'mark_close': close_row['mark_price'] if close_row else None,
+                'mark_high': row['mark_high'],
+                'mark_low': row['mark_low'],
+                'tick_close': close_row['tick'] if close_row else None,
+                'liq_close': close_row['liquidity'] if close_row else None,
+            }
 
         conn.close()
 
