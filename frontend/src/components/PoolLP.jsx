@@ -601,7 +601,7 @@ export default function PoolLP() {
       markPrice: pool.markPrice,
       fundingRate: Math.abs(fundingRate),
       fundingDirection,
-      activeLiquidity: rawLiquidity,
+      activeLiquidity: pool.liquidity || 0,
       token0: {
         symbol: token0Symbol,
         name: marketInfo.position_token?.name || "Wrapped RLP",
