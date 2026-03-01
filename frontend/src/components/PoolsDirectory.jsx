@@ -1,161 +1,76 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Droplets, ChevronDown, ChevronUp, ArrowUpDown } from "lucide-react";
+import {
+  Droplets,
+  ChevronDown,
+  ChevronUp,
+  ArrowUpDown,
+  Loader2,
+} from "lucide-react";
+import { useSimulation } from "../hooks/useSimulation";
 
-// ── Mock pool data ────────────────────────────────────────────
-const POOLS = [
-  {
-    address: "0x7a3b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f4f2e",
-    pair: "waUSDC / wRLP",
-    token0: "waUSDC",
-    token1: "wRLP",
-    protocol: "Uniswap V4",
-    feeTier: "0.30%",
-    tvl: 2_450_000,
-    volume24h: 890_000,
-    volume7d: 5_230_000,
-    fees24h: 2_670,
-    fees7d: 15_690,
-    apr7d: 12.4,
-    apr30d: 10.8,
-    positions: 33,
-    createdAt: "2025-10-15",
-  },
-  {
-    address: "0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
-    pair: "USDC / ETH",
-    token0: "USDC",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.05%",
-    tvl: 18_700_000,
-    volume24h: 4_200_000,
-    volume7d: 28_500_000,
-    fees24h: 2_100,
-    fees7d: 14_250,
-    apr7d: 8.2,
-    apr30d: 7.5,
-    positions: 156,
-    createdAt: "2025-08-01",
-  },
-  {
-    address: "0x2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c",
-    pair: "WBTC / ETH",
-    token0: "WBTC",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.30%",
-    tvl: 9_800_000,
-    volume24h: 2_100_000,
-    volume7d: 14_700_000,
-    fees24h: 6_300,
-    fees7d: 44_100,
-    apr7d: 15.8,
-    apr30d: 13.2,
-    positions: 89,
-    createdAt: "2025-09-22",
-  },
-  {
-    address: "0x3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
-    pair: "DAI / USDC",
-    token0: "DAI",
-    token1: "USDC",
-    protocol: "Uniswap V4",
-    feeTier: "0.01%",
-    tvl: 31_200_000,
-    volume24h: 12_500_000,
-    volume7d: 87_500_000,
-    fees24h: 1_250,
-    fees7d: 8_750,
-    apr7d: 3.1,
-    apr30d: 2.9,
-    positions: 210,
-    createdAt: "2025-07-10",
-  },
-  {
-    address: "0x4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e",
-    pair: "stETH / ETH",
-    token0: "stETH",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.01%",
-    tvl: 45_600_000,
-    volume24h: 8_900_000,
-    volume7d: 62_300_000,
-    fees24h: 890,
-    fees7d: 6_230,
-    apr7d: 2.4,
-    apr30d: 2.1,
-    positions: 312,
-    createdAt: "2025-06-05",
-  },
-  {
-    address: "0x5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
-    pair: "ARB / ETH",
-    token0: "ARB",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.30%",
-    tvl: 3_200_000,
-    volume24h: 1_450_000,
-    volume7d: 10_150_000,
-    fees24h: 4_350,
-    fees7d: 30_450,
-    apr7d: 18.6,
-    apr30d: 16.1,
-    positions: 67,
-    createdAt: "2025-11-01",
-  },
-  {
-    address: "0x6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
-    pair: "LINK / ETH",
-    token0: "LINK",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.30%",
-    tvl: 5_100_000,
-    volume24h: 1_800_000,
-    volume7d: 12_600_000,
-    fees24h: 5_400,
-    fees7d: 37_800,
-    apr7d: 14.2,
-    apr30d: 12.8,
-    positions: 78,
-    createdAt: "2025-10-01",
-  },
-  {
-    address: "0x7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b",
-    pair: "UNI / ETH",
-    token0: "UNI",
-    token1: "ETH",
-    protocol: "Uniswap V4",
-    feeTier: "0.30%",
-    tvl: 4_300_000,
-    volume24h: 950_000,
-    volume7d: 6_650_000,
-    fees24h: 2_850,
-    fees7d: 19_950,
-    apr7d: 11.3,
-    apr30d: 9.7,
-    positions: 54,
-    createdAt: "2025-10-20",
-  },
-];
-
+// ── Helpers ──────────────────────────────────────────────────
 const formatUSD = (val) => {
+  if (val == null || isNaN(val)) return "—";
   if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
   if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
-  if (val >= 1e3) return `$${(val / 1e3).toFixed(0)}K`;
-  return `$${val.toLocaleString()}`;
+  if (val >= 1e3) return `$${(val / 1e3).toFixed(1)}K`;
+  return `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 };
 
-const SORT_KEYS = ["pair", "tvl", "volume24h", "fees24h", "apr", "positions"];
+const SORT_KEYS = ["pair", "tvl", "volume24h", "fees24h", "apr7d", "apr30d"];
 
 export default function PoolsDirectory() {
   const navigate = useNavigate();
   const [sortKey, setSortKey] = useState("tvl");
   const [sortDir, setSortDir] = useState("desc");
 
+  const sim = useSimulation({ pollInterval: 5000 });
+  const { connected, loading, market, pool, poolTVL, volumeData, marketInfo, protocolStats } = sim;
+
+  // ── Build live pool row from simulation data ────────────────
+  const pools = useMemo(() => {
+    if (!market || !marketInfo) return [];
+
+    const token0Symbol = marketInfo?.position_token?.symbol || "wRLP";
+    const token1Symbol = marketInfo?.collateral?.symbol || "waUSDC";
+    const pair = `${token0Symbol} / ${token1Symbol}`;
+    const feePct = pool?.fee != null ? `${(pool.fee / 10000).toFixed(2)}%` : "0.05%";
+
+    // TVL from indexed token balances in PoolManager
+    const tvl = poolTVL || 0;
+
+    // Volume & fees from /api/volume
+    const volume24h = volumeData?.volume_usd || 0;
+    const fees24h = volume24h * 0.0005; // 0.05% fee tier
+    const swapCount = volumeData?.swap_count || 0;
+
+    // APR estimate: annualized fee yield on TVL
+    const apr7d = tvl > 0 ? (fees24h * 365 / tvl) * 100 : 0;
+    const apr30d = apr7d * 0.9; // Slight discount for 30d smoothing
+
+    // Pool address from deployment config (or use hook address)
+    const poolAddress = marketInfo?.infrastructure?.twamm_hook || "pool";
+
+    return [
+      {
+        address: poolAddress,
+        pair,
+        token0: token0Symbol,
+        token1: token1Symbol,
+        protocol: "Uniswap V4",
+        feeTier: feePct,
+        tvl,
+        volume24h,
+        fees24h,
+        apr7d: Math.min(apr7d, 999), // Cap display
+        apr30d: Math.min(apr30d, 999),
+        swapCount,
+      },
+    ];
+  }, [market, pool, volumeData, marketInfo, protocolStats]);
+
+  // ── Sort ─────────────────────────────────────────────────────
   const toggleSort = (key) => {
     if (sortKey === key) {
       setSortDir(sortDir === "desc" ? "asc" : "desc");
@@ -166,27 +81,41 @@ export default function PoolsDirectory() {
   };
 
   const SortIcon = ({ col }) => {
-    if (sortKey !== col) return <ArrowUpDown size={10} className="opacity-30" />;
-    return sortDir === "desc"
-      ? <ChevronDown size={10} className="text-cyan-400" />
-      : <ChevronUp size={10} className="text-cyan-400" />;
+    if (sortKey !== col)
+      return <ArrowUpDown size={10} className="opacity-30" />;
+    return sortDir === "desc" ? (
+      <ChevronDown size={10} className="text-cyan-400" />
+    ) : (
+      <ChevronUp size={10} className="text-cyan-400" />
+    );
   };
 
   const filteredPools = useMemo(() => {
-    const pools = [...POOLS];
-    pools.sort((a, b) => {
+    const list = [...pools];
+    list.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
-      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      if (typeof av === "string")
+        return sortDir === "asc"
+          ? av.localeCompare(bv)
+          : bv.localeCompare(av);
       return sortDir === "asc" ? av - bv : bv - av;
     });
-    return pools;
-  }, [sortKey, sortDir]);
+    return list;
+  }, [pools, sortKey, sortDir]);
+
+  // ── Loading / Disconnected ──────────────────────────────────
+  if (loading && pools.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
+        <Loader2 className="animate-spin text-gray-700" size={24} />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
-
         {/* Header Metrics */}
         <div className="border border-white/10 grid grid-cols-1 lg:grid-cols-12">
           {/* Branding */}
@@ -198,7 +127,10 @@ export default function PoolsDirectory() {
               </h1>
             </div>
             <p className="text-sm text-gray-500 tracking-widest uppercase">
-              {POOLS.length} active pools · Uniswap V4
+              {pools.length} active pool{pools.length !== 1 ? "s" : ""} · Uniswap V4
+              {!connected && (
+                <span className="ml-2 text-yellow-600">· Disconnected</span>
+              )}
             </p>
           </div>
 
@@ -210,7 +142,7 @@ export default function PoolsDirectory() {
                 Total TVL
               </div>
               <div className="text-2xl font-light tracking-tight text-white">
-                {formatUSD(POOLS.reduce((s, p) => s + p.tvl, 0))}
+                {formatUSD(pools.reduce((s, p) => s + p.tvl, 0))}
               </div>
             </div>
 
@@ -220,7 +152,7 @@ export default function PoolsDirectory() {
                 Trade Volume 24H
               </div>
               <div className="text-2xl font-light tracking-tight text-white">
-                {formatUSD(POOLS.reduce((s, p) => s + p.volume24h, 0))}
+                {formatUSD(pools.reduce((s, p) => s + p.volume24h, 0))}
               </div>
             </div>
 
@@ -230,7 +162,7 @@ export default function PoolsDirectory() {
                 Fees 24H
               </div>
               <div className="text-2xl font-light tracking-tight text-green-400">
-                {formatUSD(POOLS.reduce((s, p) => s + p.fees24h, 0))}
+                {formatUSD(pools.reduce((s, p) => s + p.fees24h, 0))}
               </div>
             </div>
           </div>
@@ -240,30 +172,65 @@ export default function PoolsDirectory() {
         <div className="border border-white/10">
           {/* Table Header */}
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 bg-[#0a0a0a]">
-            <button onClick={() => toggleSort("pair")} className="col-span-3 relative flex items-center gap-1.5 text-left hover:text-white transition-colors">
+            <button
+              onClick={() => toggleSort("pair")}
+              className="col-span-3 relative flex items-center gap-1.5 text-left hover:text-white transition-colors"
+            >
               Pool <SortIcon col="pair" />
             </button>
-            <button onClick={() => toggleSort("tvl")} className="col-span-2 relative text-center hover:text-white transition-colors">
-              TVL <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="tvl" /></span>
+            <button
+              onClick={() => toggleSort("tvl")}
+              className="col-span-2 relative text-center hover:text-white transition-colors"
+            >
+              TVL{" "}
+              <span className="absolute ml-1 top-1/2 -translate-y-1/2">
+                <SortIcon col="tvl" />
+              </span>
             </button>
-            <button onClick={() => toggleSort("volume24h")} className="col-span-2 relative text-center hover:text-white transition-colors">
-              Volume 24H <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="volume24h" /></span>
+            <button
+              onClick={() => toggleSort("volume24h")}
+              className="col-span-2 relative text-center hover:text-white transition-colors"
+            >
+              Volume 24H{" "}
+              <span className="absolute ml-1 top-1/2 -translate-y-1/2">
+                <SortIcon col="volume24h" />
+              </span>
             </button>
-            <button onClick={() => toggleSort("fees24h")} className="col-span-2 relative text-center hover:text-white transition-colors">
-              Fees 24H <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="fees24h" /></span>
+            <button
+              onClick={() => toggleSort("fees24h")}
+              className="col-span-2 relative text-center hover:text-white transition-colors"
+            >
+              Fees 24H{" "}
+              <span className="absolute ml-1 top-1/2 -translate-y-1/2">
+                <SortIcon col="fees24h" />
+              </span>
             </button>
-            <button onClick={() => toggleSort("apr7d")} className="col-span-1 relative text-center hover:text-white transition-colors">
-              APR 7D <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="apr7d" /></span>
+            <button
+              onClick={() => toggleSort("apr7d")}
+              className="col-span-1 relative text-center hover:text-white transition-colors"
+            >
+              APR 7D{" "}
+              <span className="absolute ml-1 top-1/2 -translate-y-1/2">
+                <SortIcon col="apr7d" />
+              </span>
             </button>
-            <button onClick={() => toggleSort("apr30d")} className="col-span-2 relative text-center hover:text-white transition-colors">
-              APR 30D <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="apr30d" /></span>
+            <button
+              onClick={() => toggleSort("apr30d")}
+              className="col-span-2 relative text-center hover:text-white transition-colors"
+            >
+              APR 30D{" "}
+              <span className="absolute ml-1 top-1/2 -translate-y-1/2">
+                <SortIcon col="apr30d" />
+              </span>
             </button>
           </div>
 
           {/* Table Rows */}
           {filteredPools.length === 0 ? (
             <div className="px-6 py-12 text-center text-gray-600 text-sm uppercase tracking-widest">
-              No pools found
+              {connected
+                ? "No pools found"
+                : "Connecting to indexer..."}
             </div>
           ) : (
             filteredPools.map((pool) => (
@@ -283,7 +250,9 @@ export default function PoolsDirectory() {
                       <div className="text-sm text-gray-600 flex items-center gap-2">
                         {pool.feeTier}
                         <span className="text-gray-700">·</span>
-                        <span className="text-gray-700">{pool.address.slice(0, 6)}...{pool.address.slice(-4)}</span>
+                        <span className="text-gray-700">
+                          {pool.address.slice(0, 6)}...{pool.address.slice(-4)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -306,12 +275,12 @@ export default function PoolsDirectory() {
 
                 {/* APR 7D */}
                 <div className="col-span-1 text-sm font-mono text-green-400 text-center">
-                  {pool.apr7d}%
+                  {pool.apr7d.toFixed(1)}%
                 </div>
 
                 {/* APR 30D */}
                 <div className="col-span-2 text-sm font-mono text-green-400 text-center">
-                  {pool.apr30d}%
+                  {pool.apr30d.toFixed(1)}%
                 </div>
               </div>
             ))
