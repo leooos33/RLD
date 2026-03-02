@@ -26,6 +26,9 @@ import { useBrokerAccount } from "../hooks/useBrokerAccount";
 import { useSwapQuote } from "../hooks/useSwapQuote";
 import { useSwapExecution } from "../hooks/useSwapExecution";
 import { useOperations, formatOpAmount } from "../hooks/useOperations";
+import { useTwammPositions } from "../hooks/useTwammPositions";
+import { useTwammOrder } from "../hooks/useTwammOrder";
+import { useBrokerState } from "../hooks/useBrokerState";
 import AccountModal from "./AccountModal";
 import SwapConfirmModal from "./SwapConfirmModal";
 import { ToastContainer } from "./Toast";
@@ -197,6 +200,27 @@ export default function SimulationTerminal() {
   const { operations, loading: opsLoading } = useOperations(
     enrichedMarketInfo?.infrastructure?.broker_router,
     brokerAddress,
+  );
+
+  // TWAMM positions (on-chain orders from JTM hook)
+  const { orders: twammOrders, refresh: refreshTwamm } = useTwammPositions(
+    brokerAddress,
+    marketInfo,
+  );
+
+  // TWAMM order actions (cancel)
+  const { cancelOrder: cancelTwammOrder, executing: cancellingTwamm } = useTwammOrder(
+    account,
+    brokerAddress,
+    marketInfo?.infrastructure,
+    marketInfo?.collateral?.address,
+    marketInfo?.position_token?.address,
+  );
+
+  // Broker full state (NAV, debt, health, balances)
+  const { brokerState, refresh: refreshBrokerState } = useBrokerState(
+    brokerAddress,
+    marketInfo,
   );
 
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
@@ -1139,10 +1163,10 @@ export default function SimulationTerminal() {
                     {/* Top metrics row */}
                     <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
                       {[
-                        { label: "NAV", value: "$10,300", color: "text-white" },
-                        { label: "Debt Value", value: "$1,668", color: "text-red-400" },
-                        { label: "Health", value: "6.17x", color: "text-green-400" },
-                        { label: "Liq. Price", value: "12.4500", color: "text-orange-400" },
+                        { label: "NAV", value: brokerState ? `$${brokerState.nav.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                        { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
+                        { label: "Health", value: brokerState ? (brokerState.healthFactor === Infinity ? "∞" : `${brokerState.healthFactor.toFixed(2)}x`) : "—", color: brokerState && brokerState.healthFactor < 1.5 ? "text-red-400" : "text-green-400" },
+                        { label: "Col. Ratio", value: brokerState ? (brokerState.colRatio === Infinity ? "∞" : `${brokerState.colRatio.toFixed(0)}%`) : "—", color: brokerState && brokerState.colRatio < 150 ? "text-red-400" : brokerState && brokerState.colRatio < 200 ? "text-yellow-400" : "text-green-400" },
                       ].map((m) => (
                         <div key={m.label} className="p-4 text-center">
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
@@ -1175,8 +1199,8 @@ export default function SimulationTerminal() {
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">Tokens</div>
                           <div className="space-y-1">
                             {[
-                              { name: "waUSDC", value: "$5,000.00", tracked: true },
-                              { name: "wRLP", value: "$2,100.00", tracked: true },
+                              { name: "waUSDC", value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                              { name: "wRLP", value: brokerState ? `${brokerState.positionBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
                             ].map((t) => (
                               <div key={t.name} className="relative">
                                 <button
@@ -1217,45 +1241,58 @@ export default function SimulationTerminal() {
                         <div>
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">LP Positions</div>
                           <div className="space-y-1">
-                            {[
-                              { id: "#12845", value: "$3,200", tracked: true, range: "3.20 — 4.10" },
-                              { id: "#12901", value: "$800", tracked: false, range: "2.80 — 3.50" },
-                              { id: "#12934", value: "$1,450", tracked: false, range: "3.50 — 4.50" },
-                              { id: "#13002", value: "$620", tracked: false, range: "2.90 — 3.30" },
-                              { id: "#13078", value: "$2,100", tracked: false, range: "3.00 — 5.00" },
-                              { id: "#13145", value: "$340", tracked: false, range: "3.60 — 3.80" },
-                              { id: "#13201", value: "$1,800", tracked: false, range: "2.50 — 4.00" },
-                              { id: "#13289", value: "$950", tracked: false, range: "3.10 — 3.90" },
-                              { id: "#13356", value: "$2,750", tracked: false, range: "2.70 — 4.20" },
-                              { id: "#13410", value: "$180", tracked: false, range: "3.40 — 3.60" },
-                            ].map((lp) => (
-                              <div key={lp.id} className="relative">
-                                <button
-                                  onClick={() => setPositionDropdown(positionDropdown === `lp-${lp.id}` ? null : `lp-${lp.id}`)}
-                                  className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className={`w-1.5 h-1.5 rounded-full ${lp.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
-                                    <span className="text-sm font-mono text-white">{lp.id}</span>
-                                    <span className="text-sm text-gray-600 font-mono">{lp.range}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-sm font-mono text-gray-400">{lp.value}</span>
-                                    <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `lp-${lp.id}` ? "rotate-180" : ""}`} />
-                                  </div>
-                                </button>
-                                {positionDropdown === `lp-${lp.id}` && (
-                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
-                                    <button
-                                      onClick={() => setPositionDropdown(null)}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
-                                    >
-                                      {lp.tracked ? "Unregister from Collateral" : "Register as Collateral"}
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                            {brokerState?.lpPosition ? (() => {
+                              const lp = brokerState.lpPosition;
+                              const lpKey = `lp-${lp.tokenId}`;
+                              return (
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setPositionDropdown(positionDropdown === lpKey ? null : lpKey)}
+                                    className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                                      {lp.priceLower && (
+                                        <span className="text-sm text-gray-600 font-mono">{lp.priceLower} — {lp.priceUpper}</span>
+                                      )}
+                                      {lp.inRange !== undefined && (
+                                        <span className={`text-xs px-1.5 py-0.5 font-mono ${lp.inRange ? "text-green-400 bg-green-500/10" : "text-orange-400 bg-orange-500/10"}`}>
+                                          {lp.inRange ? "IN RANGE" : "OUT"}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-sm font-mono text-gray-400">${lp.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                      <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === lpKey ? "rotate-180" : ""}`} />
+                                    </div>
+                                  </button>
+                                  {positionDropdown === lpKey && (
+                                    <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                      <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1">
+                                        {lp.priceLower && (
+                                          <>
+                                            <div className="flex justify-between"><span>Range</span><span>{lp.priceLower} — {lp.priceUpper}</span></div>
+                                            <div className="flex justify-between"><span>Current Price</span><span>{lp.currentPrice}</span></div>
+                                          </>
+                                        )}
+                                        {lp.amount0 !== undefined && (
+                                          <>
+                                            <div className="flex justify-between"><span>Token0 (wRLP)</span><span>{lp.amount0.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>Token1 (waUSDC)</span><span>{lp.amount1.toFixed(2)}</span></div>
+                                          </>
+                                        )}
+                                        {lp.entryPrice && (
+                                          <div className="flex justify-between"><span>Entry Price</span><span>{lp.entryPrice}</span></div>
+                                        )}
+                                        <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${lp.value.toFixed(2)}</span></div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })() : (
+                              <div className="text-sm text-gray-600 font-mono px-6 py-2">No LP positions</div>
+                            )}
                           </div>
                         </div>
 
@@ -1263,19 +1300,10 @@ export default function SimulationTerminal() {
                         <div>
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">TWAMM Orders</div>
                           <div className="space-y-1">
-                            {[
-                              { dir: "waUSDC → wRLP", value: "$1,200", tracked: true, progress: 60, timeLeft: "4h 12m" },
-                              { dir: "wRLP → waUSDC", value: "$3,400", tracked: false, progress: 85, timeLeft: "1h 30m" },
-                              { dir: "waUSDC → wRLP", value: "$750", tracked: false, progress: 12, timeLeft: "14h 45m" },
-                              { dir: "wRLP → waUSDC", value: "$2,100", tracked: false, progress: 100, timeLeft: "Done" },
-                              { dir: "waUSDC → wRLP", value: "$500", tracked: false, progress: 33, timeLeft: "8h 20m" },
-                              { dir: "wRLP → waUSDC", value: "$1,800", tracked: false, progress: 45, timeLeft: "6h 05m" },
-                              { dir: "waUSDC → wRLP", value: "$920", tracked: false, progress: 78, timeLeft: "2h 10m" },
-                              { dir: "wRLP → waUSDC", value: "$4,200", tracked: false, progress: 5, timeLeft: "22h 50m" },
-                              { dir: "waUSDC → wRLP", value: "$1,600", tracked: false, progress: 92, timeLeft: "0h 45m" },
-                              { dir: "wRLP → waUSDC", value: "$380", tracked: false, progress: 50, timeLeft: "5h 30m" },
-                            ].map((tw, i) => (
-                              <div key={i} className="relative">
+                            {twammOrders.length === 0 ? (
+                              <div className="text-sm text-gray-600 font-mono px-6 py-4">No active orders</div>
+                            ) : twammOrders.map((tw, i) => (
+                              <div key={tw.orderId || i} className="relative">
                                 <button
                                   onClick={() => setPositionDropdown(positionDropdown === `tw-${i}` ? null : `tw-${i}`)}
                                   className="w-full hover:bg-white/5 py-1.5 px-6 transition-colors group"
@@ -1283,10 +1311,10 @@ export default function SimulationTerminal() {
                                   <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
                                       <span className={`w-1.5 h-1.5 rounded-full ${tw.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
-                                      <span className="text-sm font-mono text-white">{tw.dir}</span>
+                                      <span className="text-sm font-mono text-white">{tw.direction}</span>
                                     </div>
                                     <div className="flex items-center gap-1">
-                                      <span className="text-sm font-mono text-gray-400">{tw.value}</span>
+                                      <span className="text-sm font-mono text-gray-400">${tw.valueUsd.toFixed(0)}</span>
                                       <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tw-${i}` ? "rotate-180" : ""}`} />
                                     </div>
                                   </div>
@@ -1304,18 +1332,27 @@ export default function SimulationTerminal() {
                                 </button>
                                 {positionDropdown === `tw-${i}` && (
                                   <div className="border border-white/10 bg-[#0a0a0a] mb-1">
-                                    <button
-                                      onClick={() => setPositionDropdown(null)}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
-                                    >
-                                      {tw.tracked ? "Unregister from Collateral" : "Register as Collateral"}
-                                    </button>
-                                    {tw.progress < 100 && (
+                                    <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1 border-b border-white/5">
+                                      <div className="flex justify-between"><span>Deposit</span><span className="text-gray-400">{tw.amountIn.toFixed(2)} {tw.sellToken}</span></div>
+                                      <div className="flex justify-between"><span>Converted</span><span>{tw.tokensSpent > 0 ? <><span className="text-gray-400">{tw.tokensSpent.toFixed(2)} {tw.sellToken}</span><span className="text-gray-600"> → </span><span className="text-green-400">{tw.convertedBuyEstimate.toFixed(4)} {tw.buyToken}</span></> : <span className="text-gray-600">—</span>}</span></div>
+                                      {tw.sellRefund > 0 && (
+                                        <div className="flex justify-between"><span>Unsold</span><span className="text-gray-400">{tw.sellRefund.toFixed(2)} {tw.sellToken}</span></div>
+                                      )}
+                                      <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Order Value</span><span className="text-white">${tw.valueUsd.toFixed(2)}</span></div>
+                                    </div>
+                                    {!tw.isDone && (
                                       <button
-                                        onClick={() => setPositionDropdown(null)}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors border-t border-white/5"
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          cancelTwammOrder(() => {
+                                            refreshTwamm();
+                                            addToast({ type: "success", title: "Order Cancelled" });
+                                          });
+                                        }}
+                                        disabled={cancellingTwamm}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors"
                                       >
-                                        Cancel Order
+                                        {cancellingTwamm ? "Cancelling..." : "Cancel Order"}
                                       </button>
                                     )}
                                   </div>
@@ -1331,9 +1368,9 @@ export default function SimulationTerminal() {
                       <div className="p-6 space-y-4">
                         <div className="text-sm text-gray-500 uppercase tracking-widest mb-3">Debt</div>
                         {[
-                          { label: "Principal", value: "420.00 wRLP", color: "text-white" },
-                          { label: "True Debt", value: "445.00 wRLP", color: "text-white" },
-                          { label: "Debt Value", value: "$1,668.75", color: "text-red-400" },
+                          { label: "Principal", value: brokerState ? `${brokerState.debtPrincipal.toFixed(2)} wRLP` : "—", color: "text-white" },
+                          { label: "True Debt", value: brokerState ? `${brokerState.trueDebt.toFixed(2)} wRLP` : "—", color: "text-white" },
+                          { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toFixed(2)}` : "$0.00", color: "text-red-400" },
                         ].map((d) => (
                           <div key={d.label} className="flex justify-between items-center">
                             <span className="text-sm text-gray-500 uppercase tracking-widest">{d.label}</span>
@@ -1347,15 +1384,17 @@ export default function SimulationTerminal() {
                           <div>
                             <div className="flex justify-between mb-1">
                               <span className="text-sm text-gray-600">Min Col. Ratio</span>
-                              <span className="text-sm font-mono text-gray-400">150%</span>
+                              <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.min_col_ratio_pct || "—"}</span>
                             </div>
                             <div className="flex justify-between mb-1">
                               <span className="text-sm text-gray-600">Maintenance</span>
-                              <span className="text-sm font-mono text-gray-400">120%</span>
+                              <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.maintenance_margin_pct || "—"}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-sm text-gray-600">Your Ratio</span>
-                              <span className="text-sm font-mono font-bold text-green-400">617%</span>
+                              <span className={`text-sm font-mono font-bold ${brokerState && brokerState.colRatio < 150 ? "text-red-400" : brokerState && brokerState.colRatio < 200 ? "text-yellow-400" : "text-green-400"}`}>
+                                {brokerState ? (brokerState.colRatio === Infinity ? "∞" : `${brokerState.colRatio.toFixed(0)}%`) : "—"}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1417,6 +1456,7 @@ export default function SimulationTerminal() {
                         marketId={market?.marketId}
                         account={account}
                         addToast={addToast}
+                        marketInfo={marketInfo}
                       />
                     )}
                     </React.Fragment>

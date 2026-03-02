@@ -15,11 +15,17 @@ const SimulationTerminal = lazy(
   () => import("./components/SimulationTerminal"),
 );
 const Homepage = lazy(() => import("./components/Homepage"));
+const LandingTerminal = lazy(() => import("./components/LandingTerminal"));
+const LandingInteractive = lazy(
+  () => import("./components/LandingInteractive"),
+);
+const LandingModular = lazy(() => import("./components/LandingModular"));
 
 const PoolLP = lazy(() => import("./components/PoolLP"));
 const PoolsDirectory = lazy(() => import("./components/PoolsDirectory"));
 const PerpsDirectory = lazy(() => import("./components/PerpsDirectory"));
 const BondsDirectory = lazy(() => import("./components/BondsDirectory"));
+const TwammOrders = lazy(() => import("./components/TwammOrders"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -72,6 +78,30 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
+              <Route
+                path="/landing/a"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <LandingTerminal />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/landing/b"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <LandingInteractive />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/landing/c"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <LandingModular />
+                  </Suspense>
+                }
+              />
               <Route path="/app" element={<App />} />
               <Route
                 path="/bonds"
@@ -97,7 +127,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
-
 
               <Route
                 path="/portfolio"
@@ -141,6 +170,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 element={
                   <Suspense fallback={<Loading />}>
                     <PoolLP />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/twamm"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <TwammOrders />
                   </Suspense>
                 }
               />

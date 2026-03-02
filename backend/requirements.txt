@@ -7,3 +7,4 @@ web3
 requests
 cachetools
 websockets
+strawberry-graphql[fastapi]

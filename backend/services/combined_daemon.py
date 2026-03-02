@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Combined Rate Sync + Market Making Daemon
+Combined Market Daemon — Rate Sync + Market Making + Clear Auctions + Timestamp Sync
 
-Runs both:
-1. Rate Sync: Updates MockRLDAaveOracle from live Aave rates (every 12s)
-2. Market Maker: Arbitrages V4 mark price toward index (every 12s)
+Runs four sub-systems at two speeds:
 
-Displays combined log showing Index, Mark, and Spread.
+Fast loop (every 2s):
+  1. Timestamp Sync: Keeps Anvil EVM TIMESTAMP opcode in sync with block headers
+  2. Clear Auctions: Buys accrued ghost tokens from TWAMM at discount
+
+Slow loop (every 12s):
+  3. Rate Sync: Updates MockRLDAaveOracle from live Aave rates
+  4. Market Maker: Arbitrages V4 mark price toward index
 
 Usage:
     python3 combined_daemon.py
@@ -22,10 +26,14 @@ Environment:
     API_KEY           - API key
 """
 
+import json
 import os
 import sys
 import time
 import logging
+import urllib.request
+import urllib.error
+import threading
 import requests
 from web3 import Web3
 from eth_account import Account
@@ -78,9 +86,15 @@ TWAMM_HOOK = os.getenv("TWAMM_HOOK")
 RLD_CORE = os.getenv("RLD_CORE")
 MARKET_ID = os.getenv("MARKET_ID")
 
-SYNC_INTERVAL = 12  # seconds
+FAST_INTERVAL = 2    # seconds — timestamp sync + clear auctions
+SLOW_INTERVAL = 12   # seconds — rate sync + MM arb
 MM_THRESHOLD = 0.01  # 1% = 100 basis points
 SWAP_ROUTER = os.getenv("SWAP_ROUTER")
+
+# Clear auction config
+MIN_CLEAR_USD = 0.001  # minimum $ value to clear
+MIN_DISCOUNT_BPS = 1   # minimum discount (0.01%) — aggressive clearing
+MAX_CLEAR_GAS = 500_000
 
 # ABIs
 ORACLE_ABI = [
@@ -113,7 +127,53 @@ RLD_CORE_ABI = [
 
 ERC20_ABI = [
     {"inputs": [{"name": "", "type": "address"}], "name": "balanceOf",
-     "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
+     "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "name": "approve", "outputs": [{"name": "", "type": "bool"}],
+     "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}],
+     "name": "allowance", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+]
+
+# JTM Hook ABI — clear auctions
+JTM_HOOK_ABI = [
+    {"inputs": [{"components": [
+        {"name": "currency0", "type": "address"}, {"name": "currency1", "type": "address"},
+        {"name": "fee", "type": "uint24"}, {"name": "tickSpacing", "type": "int24"},
+        {"name": "hooks", "type": "address"}
+    ], "name": "key", "type": "tuple"}],
+     "name": "getStreamState",
+     "outputs": [
+         {"name": "accrued0", "type": "uint256"},
+         {"name": "accrued1", "type": "uint256"},
+         {"name": "currentDiscount", "type": "uint256"},
+         {"name": "timeSinceLastClear", "type": "uint256"},
+     ],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"components": [
+        {"name": "currency0", "type": "address"}, {"name": "currency1", "type": "address"},
+        {"name": "fee", "type": "uint24"}, {"name": "tickSpacing", "type": "int24"},
+        {"name": "hooks", "type": "address"}
+    ], "name": "key", "type": "tuple"},
+     {"name": "zeroForOne", "type": "bool"}],
+     "name": "getStreamPool",
+     "outputs": [
+         {"name": "sellRateCurrent", "type": "uint256"},
+         {"name": "earningsFactorCurrent", "type": "uint256"},
+     ],
+     "stateMutability": "view", "type": "function"},
+    {"inputs": [{"components": [
+        {"name": "currency0", "type": "address"}, {"name": "currency1", "type": "address"},
+        {"name": "fee", "type": "uint24"}, {"name": "tickSpacing", "type": "int24"},
+        {"name": "hooks", "type": "address"}
+    ], "name": "key", "type": "tuple"},
+     {"name": "zeroForOne", "type": "bool"},
+     {"name": "maxAmount", "type": "uint256"},
+     {"name": "minDiscountBps", "type": "uint256"}],
+     "name": "clear",
+     "outputs": [],
+     "stateMutability": "nonpayable", "type": "function"},
 ]
 
 
@@ -225,9 +285,179 @@ class CombinedDaemon:
             self.swap_executor = None
             logger.warning("⚠️  SWAP_ROUTER not set — swaps will be skipped")
         
+        # JTM Hook contract for clear auctions
+        if TWAMM_HOOK:
+            self.jtm_hook = self.w3.eth.contract(
+                address=Web3.to_checksum_address(TWAMM_HOOK),
+                abi=JTM_HOOK_ABI
+            )
+            # Pool key tuple: (currency0, currency1, fee, tickSpacing, hooks)
+            self.pool_key = (
+                Web3.to_checksum_address(self.token0),
+                Web3.to_checksum_address(self.token1),
+                500, 5,  # fee=500, tickSpacing=5
+                Web3.to_checksum_address(TWAMM_HOOK),
+            )
+            self._ensure_hook_approvals()
+        else:
+            self.jtm_hook = None
+            self.pool_key = None
+        
         self.running = True
         self.trades = 0
+        self.clears = 0
+        self.syncs = 0
+        self.mark_price = 0.0
     
+    # ── Timestamp Sync ────────────────────────────────────────────
+
+    def sync_timestamp(self):
+        """Keep Anvil EVM TIMESTAMP opcode in sync with block headers."""
+        try:
+            payload = json.dumps({
+                "jsonrpc": "2.0", "method": "eth_getBlockByNumber",
+                "params": ["latest", False], "id": 1,
+            }).encode()
+            req = urllib.request.Request(
+                RPC_URL, data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                result = json.loads(resp.read())
+            
+            latest_ts = int(result["result"]["timestamp"], 16)
+            next_ts = latest_ts + 1
+            
+            set_payload = json.dumps({
+                "jsonrpc": "2.0", "method": "evm_setNextBlockTimestamp",
+                "params": [next_ts], "id": 2,
+            }).encode()
+            set_req = urllib.request.Request(
+                RPC_URL, data=set_payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(set_req, timeout=3):
+                self.syncs += 1
+        except Exception:
+            pass  # Non-critical, retry next cycle
+
+    # ── Clear Auctions ────────────────────────────────────────────
+
+    def _ensure_hook_approvals(self):
+        """Ensure MM account has approved both tokens to the JTM hook."""
+        if not self.jtm_hook:
+            return
+        hook_addr = Web3.to_checksum_address(TWAMM_HOOK)
+        MAX_UINT = 2**256 - 1
+        for token_contract, name in [(self.waUSDC, "waUSDC"), (self.wRLP, "wRLP")]:
+            try:
+                allowance = token_contract.functions.allowance(
+                    self.account.address, hook_addr
+                ).call()
+                if allowance < 10**24:  # Re-approve if low
+                    nonce = self.w3.eth.get_transaction_count(self.account.address)
+                    tx = token_contract.functions.approve(
+                        hook_addr, MAX_UINT
+                    ).build_transaction({
+                        'from': self.account.address, 'nonce': nonce,
+                        'gas': 60000,
+                        'maxFeePerGas': self.w3.to_wei('2', 'gwei'),
+                        'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                    })
+                    signed = self.w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+                    tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+                    logger.info(f"   🔑 Approved {name} for JTM hook")
+            except Exception as e:
+                logger.warning(f"   ⚠️  {name} approval failed: {e}")
+
+    def _to_usd(self, amount_raw, is_token0):
+        """Convert raw token amount to approximate USD value."""
+        decimals = 1e6  # Both tokens are 6 decimals
+        amount = amount_raw / decimals
+        if is_token0:
+            # token0 is the lower address
+            if self.wausdc_is_token0:
+                return amount  # waUSDC ≈ $1
+            else:
+                return amount * self.mark_price  # wRLP
+        else:
+            if self.wausdc_is_token0:
+                return amount * self.mark_price  # wRLP
+            else:
+                return amount  # waUSDC ≈ $1
+
+    def check_and_clear(self):
+        """Check accrued ghost tokens and execute clear auctions."""
+        if not self.jtm_hook or not self.pool_key:
+            return
+
+        try:
+            state = self.jtm_hook.functions.getStreamState(self.pool_key).call()
+            accrued0, accrued1, current_discount, time_since_clear = state
+        except Exception as e:
+            logger.debug(f"   getStreamState failed: {e}")
+            return
+
+        accrued0_usd = self._to_usd(accrued0, True)
+        accrued1_usd = self._to_usd(accrued1, False)
+
+        # Only log when there's something interesting
+        if accrued0_usd >= MIN_CLEAR_USD or accrued1_usd >= MIN_CLEAR_USD:
+            t0_label = "waUSDC" if self.wausdc_is_token0 else "wRLP"
+            t1_label = "wRLP" if self.wausdc_is_token0 else "waUSDC"
+            logger.info(
+                f"🧹 Ghost: {t0_label}={accrued0/1e6:.4f} (${accrued0_usd:.2f}) | "
+                f"{t1_label}={accrued1/1e6:.4f} (${accrued1_usd:.2f}) | "
+                f"Disc={current_discount/100:.1f}% | {time_since_clear}s"
+            )
+
+        # Try clearing each direction
+        for zfo, accrued, accrued_usd in [(True, accrued0, accrued0_usd), (False, accrued1, accrued1_usd)]:
+            if accrued == 0 or accrued_usd < MIN_CLEAR_USD:
+                continue
+
+            # Check stream has active orders
+            try:
+                sr, _ = self.jtm_hook.functions.getStreamPool(self.pool_key, zfo).call()
+                if sr == 0:
+                    continue  # No active stream
+            except Exception:
+                continue
+
+            buy_label = ("waUSDC" if self.wausdc_is_token0 else "wRLP") if zfo else ("wRLP" if self.wausdc_is_token0 else "waUSDC")
+            try:
+                tx = self.jtm_hook.functions.clear(
+                    self.pool_key, zfo, accrued, MIN_DISCOUNT_BPS
+                ).build_transaction({
+                    'from': self.account.address,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'gas': MAX_CLEAR_GAS,
+                    'maxFeePerGas': self.w3.to_wei('3', 'gwei'),
+                    'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                })
+                signed = self.w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+                if receipt['status'] == 1:
+                    self.clears += 1
+                    logger.info(
+                        f"   ✅ Clear #{self.clears}: bought {accrued/1e6:.4f} {buy_label} "
+                        f"at {current_discount/100:.1f}% discount"
+                    )
+            except Exception as e:
+                msg = str(e)
+                if "InsufficientDiscount" in msg:
+                    pass  # Expected — discount hasn't built up yet
+                elif "NothingToClear" in msg:
+                    pass  # Already cleared by someone else
+                elif "NoActiveStream" in msg:
+                    pass  # Stream expired
+                else:
+                    logger.debug(f"   Clear failed: {msg[:120]}")
+
+    # ── Price Getters ─────────────────────────────────────────────
+
     def get_index_price(self) -> float:
         """Get index price from oracle (WAD format)."""
         try:
@@ -298,6 +528,7 @@ class CombinedDaemon:
         # 2. Get prices
         index_price = self.get_index_price()
         mark_price = self.get_mark_price()
+        self.mark_price = mark_price or 0.0
         
         if index_price is None or mark_price is None:
             logger.warning("⚠️  Could not fetch prices")
@@ -352,27 +583,43 @@ class CombinedDaemon:
                 self.trades += 1
     
     def run(self):
-        """Run daemon continuously."""
-        print("\n" + "=" * 60)
-        print("🤖 COMBINED DAEMON: Rate Sync + Market Maker")
-        print("=" * 60)
-        print(f"   Oracle:    {MOCK_ORACLE_ADDR}")
-        print(f"   Threshold: {MM_THRESHOLD*100:.4f}%")
-        print(f"   Interval:  {SYNC_INTERVAL}s")
-        print("=" * 60 + "\n")
+        """Run daemon with two-speed loop."""
+        print("\n" + "═" * 64)
+        print("🤖 COMBINED DAEMON: Rate + MM + Clear + Timestamp Sync")
+        print("═" * 64)
+        print(f"   Oracle:      {MOCK_ORACLE_ADDR}")
+        print(f"   Hook:        {TWAMM_HOOK}")
+        print(f"   MM threshold: {MM_THRESHOLD*100:.2f}%")
+        print(f"   Fast loop:   {FAST_INTERVAL}s (sync + clear)")
+        print(f"   Slow loop:   {SLOW_INTERVAL}s (rate + MM arb)")
+        print(f"   Min clear:   ${MIN_CLEAR_USD}")
+        print(f"   Min discount: {MIN_DISCOUNT_BPS} bps")
+        print("═" * 64 + "\n")
+        
+        slow_counter = 0
+        slow_every = max(1, SLOW_INTERVAL // FAST_INTERVAL)  # 6
         
         while self.running:
             try:
-                self.cycle()
-                time.sleep(SYNC_INTERVAL)
+                # Fast path (every 2s): timestamp sync + clear auctions
+                self.sync_timestamp()
+                self.check_and_clear()
+                
+                # Slow path (every 12s): rate sync + MM arbitrage
+                slow_counter += 1
+                if slow_counter >= slow_every:
+                    slow_counter = 0
+                    self.cycle()
+                
+                time.sleep(FAST_INTERVAL)
             except KeyboardInterrupt:
                 print("\n🛑 Stopping daemon...")
                 self.running = False
             except Exception as e:
-                logger.error(f"Cycle error: {e}")
-                time.sleep(SYNC_INTERVAL)
+                logger.error(f"Loop error: {e}")
+                time.sleep(FAST_INTERVAL)
         
-        print(f"\n📊 Total trades: {self.trades}")
+        print(f"\n📊 Totals: {self.trades} trades | {self.clears} clears | {self.syncs} syncs")
 
 
 def main():

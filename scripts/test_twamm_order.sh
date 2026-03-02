@@ -138,6 +138,15 @@ echo -e "${YELLOW}[3/4] Submitting TWAMM order...${NC}"
 AMOUNT_WEI=$((AMOUNT_WAUSDC * 1000000))
 DURATION_SECONDS=$((DURATION_HOURS * 3600))
 
+# Sync Anvil timestamp before order placement — Anvil's pending block uses
+# fork_ts + block_count, ignoring evm_increaseTime jumps. We must set the
+# next block timestamp explicitly to match the chain tip.
+echo "  Syncing Anvil timestamp..."
+LATEST_TS=$(cast block latest --field timestamp --rpc-url "$RPC_URL" 2>/dev/null)
+NEXT_TS=$((LATEST_TS + 1))
+cast rpc evm_setNextBlockTimestamp "$NEXT_TS" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+cast rpc evm_mine --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+
 WAUSDC=$WAUSDC \
     POSITION_TOKEN=$POSITION_TOKEN \
     TWAMM_HOOK=$TWAMM_HOOK \

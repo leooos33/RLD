@@ -321,6 +321,21 @@ prime_oracle() {
     cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
 }
 
+# Force-mine a block so the next forge broadcast sees the correct block.timestamp.
+# Anvil's pending block uses fork_ts + block_count, ignoring evm_increaseTime jumps.
+# We must explicitly set the next block timestamp to match the chain tip.
+# Sync multiple consecutive blocks to ensure the EVM clock is fully aligned.
+sync_timestamp() {
+    log_step "" "Syncing EVM timestamp with block headers..."
+    for i in $(seq 1 10); do
+        local LATEST_TS
+        LATEST_TS=$(cast block latest --field timestamp --rpc-url "$RPC_URL" 2>/dev/null)
+        local NEXT_TS=$((LATEST_TS + 1))
+        cast rpc evm_setNextBlockTimestamp "$NEXT_TS" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+        cast rpc evm_mine --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+    done
+}
+
 # ─── User A: LP Provider ($100M collateral, $5M LP) ───────────
 log_step "3.1" "Setting up LP Provider (User A)..."
 USER_A_ADDR=$(cast wallet address --private-key "$USER_A_KEY" 2>/dev/null)
@@ -381,19 +396,20 @@ TOKEN0="$TOKEN0" TOKEN1="$TOKEN1" TWAMM_HOOK="$TWAMM_HOOK" \
     --rpc-url "$RPC_URL" --broadcast -v > /dev/null 2>&1 || true
 log_ok "Long user ready"
 
-# ─── User C: TWAMM Order ($100k, 1 hour) ──────────────────────
+# ─── User C: TWAMM User ($100k, funded but NO automatic order) ─
 log_step "3.3" "Setting up TWAMM User (User C)..."
 USER_C_ADDR=$(cast wallet address --private-key "$USER_C_KEY" 2>/dev/null)
 fund_user "$USER_C_ADDR" "$USER_C_KEY" 100000
 
-WAUSDC_BAL_C=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_C_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-cd /workspace/contracts
-TOKEN0="$TOKEN0" TOKEN1="$TOKEN1" TWAMM_HOOK="$TWAMM_HOOK" \
-    ORDER_AMOUNT="$WAUSDC_BAL_C" DURATION_SECONDS=3600 \
-    ZERO_FOR_ONE="$ZERO_FOR_ONE_LONG" TWAMM_USER_KEY="$USER_C_KEY" \
-    forge script script/LifecycleTWAMM.s.sol --tc LifecycleTWAMM \
-    --rpc-url "$RPC_URL" --broadcast -v > /dev/null 2>&1 || true
-log_ok "TWAMM user ready"
+# NOTE: TWAMM order placement disabled — orders will be placed manually
+# WAUSDC_BAL_C=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_C_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
+# cd /workspace/contracts
+# TOKEN0="$TOKEN0" TOKEN1="$TOKEN1" TWAMM_HOOK="$TWAMM_HOOK" \
+#     ORDER_AMOUNT="$WAUSDC_BAL_C" DURATION_SECONDS=3600 \
+#     ZERO_FOR_ONE="$ZERO_FOR_ONE_LONG" TWAMM_USER_KEY="$USER_C_KEY" \
+#     forge script script/LifecycleTWAMM.s.sol --tc LifecycleTWAMM \
+#     --rpc-url "$RPC_URL" --broadcast -v > /dev/null 2>&1 || true
+log_ok "TWAMM user funded (no order placed)"
 
 # ─── MM Bot ($10M) ─────────────────────────────────────────────
 log_step "3.4" "Setting up Market Maker..."
@@ -530,6 +546,7 @@ cat > /config/deployment.json << EOF
     "broker_factory": "$BROKER_FACTORY_ADDR",
     "swap_router": "$SWAP_ROUTER",
     "pool_manager": "$POOL_MANAGER",
+    "pool_id": "$POOL_ID",
     "v4_quoter": "$V4_QUOTER",
     "v4_position_manager": "$V4_POSITION_MANAGER",
     "v4_position_descriptor": "$V4_POSITION_DESCRIPTOR",
@@ -551,7 +568,9 @@ EOF
 log_ok "Written /config/deployment.json"
 cat /config/deployment.json | python3 -m json.tool
 
-# Restore interval mining for daemon operation
+# Sync timestamp after all evm_increaseTime jumps, then restore interval mining
+sync_timestamp
+log_ok "Timestamp synchronized after deployment"
 cast rpc evm_setAutomine false --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 cast rpc evm_setIntervalMining 1 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 log_ok "Interval mining restored (1s blocks)"

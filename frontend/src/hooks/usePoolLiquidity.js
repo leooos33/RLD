@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 
 // ── PrimeBroker LP ABI ────────────────────────────────────────────
 const BROKER_LP_ABI = [
@@ -16,6 +15,12 @@ const POSM_ABI = [
   "function getPositionLiquidity(uint256 tokenId) view returns (uint128)",
   "function ownerOf(uint256 tokenId) view returns (address)",
   "function positionInfo(uint256 tokenId) view returns (bytes32)",
+  "function nextTokenId() view returns (uint256)",
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+];
+
+const STATE_VIEW_ABI = [
+  "function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)",
 ];
 
 // ── Tick math helpers ─────────────────────────────────────────────
@@ -164,47 +169,156 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
   const [executionStep, setExecutionStep] = useState("");
   const [executionError, setExecutionError] = useState(null);
   const [activePosition, setActivePosition] = useState(null);
+  const [allPositions, setAllPositions] = useState([]);
 
   const twammHook = marketInfo?.infrastructure?.twamm_hook;
   const tickSpacing = marketInfo?.infrastructure?.tick_spacing || 5;
   const posmAddr = marketInfo?.infrastructure?.v4_position_manager;
+  const stateViewAddr = marketInfo?.infrastructure?.v4_state_view;
+  const positionToken = marketInfo?.position_token?.address;
+  const collateralToken = marketInfo?.collateral?.address;
 
-  // ── Read active position from chain ───────────────────────────
+  // ── Read ALL positions — prefer GraphQL, fallback to RPC ────
   const refreshPosition = useCallback(async () => {
-    if (!brokerAddress) return;
-    try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
-      const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
-      const tokenId = await broker.activeTokenId();
+    if (!brokerAddress || !posmAddr) {
+      setActivePosition(null);
+      setAllPositions([]);
+      return;
+    }
 
-      if (tokenId === 0n) {
-        setActivePosition(null);
+    // --- Try GraphQL first (single request) ---
+    try {
+      const gqlRes = await fetch("http://localhost:8080/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `{
+            lpPositions(brokerAddress: "${brokerAddress.toLowerCase()}") {
+              tokenId liquidity tickLower tickUpper
+              entryPrice entryTick mintBlock isActive
+            }
+          }`,
+        }),
+      });
+      const gqlData = await gqlRes.json();
+      const gqlPositions = gqlData?.data?.lpPositions;
+      if (gqlPositions && gqlPositions.length > 0) {
+        const mapped = gqlPositions.map((p) => ({
+          tokenId: BigInt(p.tokenId),
+          liquidity: BigInt(p.liquidity),
+          tickLower: p.tickLower,
+          tickUpper: p.tickUpper,
+          entryPrice: p.entryPrice,
+          isActive: p.isActive,
+        }));
+        setAllPositions(mapped);
+        const active = mapped.find((p) => p.isActive) || mapped[0] || null;
+        setActivePosition(active);
+        console.log("[LP] Loaded", mapped.length, "positions via GraphQL");
         return;
       }
+    } catch (gqlErr) {
+      console.warn("[LP] GraphQL fetch failed, falling back to RPC:", gqlErr);
+    }
 
-      let liquidity = 0n;
-      let tickLower = 0;
-      let tickUpper = 0;
-      if (posmAddr) {
-        const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
-        liquidity = await posm.getPositionLiquidity(tokenId);
+    // --- Fallback: RPC chain scan ---
+    try {
+      console.time("[LP] RPC fallback");
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
+      const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
 
-        // Read packed position info to get tick range
-        try {
-          const info = await posm.positionInfo(tokenId);
-          const decoded = decodePositionInfo(info);
-          tickLower = decoded.tickLower;
-          tickUpper = decoded.tickUpper;
-        } catch (e) {
-          console.warn("[LP] Could not decode position info:", e);
-        }
+      // Build poolId for slot0 lookups
+      let poolId = null;
+      if (stateViewAddr && twammHook && positionToken && collateralToken) {
+        const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
+          ? [positionToken, collateralToken]
+          : [collateralToken, positionToken];
+        poolId = ethers.keccak256(
+          ethers.AbiCoder.defaultAbiCoder().encode(
+            ["address", "address", "uint24", "int24", "address"],
+            [c0, c1, 500, tickSpacing, twammHook],
+          ),
+        );
       }
 
-      setActivePosition({ tokenId, liquidity, tickLower, tickUpper });
+      // Run initial calls in parallel
+      const transferFilter = posm.filters.Transfer(null, brokerAddress);
+      const [activeTokenIdOnChain, logs] = await Promise.all([
+        broker.activeTokenId(),
+        posm.queryFilter(transferFilter, 0, "latest"),
+      ]);
+
+      const mintBlockMap = new Map();
+      for (const log of logs) {
+        const tid = log.args.tokenId;
+        if (!mintBlockMap.has(tid)) mintBlockMap.set(tid, log.blockNumber);
+      }
+
+      const candidateIds = [...new Set(logs.map(l => l.args.tokenId))];
+
+      // Pre-fetch entry prices from the indexer for all unique mint blocks
+      const uniqueMintBlocks = [...new Set(mintBlockMap.values())];
+      const mintBlockPrices = new Map(); // blockNumber → markPrice
+      await Promise.all(
+        uniqueMintBlocks.map(async (blockNum) => {
+          try {
+            const res = await fetch(`/api/block/${blockNum}`);
+            if (res.ok) {
+              const data = await res.json();
+              const ps = data.pool_states?.[0];
+              if (ps?.mark_price) {
+                mintBlockPrices.set(blockNum, ps.mark_price);
+              }
+            }
+          } catch {}
+        }),
+      );
+
+      // Fetch all position data in parallel (instead of sequential)
+      const positionResults = await Promise.all(
+        candidateIds.map(async (tokenId) => {
+          try {
+            const [owner, liquidity] = await Promise.all([
+              posm.ownerOf(tokenId),
+              posm.getPositionLiquidity(tokenId),
+            ]);
+            if (owner.toLowerCase() !== brokerAddress.toLowerCase()) return null;
+            if (liquidity === 0n) return null;
+
+            let tickLower = 0, tickUpper = 0;
+            try {
+              const info = await posm.positionInfo(tokenId);
+              const decoded = decodePositionInfo(info);
+              tickLower = decoded.tickLower;
+              tickUpper = decoded.tickUpper;
+            } catch {}
+
+            // Entry price from indexed pool state at mint block
+            let entryPrice = null;
+            const mintBlock = mintBlockMap.get(tokenId);
+            if (mintBlock && mintBlockPrices.has(mintBlock)) {
+              entryPrice = mintBlockPrices.get(mintBlock);
+            }
+
+            return {
+              tokenId, liquidity, tickLower, tickUpper, entryPrice,
+              isActive: tokenId === activeTokenIdOnChain,
+            };
+          } catch { return null; }
+        }),
+      );
+      const positions = positionResults.filter(Boolean);
+
+      setAllPositions(positions);
+      const active = positions.find(p => p.isActive) || positions[0] || null;
+      setActivePosition(active || null);
+      console.timeEnd("[LP] RPC fallback");
+      console.log("[LP] Found", positions.length, "positions via RPC fallback");
     } catch (err) {
-      console.warn("[LP] Failed to read active position:", err);
+      console.warn("[LP] Failed to read positions:", err);
     }
-  }, [brokerAddress, posmAddr]);
+  }, [brokerAddress, posmAddr, stateViewAddr, twammHook, positionToken, collateralToken, tickSpacing]);
 
   // Auto-fetch on mount / broker change
   useEffect(() => {
@@ -256,10 +370,9 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
           throw new Error("Computed liquidity is zero — increase amounts");
         }
 
-        // 4. Connect MetaMask
+        // 4. Connect MetaMask (with Anvil chainId sync)
         setExecutionStep("Connecting wallet...");
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
+        const signer = await getAnvilSigner();
 
         // 5. Send addPoolLiquidity tx
         setExecutionStep("Sending add liquidity tx...");
@@ -279,6 +392,28 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
           amount1Max: a1Max.toString(),
         });
 
+        // Pre-check with staticCall to surface revert reason
+        try {
+          await broker.addPoolLiquidity.staticCall(
+            twammHook,
+            tickLower,
+            tickUpper,
+            liquidity,
+            a0Max,
+            a1Max,
+          );
+        } catch (simErr) {
+          const reason = simErr?.revert?.args?.[0]
+            || simErr?.info?.error?.data?.message
+            || simErr?.info?.error?.message
+            || simErr?.reason
+            || simErr?.shortMessage
+            || simErr?.message
+            || "Simulation failed";
+          console.error("[LP] staticCall revert:", reason, simErr);
+          throw new Error(reason);
+        }
+
         const tx = await broker.addPoolLiquidity(
           twammHook,
           tickLower,
@@ -286,6 +421,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
           liquidity,
           a0Max,
           a1Max,
+          { gasLimit: 2_000_000 },
         );
 
         setExecutionStep("Waiting for confirmation...");
@@ -300,6 +436,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         console.error("[LP] addPoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -334,10 +471,9 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
           throw new Error("Removal amount is zero");
         }
 
-        // Connect MetaMask
+        // Connect MetaMask (with Anvil chainId sync)
         setExecutionStep("Connecting wallet...");
-        const browserProvider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await browserProvider.getSigner();
+        const signer = await getAnvilSigner();
 
         // Send removePoolLiquidity tx
         setExecutionStep("Sending remove liquidity tx...");
@@ -356,6 +492,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         console.error("[LP] removePoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -366,6 +503,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
     executeAddLiquidity,
     executeRemoveLiquidity,
     activePosition,
+    allPositions,
     refreshPosition,
     executing,
     executionStep,

@@ -61,13 +61,13 @@ export default function AddLiquidityModal({
               <div>
                 <div className="text-sm text-gray-600 uppercase tracking-widest mb-1">Min</div>
                 <div className="text-xl font-light text-white font-mono tracking-tight">
-                  {minPrice || "—"}
+                  {minPrice ? Number(minPrice).toFixed(2) : "—"}
                 </div>
               </div>
               <div>
                 <div className="text-sm text-gray-600 uppercase tracking-widest mb-1">Max</div>
                 <div className="text-xl font-light text-white font-mono tracking-tight">
-                  {maxPrice || "—"}
+                  {maxPrice ? Number(maxPrice).toFixed(2) : "—"}
                 </div>
               </div>
             </div>
@@ -90,7 +90,7 @@ export default function AddLiquidityModal({
             </div>
             <div className="flex items-baseline justify-between mb-2">
               <span className="text-2xl font-light text-white tracking-tight">
-                {Number(token0Amount || 0).toLocaleString()}
+                {Number(token0Amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
               <span className="text-sm text-gray-500 uppercase tracking-widest">
                 {token0.symbol}
@@ -98,7 +98,7 @@ export default function AddLiquidityModal({
             </div>
             <div className="flex items-baseline justify-between">
               <span className="text-2xl font-light text-white tracking-tight">
-                {Number(token1Amount || 0).toLocaleString()}
+                {Number(token1Amount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
               <span className="text-sm text-gray-500 uppercase tracking-widest">
                 {token1.symbol}
@@ -137,7 +137,7 @@ export default function AddLiquidityModal({
                 Est._APR
               </span>
               <span className="text-sm font-mono text-green-400">
-                {pool.apr}%
+                {Number(pool.apr).toFixed(2)}%
               </span>
             </div>
             <div className="flex justify-between items-center px-4 py-3">

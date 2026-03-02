@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { RPC_URL, anvilRpc, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
 const FACTORY_ABI = [
@@ -15,19 +14,7 @@ const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
 ];
 
-// ── Raw JSON-RPC helpers (same pattern as useFaucet.js) ────────────
 
-async function anvilRpc(method, params = []) {
-  const res = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", method, params, id: Date.now() }),
-  });
-  const json = await res.json();
-  if (json.error)
-    throw new Error(`RPC ${method} failed: ${json.error.message}`);
-  return json.result;
-}
 
 async function _sendImpersonatedTx(from, to, data) {
   const res = await fetch(RPC_URL, {
@@ -169,24 +156,9 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
     setStep("Preparing transaction...");
 
     try {
-      // MetaMask's Anvil network uses chainId 31337, but Anvil fork reports chainId 1.
-      // Temporarily set Anvil to 31337 so MetaMask's signed tx is accepted.
+      // Get MetaMask signer (handles Anvil chainId sync)
       setStep("Syncing chain ID...");
-      await anvilRpc("anvil_setChainId", [31337]);
-
-      // Ensure MetaMask is on the Anvil network (where faucet ETH exists)
-      try {
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x7a69" }], // 31337
-        });
-      } catch (switchErr) {
-        console.warn("Network switch skipped:", switchErr);
-      }
-
-      // Use MetaMask signer — "any" network avoids chain enforcement
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
-      const signer = await provider.getSigner();
+      const signer = await getAnvilSigner();
 
       const factory = new ethers.Contract(
         brokerFactoryAddr,
@@ -234,12 +206,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       setError(msg);
       setStep("");
     } finally {
-      // Restore Anvil's chain ID back to mainnet fork (1)
-      try {
-        await anvilRpc("anvil_setChainId", [1]);
-      } catch {
-        /* ignored */
-      }
+      await restoreAnvilChainId();
       setCreating(false);
     }
   }, [account, brokerFactoryAddr]);
@@ -258,20 +225,8 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       setStep("Preparing deposit...");
 
       try {
-        // Sync Anvil chain ID to match MetaMask's Anvil network
-        await anvilRpc("anvil_setChainId", [31337]);
-
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x7a69" }],
-          });
-        } catch (switchErr) {
-          console.warn("Network switch skipped:", switchErr);
-        }
-
-        const provider = new ethers.BrowserProvider(window.ethereum, "any");
-        const signer = await provider.getSigner();
+        // Sync Anvil + MetaMask for signed tx
+        const signer = await getAnvilSigner();
 
         // waUSDC has 6 decimals
         const amountWei = ethers.parseUnits(amount.toString(), 6);
@@ -299,11 +254,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
         setError(msg);
         setStep("");
       } finally {
-        try {
-          await anvilRpc("anvil_setChainId", [1]);
-        } catch {
-          /* ignored */
-        }
+        await restoreAnvilChainId();
         setDepositing(false);
       }
     },

@@ -495,6 +495,22 @@ else
     ok "Cron job installed: generate-status.sh (every minute)"
 fi
 
+# ─── TIMESTAMP SYNC DAEMON ─────────────────────────────────────
+# Fixes Anvil bug: evm_increaseTime + interval mining causes EVM
+# TIMESTAMP opcode to diverge from block header timestamps.
+section "STEP 8" "TIMESTAMP SYNC DAEMON"
+pkill -f "timestamp_sync.py" 2>/dev/null || true
+sleep 1
+RPC_URL="http://localhost:8545" nohup python3 "$DOCKER_DIR/scripts/timestamp_sync.py" \
+    > /tmp/timestamp_sync.log 2>&1 &
+TS_PID=$!
+sleep 2
+if kill -0 "$TS_PID" 2>/dev/null; then
+    ok "Timestamp sync daemon started (PID: $TS_PID)"
+else
+    warn "Timestamp sync daemon failed to start — check /tmp/timestamp_sync.log"
+fi
+
 echo ""
 if [ "$ALL_RUNNING" = true ]; then
     echo -e "${GREEN}✅ All systems operational!${NC}"

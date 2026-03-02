@@ -1,0 +1,4 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY scripts/timestamp_sync.py .
+CMD ["python", "-u", "timestamp_sync.py"]

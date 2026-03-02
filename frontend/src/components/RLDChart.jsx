@@ -10,7 +10,23 @@ import {
   ReferenceLine,
 } from "recharts";
 
-const CustomTooltip = ({ active, payload, label, resolution }) => {
+const fmtValue = (name, value, areas) => {
+  // Check if any area with this name has format: 'dollar'
+  const area = areas?.find((a) => a.name === name);
+  if (area?.format === "dollar") {
+    const v = Number(value);
+    if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `$${(v/1e3).toFixed(1)}K`;
+    return `$${v.toFixed(0)}`;
+  }
+  if (name && (name.includes("Price") || name.includes("ETH"))) {
+    return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `${Number(value).toFixed(2)}%`;
+};
+
+const CustomTooltip = ({ active, payload, label, resolution, areas }) => {
   if (active && payload && payload.length) {
     const isDaily = resolution === "1D" || resolution === "1W";
     const dateOptions = {
@@ -28,7 +44,7 @@ const CustomTooltip = ({ active, payload, label, resolution }) => {
     const dateStr = new Date(label * 1000).toLocaleString("en-US", dateOptions);
 
     return (
-      <div className="bg-zinc-950 border border-zinc-800 p-3 rounded shadow-2xl font-mono text-xs z-50">
+      <div className="bg-[#0a0a0a] border border-zinc-800 p-3 rounded shadow-2xl font-mono text-xs z-50">
         <p className="text-zinc-500 mb-2 border-b border-zinc-800 pb-1">
           {dateStr}
         </p>
@@ -40,10 +56,7 @@ const CustomTooltip = ({ active, payload, label, resolution }) => {
             />
             <span className="text-zinc-300 font-medium">{entry.name}:</span>
             <span className="text-white font-bold">
-              {entry.name &&
-              (entry.name.includes("Price") || entry.name.includes("ETH"))
-                ? `$${Number(entry.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : `${Number(entry.value).toFixed(2)}%`}
+              {fmtValue(entry.name, entry.value, areas)}
             </span>
           </div>
         ))}
@@ -428,8 +441,22 @@ const RLDPerformanceChart = ({
             stroke="#71717a"
             fontSize={12}
             domain={yDomain}
-            tickFormatter={(val) => `${Number(val).toFixed(1)}%`}
-            width={50}
+            tickFormatter={(val) => {
+              // Check if any area uses dollar format
+              const hasDollar = areas.some((a) => a.format === "dollar");
+              if (hasDollar) {
+                const v = Number(val);
+                if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
+                if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+                if (v >= 1e3) return `$${(v/1e3).toFixed(1)}K`;
+                return `$${v.toFixed(0)}`;
+              }
+              // Check if any area uses price format
+              const hasPrice = areas.some((a) => a.name?.includes("Price") || a.name?.includes("ETH"));
+              if (hasPrice) return `$${Number(val).toFixed(2)}`;
+              return `${Number(val).toFixed(1)}%`;
+            }}
+            width={65}
             allowDataOverflow={true}
           />
 
@@ -446,7 +473,7 @@ const RLDPerformanceChart = ({
           )}
 
           <Tooltip
-            content={<CustomTooltip resolution={resolution} />}
+            content={<CustomTooltip resolution={resolution} areas={areas} />}
             cursor={{ stroke: "#52525b", strokeDasharray: "4 4" }}
           />
 

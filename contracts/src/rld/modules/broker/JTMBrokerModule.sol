@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IValuationModule} from "../../../shared/interfaces/IValuationModule.sol";
+import {
+    IValuationModule
+} from "../../../shared/interfaces/IValuationModule.sol";
 import {IRLDOracle} from "../../../shared/interfaces/IRLDOracle.sol";
 import {FixedPointMathLib} from "../../../shared/utils/FixedPointMathLib.sol";
 
@@ -90,7 +92,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 ///
 ///     The discount `d` grows linearly with time since the last clear:
 ///
-///         d = min(timeSinceLastClear × discountRateBpsPerSecond, maxDiscountBps)
+///         d = min(timeSinceLastClear × discountRateScaled / DISCOUNT_RATE_PRECISION, maxDiscountBps)
 ///
 ///     This mirrors the Dutch auction in `IJTM.clear()` — a bot can
 ///     always buy the ghost at discount `d`, so valuing ghost at `(1 − d)`
@@ -211,7 +213,9 @@ contract JTMBrokerModule is IValuationModule {
     ///
     /// @param  data  ABI-encoded `VerifyParams` struct.
     /// @return totalValue  The order's total value in `valuationToken` units.
-    function getValue(bytes calldata data) external view override returns (uint256) {
+    function getValue(
+        bytes calldata data
+    ) external view override returns (uint256) {
         VerifyParams memory params = abi.decode(data, (VerifyParams));
 
         // ── Term 1 + 2: Cleared order state ─────────────────────────────
@@ -222,15 +226,17 @@ contract JTMBrokerModule is IValuationModule {
         //
         //  IMPORTANT: buyOwed only includes earnings from CLEARED ghost.
         //  Uncleared ghost is NOT reflected here.
-        (uint256 buyTokensOwed, uint256 sellTokensRefund) =
-            IJTM(params.hook).getCancelOrderState(params.key, params.orderKey);
+        (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(params.hook)
+            .getCancelOrderState(params.key, params.orderKey);
 
         // Identify token addresses based on order direction
-        address sellToken =
-            params.orderKey.zeroForOne ? Currency.unwrap(params.key.currency0) : Currency.unwrap(params.key.currency1);
+        address sellToken = params.orderKey.zeroForOne
+            ? Currency.unwrap(params.key.currency0)
+            : Currency.unwrap(params.key.currency1);
 
-        address buyToken =
-            params.orderKey.zeroForOne ? Currency.unwrap(params.key.currency1) : Currency.unwrap(params.key.currency0);
+        address buyToken = params.orderKey.zeroForOne
+            ? Currency.unwrap(params.key.currency1)
+            : Currency.unwrap(params.key.currency0);
 
         uint256 totalValue = 0;
 
@@ -291,19 +297,30 @@ contract JTMBrokerModule is IValuationModule {
     /// @param  params    The decoded `VerifyParams`.
     /// @param  sellToken The sell token address (used for pricing).
     /// @return ghostVal  The discounted ghost value in `valuationToken` units.
-    function _ghostValue(VerifyParams memory params, address sellToken) internal view returns (uint256) {
+    function _ghostValue(
+        VerifyParams memory params,
+        address sellToken
+    ) internal view returns (uint256) {
         // Step 1: Pool-level ghost and discount
-        (uint256 accrued0, uint256 accrued1, uint256 discountBps,) = IJTM(params.hook).getStreamState(params.key);
+        (uint256 accrued0, uint256 accrued1, uint256 discountBps, ) = IJTM(
+            params.hook
+        ).getStreamState(params.key);
 
         // Ghost direction: zeroForOne orders sell token0 → ghost is accrued0
         uint256 totalGhost = params.orderKey.zeroForOne ? accrued0 : accrued1;
         if (totalGhost == 0) return 0;
 
         // Step 2: Pro-rata attribution
-        IJTM.Order memory order = IJTM(params.hook).getOrder(params.key, params.orderKey);
+        IJTM.Order memory order = IJTM(params.hook).getOrder(
+            params.key,
+            params.orderKey
+        );
         if (order.sellRate == 0) return 0;
 
-        (uint256 streamSellRate,) = IJTM(params.hook).getStreamPool(params.key, params.orderKey.zeroForOne);
+        (uint256 streamSellRate, ) = IJTM(params.hook).getStreamPool(
+            params.key,
+            params.orderKey.zeroForOne
+        );
         if (streamSellRate == 0) return 0;
 
         uint256 ghostShare = (totalGhost * order.sellRate) / streamSellRate;
@@ -333,11 +350,18 @@ contract JTMBrokerModule is IValuationModule {
     /// @param  amount  The raw token amount.
     /// @param  params  The `VerifyParams` containing oracle and token config.
     /// @return value   The amount expressed in `valuationToken` units.
-    function _priceToken(address token, uint256 amount, VerifyParams memory params) internal view returns (uint256) {
+    function _priceToken(
+        address token,
+        uint256 amount,
+        VerifyParams memory params
+    ) internal view returns (uint256) {
         if (token == params.valuationToken) {
             return amount;
         } else if (token == params.positionToken) {
-            uint256 indexPrice = IRLDOracle(params.oracle).getIndexPrice(params.underlyingPool, params.underlyingToken);
+            uint256 indexPrice = IRLDOracle(params.oracle).getIndexPrice(
+                params.underlyingPool,
+                params.underlyingToken
+            );
             return amount.mulWadDown(indexPrice);
         } else {
             return 0;

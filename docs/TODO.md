@@ -1,5 +1,9 @@
 # TODO — Pre-Mainnet Blockers
 
+## 0. Min Position Size
+
+- [ ] Set min position size for markets
+
 ## 1. Unused `deltaCollateral` Parameter
 
 - [ ] Remove from internal liquidation functions (dead code from refactor)
@@ -28,3 +32,8 @@
 - [ ] Gas profiling on liquidation + solvency paths
 - [ ] Review optimizer runs (200 may be suboptimal)
 - [ ] Formal verification of solvency invariant
+
+## 6. Deployment
+
+- [ ] Deploy to Sepolia testnet
+- [ ] Deploy to Ethereum mainnet

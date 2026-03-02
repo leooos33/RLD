@@ -1,8 +1,6 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-
-const RPC_URL = `${window.location.origin}/rpc`;
-const ANVIL_CHAIN_ID = 31337;
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 
 // BrokerRouter ABI (executeLong + closeLong)
 const POOL_KEY_TUPLE = {
@@ -71,6 +69,54 @@ const BROKER_ABI = [
   "function setOperator(address operator, bool active)",
 ];
 
+// ── Shared helpers ────────────────────────────────────────────────
+
+function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
+  const token0 =
+    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
+      ? collateralAddr
+      : positionAddr;
+  const token1 =
+    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
+      ? positionAddr
+      : collateralAddr;
+  return {
+    currency0: token0,
+    currency1: token1,
+    fee: infrastructure.pool_fee || 500,
+    tickSpacing: infrastructure.tick_spacing || 5,
+    hooks: infrastructure.twamm_hook,
+  };
+}
+
+/**
+ * Ensure BrokerRouter is approved as operator on the broker.
+ * Uses getAnvilSigner for the approval tx if needed.
+ */
+async function ensureOperator(brokerAddress, routerAddress, setStep) {
+  const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
+  const broker = new ethers.Contract(brokerAddress, BROKER_ABI, rpcProvider);
+  const isOperator = await broker.operators(routerAddress);
+
+  if (!isOperator) {
+    setStep("Approving BrokerRouter as operator...");
+    const signer = await getAnvilSigner();
+    const brokerSigned = new ethers.Contract(brokerAddress, BROKER_ABI, signer);
+
+    setStep("Confirm operator approval in wallet...");
+    const opTx = await brokerSigned.setOperator(routerAddress, true, {
+      gasLimit: 200_000,
+    });
+    setStep("Waiting for approval...");
+    await opTx.wait();
+
+    // Restore chainId between operator approval and the main tx
+    await restoreAnvilChainId();
+  }
+}
+
+// ── Hook ──────────────────────────────────────────────────────────
+
 /**
  * useSwapExecution — Execute trades via BrokerRouter with MetaMask signing.
  *
@@ -116,70 +162,12 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
-        const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
-
-        // 1. Check if BrokerRouter is set as operator on the broker
-        const broker = new ethers.Contract(
-          brokerAddress,
-          BROKER_ABI,
-          rpcProvider,
-        );
-        const isOperator = await broker.operators(infrastructure.broker_router);
-
-        if (!isOperator) {
-          // Need to set operator via MetaMask
-          setStep("Approving BrokerRouter as operator...");
-
-          // Switch to MetaMask-compatible chain ID
-          await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-
-          try {
-            await window.ethereum.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-            });
-          } catch (switchErr) {
-            console.warn("Network switch skipped:", switchErr);
-          }
-
-          const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-          const signer = await mmProvider.getSigner();
-          const brokerSigned = new ethers.Contract(
-            brokerAddress,
-            BROKER_ABI,
-            signer,
-          );
-
-          setStep("Confirm operator approval in wallet...");
-          const opTx = await brokerSigned.setOperator(
-            infrastructure.broker_router,
-            true,
-            { gasLimit: 200_000 },
-          );
-          setStep("Waiting for approval...");
-          await opTx.wait();
-
-          // Restore chain ID
-          await rpcProvider.send("anvil_setChainId", [1]);
-        }
+        // 1. Ensure operator
+        await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         // 2. Execute the swap via MetaMask
         setStep("Preparing swap...");
-
-        // Switch chain ID for MetaMask
-        await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-          });
-        } catch (switchErr) {
-          console.warn("Network switch skipped:", switchErr);
-        }
-
-        const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-        const signer = await mmProvider.getSigner();
+        const signer = await getAnvilSigner();
 
         const router = new ethers.Contract(
           infrastructure.broker_router,
@@ -187,25 +175,7 @@ export function useSwapExecution(
           signer,
         );
 
-        // Build pool key
-        const token0 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? collateralAddr
-            : positionAddr;
-        const token1 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? positionAddr
-            : collateralAddr;
-
-        const poolKey = {
-          currency0: token0,
-          currency1: token1,
-          fee: infrastructure.pool_fee || 500,
-          tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: infrastructure.twamm_hook,
-        };
-
-        // waUSDC has 6 decimals
+        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
 
         setStep("Confirm swap in wallet...");
@@ -219,9 +189,6 @@ export function useSwapExecution(
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-
-        // Restore chain ID
-        await rpcProvider.send("anvil_setChainId", [1]);
 
         if (receipt.status === 1) {
           setStep("Swap confirmed ✓");
@@ -238,15 +205,8 @@ export function useSwapExecution(
             : e.shortMessage || e.message || "Swap failed";
         setError(msg);
         setStep("");
-
-        // Try to restore chain ID
-        try {
-          const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
-          await rpcProvider.send("anvil_setChainId", [1]);
-        } catch {
-          /* ignored */
-        }
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -266,82 +226,18 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
-        const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
+        await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
-        // 1. Check operator
-        const broker = new ethers.Contract(
-          brokerAddress,
-          BROKER_ABI,
-          rpcProvider,
-        );
-        const isOperator = await broker.operators(infrastructure.broker_router);
-
-        if (!isOperator) {
-          setStep("Approving BrokerRouter as operator...");
-          await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-          try {
-            await window.ethereum.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-            });
-          } catch (switchErr) {
-            console.warn("Network switch skipped:", switchErr);
-          }
-          const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-          const signer = await mmProvider.getSigner();
-          const brokerSigned = new ethers.Contract(
-            brokerAddress,
-            BROKER_ABI,
-            signer,
-          );
-          setStep("Confirm operator approval in wallet...");
-          const opTx = await brokerSigned.setOperator(
-            infrastructure.broker_router,
-            true,
-            { gasLimit: 200_000 },
-          );
-          setStep("Waiting for approval...");
-          await opTx.wait();
-          await rpcProvider.send("anvil_setChainId", [1]);
-        }
-
-        // 2. Execute close via MetaMask
         setStep("Preparing close...");
-        await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-          });
-        } catch (switchErr) {
-          console.warn("Network switch skipped:", switchErr);
-        }
+        const signer = await getAnvilSigner();
 
-        const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-        const signer = await mmProvider.getSigner();
         const router = new ethers.Contract(
           infrastructure.broker_router,
           BROKER_ROUTER_ABI,
           signer,
         );
 
-        const token0 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? collateralAddr
-            : positionAddr;
-        const token1 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? positionAddr
-            : collateralAddr;
-        const poolKey = {
-          currency0: token0,
-          currency1: token1,
-          fee: infrastructure.pool_fee || 500,
-          tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: infrastructure.twamm_hook,
-        };
-
-        // wRLP has 6 decimals
+        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
 
         setStep("Confirm close in wallet...");
@@ -352,8 +248,6 @@ export function useSwapExecution(
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-
-        await rpcProvider.send("anvil_setChainId", [1]);
 
         if (receipt.status === 1) {
           setStep("Position closed ✓");
@@ -370,18 +264,14 @@ export function useSwapExecution(
             : e.shortMessage || e.message || "Close failed";
         setError(msg);
         setStep("");
-        try {
-          const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
-          await rpcProvider.send("anvil_setChainId", [1]);
-        } catch {
-          /* ignored */
-        }
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
     [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
   );
+
   /**
    * Open Short: deposit collateral + borrow wRLP + swap wRLP → waUSDC
    * @param {number} initialCollateral — collateral amount in USDC (human-readable, 6 decimals)
@@ -404,82 +294,18 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
-        const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
+        await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
-        // 1. Check operator
-        const broker = new ethers.Contract(
-          brokerAddress,
-          BROKER_ABI,
-          rpcProvider,
-        );
-        const isOperator = await broker.operators(infrastructure.broker_router);
-
-        if (!isOperator) {
-          setStep("Approving BrokerRouter as operator...");
-          await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-          try {
-            await window.ethereum.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-            });
-          } catch (switchErr) {
-            console.warn("Network switch skipped:", switchErr);
-          }
-          const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-          const signer = await mmProvider.getSigner();
-          const brokerSigned = new ethers.Contract(
-            brokerAddress,
-            BROKER_ABI,
-            signer,
-          );
-          setStep("Confirm operator approval in wallet...");
-          const opTx = await brokerSigned.setOperator(
-            infrastructure.broker_router,
-            true,
-            { gasLimit: 200_000 },
-          );
-          setStep("Waiting for approval...");
-          await opTx.wait();
-          await rpcProvider.send("anvil_setChainId", [1]);
-        }
-
-        // 2. Execute short via MetaMask
         setStep("Preparing short...");
-        await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-          });
-        } catch (switchErr) {
-          console.warn("Network switch skipped:", switchErr);
-        }
+        const signer = await getAnvilSigner();
 
-        const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-        const signer = await mmProvider.getSigner();
         const router = new ethers.Contract(
           infrastructure.broker_router,
           BROKER_ROUTER_ABI,
           signer,
         );
 
-        const token0 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? collateralAddr
-            : positionAddr;
-        const token1 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? positionAddr
-            : collateralAddr;
-        const poolKey = {
-          currency0: token0,
-          currency1: token1,
-          fee: infrastructure.pool_fee || 500,
-          tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: infrastructure.twamm_hook,
-        };
-
-        // Both amounts are 6-decimal
+        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const collateralWei = ethers.parseUnits(String(initialCollateral), 6);
         const debtWei = ethers.parseUnits(String(targetDebtAmount), 6);
 
@@ -496,8 +322,6 @@ export function useSwapExecution(
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
 
-        await rpcProvider.send("anvil_setChainId", [1]);
-
         if (receipt.status === 1) {
           setStep("Short opened ✓");
           if (onSuccess) onSuccess(receipt);
@@ -511,19 +335,13 @@ export function useSwapExecution(
         if (e.code === "ACTION_REJECTED") {
           msg = "Transaction rejected";
         } else {
-          // Try to extract on-chain revert reason
           const reason = e.reason || e.revert?.name || e.shortMessage || e.message;
           msg = reason || msg;
         }
         setError(msg);
         setStep("");
-        try {
-          const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
-          await rpcProvider.send("anvil_setChainId", [1]);
-        } catch {
-          /* ignored */
-        }
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -543,82 +361,18 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
-        const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
+        await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
-        // 1. Check operator
-        const broker = new ethers.Contract(
-          brokerAddress,
-          BROKER_ABI,
-          rpcProvider,
-        );
-        const isOperator = await broker.operators(infrastructure.broker_router);
-
-        if (!isOperator) {
-          setStep("Approving BrokerRouter as operator...");
-          await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-          try {
-            await window.ethereum.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-            });
-          } catch (switchErr) {
-            console.warn("Network switch skipped:", switchErr);
-          }
-          const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-          const signer = await mmProvider.getSigner();
-          const brokerSigned = new ethers.Contract(
-            brokerAddress,
-            BROKER_ABI,
-            signer,
-          );
-          setStep("Confirm operator approval in wallet...");
-          const opTx = await brokerSigned.setOperator(
-            infrastructure.broker_router,
-            true,
-            { gasLimit: 200_000 },
-          );
-          setStep("Waiting for approval...");
-          await opTx.wait();
-          await rpcProvider.send("anvil_setChainId", [1]);
-        }
-
-        // 2. Execute close short via MetaMask
         setStep("Preparing close short...");
-        await rpcProvider.send("anvil_setChainId", [ANVIL_CHAIN_ID]);
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: "0x" + ANVIL_CHAIN_ID.toString(16) }],
-          });
-        } catch (switchErr) {
-          console.warn("Network switch skipped:", switchErr);
-        }
+        const signer = await getAnvilSigner();
 
-        const mmProvider = new ethers.BrowserProvider(window.ethereum, "any");
-        const signer = await mmProvider.getSigner();
         const router = new ethers.Contract(
           infrastructure.broker_router,
           BROKER_ROUTER_ABI,
           signer,
         );
 
-        const token0 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? collateralAddr
-            : positionAddr;
-        const token1 =
-          collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-            ? positionAddr
-            : collateralAddr;
-        const poolKey = {
-          currency0: token0,
-          currency1: token1,
-          fee: infrastructure.pool_fee || 500,
-          tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: infrastructure.twamm_hook,
-        };
-
-        // waUSDC has 6 decimals
+        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
 
         setStep("Confirm close short in wallet...");
@@ -635,8 +389,6 @@ export function useSwapExecution(
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
 
-        await rpcProvider.send("anvil_setChainId", [1]);
-
         if (receipt.status === 1) {
           setStep("Short closed ✓");
           if (onSuccess) onSuccess(receipt);
@@ -652,13 +404,8 @@ export function useSwapExecution(
             : e.shortMessage || e.message || "Close short failed";
         setError(msg);
         setStep("");
-        try {
-          const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
-          await rpcProvider.send("anvil_setChainId", [1]);
-        } catch {
-          /* ignored */
-        }
       } finally {
+        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
