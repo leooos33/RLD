@@ -63,12 +63,15 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     /// @notice Epoch interval for order expiry bucketing (e.g. 3600 = 1 hour)
     uint256 public immutable expirationInterval;
 
-    /// @notice Discount growth rate: basis points per second
-    /// @dev Default 1 (= 0.01%/s). Set in constructor.
-    uint256 public discountRateBpsPerSecond;
+    /// @notice Discount growth rate: basis points per second, scaled by DISCOUNT_RATE_PRECISION
+    /// @dev Default 3000 (= 0.3 bps/s = 0.003%/s). Divide by DISCOUNT_RATE_PRECISION for real bps/s.
+    uint256 public discountRateScaled;
+
+    /// @notice Precision for discountRateScaled: 10_000 = 1.0 bps/s
+    uint256 public constant DISCOUNT_RATE_PRECISION = 10_000;
 
     /// @notice Maximum discount cap in basis points
-    /// @dev Default 500 (= 5%). Set in constructor.
+    /// @dev Default 200 (= 2%). Set in constructor.
     uint256 public maxDiscountBps;
 
     /// @notice TWAP observation window in seconds for pricing
@@ -106,13 +109,18 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     /// @notice Authorized factory address (can call setPriceBounds)
     address public authorizedFactory;
 
-    /// @notice Accumulated orphaned TWAMM dust per currency, claimable by owner
-    /// @dev On mainnet (12s blocks), each expired TWAMM order orphans at most
-    ///      sellRate * 12 tokens — the final block of accrual that can't be
-    ///      cleared because sellRateCurrent drops to 0 at the epoch boundary.
-    ///      Rather than stranding these tokens permanently, they are accumulated
-    ///      here and the owner redistributes via claimDust().
-    mapping(Currency => uint256) public collectedDust;
+    // NOTE: collectedDust mapping removed — auto-settle eliminates dust entirely
+
+    /// @notice Deferred settle: queued by _preEpochSettle (inside hook callbacks),
+    ///         executed by _executePendingSettles (in external functions only).
+    /// @dev ghostAmount is the sell-token ghost to swap via AMM.
+    ///      sellRateSnapshot is the sellRateCurrent at queue time (for _recordEarnings).
+    struct PendingSettle {
+        uint256 ghostAmount;
+        uint256 sellRateSnapshot;
+    }
+    mapping(PoolId => PendingSettle) internal _pendingSettle0;
+    mapping(PoolId => PendingSettle) internal _pendingSettle1;
 
     /* ======================================================================== */
     /*                           CONSTRUCTOR                                    */
@@ -128,8 +136,8 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         expirationInterval = _expirationInterval;
         rldCore = _rldCore;
         // L2: Sensible defaults
-        discountRateBpsPerSecond = 1; // 0.01% per second
-        maxDiscountBps = 500; // 5% max
+        discountRateScaled = 3000; // 0.3 bps/s (3000 / 10_000 = 0.3)
+        maxDiscountBps = 200; // 2% max
         twapWindow = 300; // 5-minute TWAP
     }
 
@@ -150,8 +158,9 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     }
 
     /// @notice Update the discount rate (governance)
-    function setDiscountRate(uint256 _bpsPerSecond) external onlyOwner {
-        discountRateBpsPerSecond = _bpsPerSecond;
+    /// @param _rateScaled Scaled discount rate. 10_000 = 1.0 bps/s, 3000 = 0.3 bps/s
+    function setDiscountRate(uint256 _rateScaled) external onlyOwner {
+        discountRateScaled = _rateScaled;
     }
 
     /// @notice Update the max discount cap (governance)
@@ -189,24 +198,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         bounds.max = max;
     }
 
-    /// @notice Claims accumulated orphaned TWAMM dust tokens
-    /// @dev Only owner can call. Transfers all collected dust for a currency
-    ///      to the specified recipient. Dust originates from the final block
-    ///      of accrual per expired order that could not be cleared.
-    /// @param currency The currency to claim dust for
-    /// @param recipient Address to receive the dust tokens
-    function claimDust(
-        Currency currency,
-        address recipient
-    ) external onlyOwner {
-        uint256 amount = collectedDust[currency];
-        if (amount == 0) return;
-        collectedDust[currency] = 0;
-        IERC20Minimal(Currency.unwrap(currency)).safeTransfer(
-            recipient,
-            amount
-        );
-    }
+    // NOTE: claimDust removed — auto-settle eliminates dust entirely
 
     /* ======================================================================== */
     /*                        V4 HOOK LIFECYCLE                                 */
@@ -267,7 +259,6 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     ) internal override returns (bytes4) {
         _updateOracle(key);
         _accrueAndNet(key);
-        _flushDonations(key);
 
         // Enforce price bounds on LP range
         PriceBounds memory bounds = priceBounds[key.toId()];
@@ -290,7 +281,6 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     ) internal override returns (bytes4) {
         _updateOracle(key);
         _accrueAndNet(key);
-        _flushDonations(key);
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
@@ -303,7 +293,6 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         _updateOracle(key);
         _accrueAndNet(key);
-        _flushDonations(key);
 
         PoolId poolId = key.toId();
         JITState storage state = poolStates[poolId];
@@ -475,13 +464,16 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         returns (bytes32 orderId, OrderKey memory orderKey)
     {
         _accrueAndNet(params.key);
+        _executePendingSettles(params.key);
 
         PoolId poolId = params.key.toId();
-        uint256 currentInterval = _getIntervalTime(block.timestamp);
+        // Option E: start at NEXT epoch boundary — guarantees exact duration
+        uint256 nextEpoch = _getIntervalTime(block.timestamp) +
+            expirationInterval;
 
         orderKey = OrderKey({
             owner: msg.sender,
-            expiration: (currentInterval + params.duration).toUint160(),
+            expiration: (nextEpoch + params.duration).toUint160(),
             zeroForOne: params.zeroForOne
         });
 
@@ -509,7 +501,10 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             ? state.stream0For1
             : state.stream1For0;
 
-        stream.sellRateCurrent += scaledSellRate;
+        // Option E: defer sellRate activation until startEpoch.
+        // This ensures ghost only accrues during the paid-for period [startEpoch, expiration].
+        // _crossEpoch will add this to sellRateCurrent when startEpoch is crossed.
+        stream.sellRateStartingAtInterval[nextEpoch] += scaledSellRate;
         stream.sellRateEndingAtInterval[orderKey.expiration] += scaledSellRate;
 
         uint256 earningsFactorLast = stream.earningsFactorCurrent;
@@ -538,7 +533,8 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             orderKey.expiration,
             params.zeroForOne,
             sellRate,
-            earningsFactorLast
+            earningsFactorLast,
+            nextEpoch
         );
     }
 
@@ -571,13 +567,69 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             ? state.stream0For1
             : state.stream1For0;
 
-        stream.sellRateCurrent -= sellRate;
-        stream.sellRateEndingAtInterval[orderKey.expiration] -= sellRate;
+        // Determine if order has started: check if sellRate is in sellRateCurrent
+        // (activated by _crossEpoch) or still in sellRateStartingAtInterval (pending).
+        // We can infer startEpoch from expiration - duration, but we don't store duration.
+        // Instead: try to find startEpoch by checking where the matching starting rate is.
+        // Simplest approach: if order's rate is NOT in sellRateCurrent, it hasn't started.
+        bool orderStarted = stream.sellRateCurrent >= sellRate;
 
-        // Calculate refund
-        uint256 remainingSeconds = orderKey.expiration -
-            state.lastUpdateTimestamp;
-        sellTokensRefund = (sellRate * remainingSeconds) / RATE_SCALER;
+        if (orderStarted) {
+            // AUTO-SETTLE on cancel: if removing this order kills the stream,
+            // settle ghost first (while sellRateCurrent is still > 0).
+            // cancelOrder is an external function, so poolManager.unlock() is safe.
+            if (stream.sellRateCurrent == sellRate) {
+                uint256 ghost = orderKey.zeroForOne
+                    ? state.accrued0
+                    : state.accrued1;
+                if (ghost > 0) {
+                    _settleGhostAgainstPool(
+                        key,
+                        state,
+                        stream,
+                        ghost,
+                        orderKey.zeroForOne
+                    );
+                }
+            }
+
+            stream.sellRateCurrent -= sellRate;
+            stream.sellRateEndingAtInterval[orderKey.expiration] -= sellRate;
+
+            // Calculate refund: remaining time from lastUpdate to expiration
+            uint256 remainingSeconds = orderKey.expiration -
+                state.lastUpdateTimestamp;
+            sellTokensRefund = (sellRate * remainingSeconds) / RATE_SCALER;
+        } else {
+            // Order hasn't started yet: remove from starting map.
+            // Find the startEpoch by scanning (or use the fact that expiration = startEpoch + duration).
+            // Since we know the order was submitted in the current epoch or earlier,
+            // and startEpoch = nextEpoch at submit time, we can derive it from
+            // the earningsFactorLast snapshot (if EFL == current EF, order is from this epoch).
+            // Simpler: refund = full deposit (order hasn't accrued anything).
+            // Remove from ending map + find and remove from starting map.
+            stream.sellRateEndingAtInterval[orderKey.expiration] -= sellRate;
+
+            // Scan backwards from expiration to find the startEpoch
+            // (startEpoch < expiration, aligned to interval)
+            uint256 ep = orderKey.expiration - expirationInterval;
+            while (ep > 0) {
+                if (stream.sellRateStartingAtInterval[ep] >= sellRate) {
+                    stream.sellRateStartingAtInterval[ep] -= sellRate;
+                    break;
+                }
+                if (ep < expirationInterval) break;
+                ep -= expirationInterval;
+            }
+
+            // Full refund: deposit = sellRate * duration / RATE_SCALER
+            // duration = expiration - startEpoch. Since the order hasn't accrued,
+            // the full deposit is the original amountIn.
+            // sellRate is scaled. remainingSeconds = full duration.
+            uint256 startEpoch = ep; // found above
+            uint256 duration = orderKey.expiration - startEpoch;
+            sellTokensRefund = (sellRate * duration) / RATE_SCALER;
+        }
 
         delete state.orders[orderId];
 
@@ -618,6 +670,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         OrderKey memory orderKey
     ) internal returns (uint256 earningsAmount) {
         _accrueAndNet(poolKey);
+        _executePendingSettles(poolKey);
 
         PoolId poolId = poolKey.toId();
         JITState storage state = poolStates[poolId];
@@ -639,8 +692,17 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             : state.stream1For0;
 
         // Calculate earnings since last sync
-        uint256 earningsFactorDelta = stream.earningsFactorCurrent -
-            order.earningsFactorLast;
+        // GHOST EARNINGS FIX: For expired orders, cap earningsFactor at the
+        // snapshot taken when the order's epoch was crossed. This prevents
+        // post-expiry accrual inflation that would make the contract insolvent.
+        uint256 effectiveEF = stream.earningsFactorCurrent;
+        if (block.timestamp >= orderKey.expiration) {
+            uint256 snap = stream.earningsFactorAtInterval[orderKey.expiration];
+            if (snap > 0 && snap < effectiveEF) {
+                effectiveEF = snap;
+            }
+        }
+        uint256 earningsFactorDelta = effectiveEF - order.earningsFactorLast;
         if (earningsFactorDelta > 0) {
             earningsAmount = Math.mulDiv(
                 order.sellRate,
@@ -687,6 +749,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         uint256 minDiscountBps
     ) external nonReentrant {
         _accrueAndNet(key);
+        _executePendingSettles(key);
 
         PoolId poolId = key.toId();
         JITState storage state = poolStates[poolId];
@@ -705,9 +768,10 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
 
         uint256 clearAmount = available > maxAmount ? maxAmount : available;
 
-        // Calculate dynamic discount
+        // Calculate dynamic discount (fixed-point: discountRateScaled / DISCOUNT_RATE_PRECISION = bps/s)
         uint256 elapsedSinceClear = block.timestamp - state.lastClearTimestamp;
-        uint256 discountBps = elapsedSinceClear * discountRateBpsPerSecond;
+        uint256 discountBps = (elapsedSinceClear * discountRateScaled) /
+            DISCOUNT_RATE_PRECISION;
         if (discountBps > maxDiscountBps) discountBps = maxDiscountBps;
 
         // H3: MEV protection — revert if discount is below caller's minimum
@@ -785,7 +849,9 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             ((state.stream1For0.sellRateCurrent * deltaTime) / RATE_SCALER);
 
         timeSinceLastClear = block.timestamp - state.lastClearTimestamp;
-        currentDiscount = timeSinceLastClear * discountRateBpsPerSecond;
+        currentDiscount =
+            (timeSinceLastClear * discountRateScaled) /
+            DISCOUNT_RATE_PRECISION;
         if (currentDiscount > maxDiscountBps) currentDiscount = maxDiscountBps;
     }
 
@@ -830,8 +896,15 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             : state.stream1For0;
 
         // Compute pending earnings
-        uint256 earningsFactorDelta = stream.earningsFactorCurrent -
-            order.earningsFactorLast;
+        // GHOST EARNINGS FIX: cap at snapshot for expired orders
+        uint256 effectiveEF = stream.earningsFactorCurrent;
+        if (state.lastUpdateTimestamp >= orderKey.expiration) {
+            uint256 snap = stream.earningsFactorAtInterval[orderKey.expiration];
+            if (snap > 0 && snap < effectiveEF) {
+                effectiveEF = snap;
+            }
+        }
+        uint256 earningsFactorDelta = effectiveEF - order.earningsFactorLast;
         if (earningsFactorDelta > 0) {
             buyTokensOwed = Math.mulDiv(
                 order.sellRate,
@@ -881,6 +954,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     function executeJTMOrders(PoolKey memory key) public {
         _updateOracle(key);
         _accrueAndNet(key);
+        _executePendingSettles(key);
     }
 
     /// @notice Trigger accrual up to a specific timestamp
@@ -892,6 +966,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         // targetTimestamp is accepted for API compat but we accrue to now
         _updateOracle(key);
         _accrueAndNet(key);
+        _executePendingSettles(key);
     }
 
     /// @notice Sync an order and claim all owed tokens in one call
@@ -983,69 +1058,174 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
                 epoch <= currentInterval;
                 epoch += expirationInterval
             ) {
+                // AUTO-SETTLE: settle ghost before crossing epochs that kill a stream
+                _preEpochSettle(key, state, state.stream0For1, epoch, true);
+                _preEpochSettle(key, state, state.stream1For0, epoch, false);
+
                 _crossEpoch(state.stream0For1, epoch);
                 _crossEpoch(state.stream1For0, epoch);
             }
         }
 
-        // === Step 4: Orphan remaining accrued tokens if stream expired ===
-        // When sellRateCurrent drops to 0 (all orders expired), any remaining
-        // accrued tokens can never be cleared — clear() reverts with NoActiveStream
-        // because _recordEarnings would divide by zero.
-        //
-        // TRANSPARENCY NOTE: On mainnet (12s blocks), this captures at most
-        // sellRate * 12 tokens per expired order — the final block of accrual
-        // between the last possible clear() and the epoch crossing. These tokens
-        // are redirected to LPs as fee income via V4's donate() mechanism,
-        // rather than being permanently stranded in the hook contract.
-        if (state.stream0For1.sellRateCurrent == 0 && state.accrued0 > 0) {
-            state.pendingDonation0 += state.accrued0;
-            state.accrued0 = 0;
-        }
-        if (state.stream1For0.sellRateCurrent == 0 && state.accrued1 > 0) {
-            state.pendingDonation1 += state.accrued1;
-            state.accrued1 = 0;
-        }
+        // Step 4 removed — auto-settle handles all ghost at epoch boundaries
 
         state.lastUpdateTimestamp = currentTime;
     }
 
-    /// @notice Flush pending donations: move orphaned accrued tokens to protocol fees
-    /// @dev Orphaned tokens accumulate when TWAMM streams expire with residual accrued
-    ///      balances. On mainnet (12s blocks), each expired order orphans at most
-    ///      sellRate * 12 tokens — the final block of accrual that could not be
-    ///      cleared before the epoch boundary. These tokens are moved to collectedFees
-    ///      (the protocol fee pool) rather than being permanently stranded.
-    ///
-    ///      TRANSPARENCY NOTE: These tokens came from TWAMM trader deposits. They
-    ///      represent ~1 block worth of accrual per expired order. The owner should
-    ///      redistribute them to LPs or return them to traders via claimProtocolFees().
-    ///
-    ///      Why not V4 donate()? donate() calls beforeDonate/afterDonate hooks on
-    ///      the pool's hook address (this contract), which would require the
-    ///      BEFORE_DONATE_FLAG permission bit — changing the hook's deployed address.
-    function _flushDonations(PoolKey calldata key) internal {
-        JITState storage state = poolStates[key.toId()];
-        uint256 d0 = state.pendingDonation0;
-        uint256 d1 = state.pendingDonation1;
-        if (d0 == 0 && d1 == 0) return;
+    /// @notice Check if an epoch crossing will kill a stream; if so, QUEUE settlement
+    /// @dev Only fires when expiring sellRate == total sellRate (last order in stream).
+    ///      Deferred pattern: stores ghost+sellRate snapshot in PendingSettle.
+    ///      Actual AMM swap happens in _executePendingSettles (safe external context).
+    ///      Ghost (accrued) is zeroed immediately to prevent double-accrual.
+    function _preEpochSettle(
+        PoolKey memory key,
+        JITState storage state,
+        StreamPool storage stream,
+        uint256 epoch,
+        bool zeroForOne
+    ) internal {
+        uint256 expiring = stream.sellRateEndingAtInterval[epoch];
+        if (expiring == 0 || expiring != stream.sellRateCurrent) return;
 
-        state.pendingDonation0 = 0;
-        state.pendingDonation1 = 0;
+        uint256 ghost = zeroForOne ? state.accrued0 : state.accrued1;
+        if (ghost == 0) return;
 
-        // Move to dust collection — owner can claim via claimDust()
-        if (d0 > 0) {
-            collectedDust[key.currency0] += d0;
+        PoolId poolId = key.toId();
+
+        // Queue the settle with a snapshot of sellRateCurrent
+        // (needed because _crossEpoch will zero it next)
+        if (zeroForOne) {
+            _pendingSettle0[poolId] = PendingSettle(
+                ghost,
+                stream.sellRateCurrent
+            );
+            state.accrued0 = 0;
+        } else {
+            _pendingSettle1[poolId] = PendingSettle(
+                ghost,
+                stream.sellRateCurrent
+            );
+            state.accrued1 = 0;
         }
-        if (d1 > 0) {
-            collectedDust[key.currency1] += d1;
-        }
-
-        emit DustDonatedToLPs(key.toId(), d0, d1);
     }
 
-    /// @notice Cross an epoch boundary: snapshot earningsFactor and subtract expired sellRate
+    /// @notice Execute any queued settlements from _preEpochSettle
+    /// @dev MUST only be called from external functions (not hook callbacks).
+    ///      Processes pending settles for both directions, executing AMM swaps
+    ///      and recording earnings using the saved sellRate snapshot.
+    function _executePendingSettles(PoolKey memory key) internal {
+        PoolId poolId = key.toId();
+        JITState storage state = poolStates[poolId];
+
+        // Process pending settle for 0→1 direction
+        PendingSettle memory ps0 = _pendingSettle0[poolId];
+        if (ps0.ghostAmount > 0) {
+            delete _pendingSettle0[poolId];
+
+            StreamPool storage stream0 = state.stream0For1;
+
+            // Execute AMM swap: ghost token0 → buy token1
+            SwapParams memory swapParams0 = SwapParams(
+                true,
+                -int256(ps0.ghostAmount),
+                TickMath.MIN_SQRT_PRICE + 1
+            );
+
+            bytes memory result0 = poolManager.unlock(
+                abi.encode(key, swapParams0)
+            );
+            BalanceDelta delta0 = abi.decode(result0, (BalanceDelta));
+            uint256 proceeds0 = uint256(uint128(delta0.amount1()));
+
+            // Record earnings using savedSellRate (stream may now have sr=0)
+            if (proceeds0 > 0 && ps0.sellRateSnapshot > 0) {
+                stream0.earningsFactorCurrent +=
+                    (proceeds0 * FixedPoint96.Q96 * RATE_SCALER) /
+                    ps0.sellRateSnapshot;
+            }
+
+            emit AutoSettle(poolId, ps0.ghostAmount, proceeds0, true);
+        }
+
+        // Process pending settle for 1→0 direction
+        PendingSettle memory ps1 = _pendingSettle1[poolId];
+        if (ps1.ghostAmount > 0) {
+            delete _pendingSettle1[poolId];
+
+            StreamPool storage stream1 = state.stream1For0;
+
+            // Execute AMM swap: ghost token1 → buy token0
+            SwapParams memory swapParams1 = SwapParams(
+                false,
+                -int256(ps1.ghostAmount),
+                TickMath.MAX_SQRT_PRICE - 1
+            );
+
+            bytes memory result1 = poolManager.unlock(
+                abi.encode(key, swapParams1)
+            );
+            BalanceDelta delta1 = abi.decode(result1, (BalanceDelta));
+            uint256 proceeds1 = uint256(uint128(delta1.amount0()));
+
+            // Record earnings using savedSellRate
+            if (proceeds1 > 0 && ps1.sellRateSnapshot > 0) {
+                stream1.earningsFactorCurrent +=
+                    (proceeds1 * FixedPoint96.Q96 * RATE_SCALER) /
+                    ps1.sellRateSnapshot;
+            }
+
+            emit AutoSettle(poolId, ps1.ghostAmount, proceeds1, false);
+        }
+    }
+
+    /// @notice Swap residual ghost tokens against the AMM pool, record proceeds as earnings
+    /// @dev Shared by auto-settle (epoch boundary), cancel-settle, and force-settle (liquidation).
+    ///      Uses the existing unlockCallback path: poolManager.unlock → swap → settle.
+    function _settleGhostAgainstPool(
+        PoolKey memory key,
+        JITState storage state,
+        StreamPool storage stream,
+        uint256 ghostAmount,
+        bool zeroForOne
+    ) internal {
+        if (ghostAmount == 0 || stream.sellRateCurrent == 0) return;
+
+        SwapParams memory swapParams = SwapParams(
+            zeroForOne,
+            -int256(ghostAmount),
+            zeroForOne
+                ? TickMath.MIN_SQRT_PRICE + 1
+                : TickMath.MAX_SQRT_PRICE - 1
+        );
+
+        bytes memory result = poolManager.unlock(abi.encode(key, swapParams));
+        BalanceDelta delta = abi.decode(result, (BalanceDelta));
+
+        uint256 proceeds = zeroForOne
+            ? uint256(uint128(delta.amount1()))
+            : uint256(uint128(delta.amount0()));
+
+        if (proceeds > 0) {
+            _recordEarnings(stream, proceeds);
+        }
+
+        if (zeroForOne) {
+            state.accrued0 = 0;
+        } else {
+            state.accrued1 = 0;
+        }
+
+        emit AutoSettle(key.toId(), ghostAmount, proceeds, zeroForOne);
+    }
+
+    /// @notice Cross an epoch boundary: activate starting orders, snapshot earningsFactor, subtract expired
     function _crossEpoch(StreamPool storage stream, uint256 epoch) internal {
+        // Option E: activate deferred sell rates that start at this epoch
+        uint256 starting = stream.sellRateStartingAtInterval[epoch];
+        if (starting > 0) {
+            stream.sellRateCurrent += starting;
+        }
+
         uint256 expiring = stream.sellRateEndingAtInterval[epoch];
         if (expiring > 0) {
             stream.earningsFactorAtInterval[epoch] = stream
@@ -1246,6 +1426,7 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         );
 
         _accrueAndNet(key);
+        _executePendingSettles(key);
 
         PoolId poolId = key.toId();
         JITState storage state = poolStates[poolId];
@@ -1259,36 +1440,11 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             : state.stream1For0;
         if (stream.sellRateCurrent == 0) return;
 
-        // Market-sell ghost against the V4 pool (no price limit = accept full slippage)
-        SwapParams memory swapParams = SwapParams(
-            zeroForOne,
-            -int256(ghostAmount),
-            zeroForOne
-                ? TickMath.MIN_SQRT_PRICE + 1
-                : TickMath.MAX_SQRT_PRICE - 1
-        );
+        // Use shared settle function — swaps ghost against AMM, records earnings
+        _settleGhostAgainstPool(key, state, stream, ghostAmount, zeroForOne);
 
-        bytes memory result = poolManager.unlock(abi.encode(key, swapParams));
-        BalanceDelta delta = abi.decode(result, (BalanceDelta));
-
-        // Calculate swap proceeds
-        uint256 proceeds = zeroForOne
-            ? uint256(uint128(delta.amount1()))
-            : uint256(uint128(delta.amount0()));
-
-        // Record earnings so getCancelOrderState() reflects real value
-        if (proceeds > 0) {
-            _recordEarnings(stream, proceeds);
-        }
-
-        // Clear ghost
-        if (zeroForOne) {
-            state.accrued0 = 0;
-        } else {
-            state.accrued1 = 0;
-        }
-
-        emit ForceSettle(poolId, ghostAmount, proceeds, zeroForOne);
+        // Emit ForceSettle ADDITIONALLY for liquidation audit trail
+        emit ForceSettle(poolId, ghostAmount, 0, zeroForOne);
     }
 
     /// @notice V4 unlock callback for forceSettle swaps

@@ -52,6 +52,8 @@ interface IJTM {
         uint256 earningsFactorCurrent;
         mapping(uint256 => uint256) sellRateEndingAtInterval;
         mapping(uint256 => uint256) earningsFactorAtInterval;
+        /// @notice Sell rates that begin at a given interval (Option E: deferred start)
+        mapping(uint256 => uint256) sellRateStartingAtInterval;
     }
 
     /// @notice Core TWAMM state per V4 pool
@@ -67,14 +69,6 @@ interface IJTM {
         uint256 lastClearTimestamp;
         uint256 accrued0;
         uint256 accrued1;
-        /// @dev Orphaned accrued tokens awaiting donation to LPs.
-        /// When a TWAMM stream expires, any remaining accrued tokens that
-        /// were not cleared in time are moved here. They are donated to the
-        /// V4 pool (as LP fee income) on the next hook callback.
-        /// This eliminates the "hidden tax" where ~1 block of accrual
-        /// (sellRate * blockTime) would otherwise be permanently stranded.
-        uint256 pendingDonation0;
-        uint256 pendingDonation1;
         StreamPool stream0For1;
         StreamPool stream1For0;
         mapping(bytes32 => Order) orders;
@@ -111,7 +105,8 @@ interface IJTM {
         uint160 expiration,
         bool zeroForOne,
         uint256 sellRate,
-        uint256 earningsFactorLast
+        uint256 earningsFactorLast,
+        uint256 startEpoch
     );
 
     event CancelOrder(
@@ -136,17 +131,15 @@ interface IJTM {
         uint256 discount
     );
 
-    /// @notice Emitted when orphaned accrued tokens are donated to LPs
-    /// @dev This happens when a TWAMM stream expires with unsold accrued tokens.
-    ///      On mainnet (12s blocks), this is at most sellRate * 12 per order —
-    ///      the final block of accrual that cannot be cleared because clear()
-    ///      reverts once sellRateCurrent drops to 0 at the epoch boundary.
-    ///      Rather than stranding these tokens permanently, they are redirected
-    ///      to LPs as fee income on the next pool interaction.
-    event DustDonatedToLPs(
+    /// @notice Emitted when ghost tokens are auto-settled against the AMM pool
+    /// @dev Fires at epoch boundaries (when a stream expires) and on cancel
+    ///      (when the last order in a stream is cancelled). Ghost is swapped
+    ///      against the pool and proceeds recorded as earnings.
+    event AutoSettle(
         PoolId indexed poolId,
-        uint256 amount0,
-        uint256 amount1
+        uint256 ghostAmount,
+        uint256 proceeds,
+        bool zeroForOne
     );
 
     /// @notice Emitted when ghost balance is force-settled during liquidation
