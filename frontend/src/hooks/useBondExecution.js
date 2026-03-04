@@ -22,6 +22,7 @@ const ATOKEN_ABI = [
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)",
+  "function balanceOf(address owner) view returns (uint256)",
 ];
 
 
@@ -74,12 +75,11 @@ export function useBondExecution(
         return;
       }
 
-      // Bond factory address (from API or fallback)
-      const bondFactoryAddr = infrastructure?.bond_factory
-        || "0x0a5fF8eAE2104805E18a2F3646776d577Fc9Cf26";
+      // Bond factory address (from indexer API — no fallback)
+      const bondFactoryAddr = infrastructure?.bond_factory;
 
-      if (!infrastructure?.twamm_hook) {
-        setError("Missing infrastructure");
+      if (!bondFactoryAddr || !infrastructure?.twamm_hook) {
+        setError("Bond factory not available — waiting for config");
         return;
       }
 
@@ -88,9 +88,10 @@ export function useBondExecution(
       setStep("Preparing...");
 
       try {
-        // ── Get signer ──────────────────────────────────────────
-        setStep("Syncing chain ID...");
-        const signer = await getAnvilSigner();
+        // ── Direct RPC provider for read-only calls ─────────────
+        // Uses the Vite-proxied RPC (/rpc → Anvil) to avoid MetaMask
+        // RPC issues after simulation restarts.
+        const readProvider = new ethers.JsonRpcProvider(RPC_URL);
 
         // ── Build pool key ──────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
@@ -121,11 +122,11 @@ export function useBondExecution(
         let approveLabel = "waUSDC";
 
         if (useUnderlying) {
-          // Derive USDC address from WrappedAToken chain
+          // Derive USDC address from WrappedAToken chain (read-only, use direct RPC)
           try {
-            const wrapper = new ethers.Contract(collateralAddr, WRAPPED_ATOKEN_ABI, signer);
+            const wrapper = new ethers.Contract(collateralAddr, WRAPPED_ATOKEN_ABI, readProvider);
             const aTokenAddr = await wrapper.aToken();
-            const aToken = new ethers.Contract(aTokenAddr, ATOKEN_ABI, signer);
+            const aToken = new ethers.Contract(aTokenAddr, ATOKEN_ABI, readProvider);
             approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
             approveLabel = "USDC";
             console.log("[Bond] Using underlying:", approveTokenAddr);
@@ -134,13 +135,32 @@ export function useBondExecution(
           }
         }
 
-        // ── Ensure approval ─────────────────────────────────────
-        setStep("Checking approval...");
-        const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
-        const allowance = await tokenToApprove.allowance(account, bondFactoryAddr);
+        // ── Ensure approval (read-only check via direct RPC) ────
+        setStep("Checking balance...");
+        const tokenReader = new ethers.Contract(approveTokenAddr, ERC20_ABI, readProvider);
 
+        // Pre-flight balance check
+        const balance = await tokenReader.balanceOf(account);
+        if (balance < totalWei) {
+          const have = Number(ethers.formatUnits(balance, 6)).toFixed(2);
+          const need = Number(ethers.formatUnits(totalWei, 6)).toFixed(2);
+          setError(
+            `Insufficient ${approveLabel} — need $${need}, have $${have}`,
+          );
+          setExecuting(false);
+          return;
+        }
+
+        setStep("Checking approval...");
+        const allowance = await tokenReader.allowance(account, bondFactoryAddr);
+
+        // ── Get signer only when needed for transactions ────────
+        let signer;
         if (allowance < totalWei) {
+          setStep("Syncing chain ID...");
+          signer = await getAnvilSigner();
           setStep(`Approve ${approveLabel} for BondFactory...`);
+          const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
           const approveTx = await tokenToApprove.approve(
             bondFactoryAddr,
             ethers.MaxUint256,
@@ -150,6 +170,10 @@ export function useBondExecution(
         }
 
         // ── Mint bond (single TX) ───────────────────────────────
+        if (!signer) {
+          setStep("Syncing chain ID...");
+          signer = await getAnvilSigner();
+        }
         setStep("Minting bond...");
         const bondFactory = new ethers.Contract(
           bondFactoryAddr,
@@ -184,6 +208,7 @@ export function useBondExecution(
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
+        console.log(`[MintBond] Gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
           // Parse BondMinted event for broker address
@@ -270,10 +295,13 @@ export function useBondExecution(
         return;
       }
 
-      const bondFactoryAddr = infrastructure?.bond_factory
-        || "0x0a5fF8eAE2104805E18a2F3646776d577Fc9Cf26";
-      const brokerFactoryAddr = infrastructure?.broker_factory
-        || "0x7EF7a03e9d48188c349E4F8b1d57F72C9fE27732";
+      const bondFactoryAddr = infrastructure?.bond_factory;
+      const brokerFactoryAddr = infrastructure?.broker_factory;
+
+      if (!bondFactoryAddr || !brokerFactoryAddr) {
+        setError("Bond factory not available — waiting for config");
+        return;
+      }
 
       if (!infrastructure?.twamm_hook) {
         setError("Missing infrastructure");
@@ -306,12 +334,13 @@ export function useBondExecution(
         );
 
         const tx = await bondFactory.closeBond(brokerAddress, poolKeyArr, useUnderlying, {
-          gasLimit: 10_000_000,
+          gasLimit: 25_000_000,
         });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
+        console.log(`[CloseBond] Gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
           // Parse BondClosed event for return amounts

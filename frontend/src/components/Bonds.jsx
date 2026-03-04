@@ -35,7 +35,7 @@ export default function BondsPage() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [selectedBond, setSelectedBond] = useState(null);
   const [actionDropdown, setActionDropdown] = useState(null);
-  const [selectedToken, setSelectedToken] = useState("USDC"); // "USDC" or "waUSDC"
+  const [selectedToken, setSelectedToken] = useState("waUSDC"); // "USDC" or "waUSDC"
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
   const tokenDropdownRef = useRef(null);
   const { account, connectWallet, usdcBalance } = useWallet();
@@ -107,7 +107,9 @@ export default function BondsPage() {
     step: bondStep,
   } = useBondExecution(
     account,
-    marketInfo?.infrastructure,
+    marketInfo?.infrastructure
+      ? { ...marketInfo.infrastructure, broker_factory: marketInfo.broker_factory }
+      : undefined,
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,
   );

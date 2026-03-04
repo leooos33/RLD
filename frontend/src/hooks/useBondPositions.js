@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { RPC_URL } from "../utils/anvil";
+import { SIM_API } from "../config/simulationConfig";
 
 // ── ABI fragments ─────────────────────────────────────────────────
 
@@ -22,14 +23,15 @@ const ERC20_ABI = [
 ];
 
 /**
- * useBondPositions — Fetch real on-chain bond data for all bond broker NFTs.
+ * useBondPositions — Fetch bond data from indexer API + on-chain state.
  *
- * Each bond is an independent PrimeBroker clone. Created bonds are tracked
- * in localStorage under `rld_bonds_<account>` (list of broker addresses)
- * and `rld_bond_<broker>` (metadata: notional, rate, duration).
+ * Primary source: /api/bonds?owner=<account> (indexer)
+ * Fallback: localStorage bonds not yet indexed
+ *
+ * Each bond's live state (debt, TWAMM order, collateral) is enriched via RPC.
  *
  * @param {string}  account        Connected wallet address
- * @param {number}  entryRate      Fallback rate if no localStorage data
+ * @param {number}  entryRate      Fallback rate if no metadata
  * @param {number}  pollInterval   Polling ms (default 15000)
  */
 export function useBondPositions(account, entryRate, pollInterval = 15000) {
@@ -42,21 +44,55 @@ export function useBondPositions(account, entryRate, pollInterval = 15000) {
     try {
       setLoading(true);
 
-      // 1. Get list of bond broker addresses from localStorage
-      const listKey = `rld_bonds_${account.toLowerCase()}`;
-      const brokerAddresses = JSON.parse(localStorage.getItem(listKey) || "[]");
+      // 1. Fetch indexed bonds from API
+      let indexedBrokers = new Set();
+      let apiBonds = [];
+      try {
+        const res = await fetch(
+          `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all`,
+        );
+        if (res.ok) {
+          const data = await res.json();
+          apiBonds = data.bonds || [];
+          for (const b of apiBonds) {
+            indexedBrokers.add(b.broker_address?.toLowerCase());
+          }
+        }
+      } catch {
+        // API may be unavailable — fall through to localStorage
+      }
 
-      if (brokerAddresses.length === 0) {
+      // 2. Get localStorage bonds not yet in the indexer
+      const listKey = `rld_bonds_${account.toLowerCase()}`;
+      const localAddresses = JSON.parse(localStorage.getItem(listKey) || "[]");
+      const unindexed = localAddresses.filter(
+        (addr) => !indexedBrokers.has(addr.toLowerCase()),
+      );
+
+      // 3. Merge: all API bond addresses + unindexed localStorage addresses
+      const allBrokers = [
+        ...apiBonds.map((b) => b.broker_address),
+        ...unindexed,
+      ];
+
+      if (allBrokers.length === 0) {
         setBonds([]);
         return;
+      }
+
+      // Build lookup from indexed data for metadata
+      const indexedMeta = {};
+      for (const b of apiBonds) {
+        indexedMeta[b.broker_address?.toLowerCase()] = b;
       }
 
       const provider = new ethers.JsonRpcProvider(RPC_URL);
       const results = [];
 
-      for (const brokerAddr of brokerAddresses) {
+      for (const brokerAddr of allBrokers) {
         try {
-          const bond = await fetchSingleBond(provider, brokerAddr, entryRate);
+          const meta = indexedMeta[brokerAddr.toLowerCase()] || null;
+          const bond = await fetchSingleBond(provider, brokerAddr, entryRate, meta);
           if (bond) results.push(bond);
         } catch (err) {
           console.warn(`[BondPositions] Error fetching ${brokerAddr}:`, err.message);
@@ -80,9 +116,9 @@ export function useBondPositions(account, entryRate, pollInterval = 15000) {
   return { bonds, loading, refresh: fetchPositions };
 }
 
-// ── Fetch a single bond's on-chain + localStorage data ──────────
+// ── Fetch a single bond's on-chain + metadata ───────────────────
 
-async function fetchSingleBond(provider, brokerAddr, fallbackRate) {
+async function fetchSingleBond(provider, brokerAddr, fallbackRate, indexedMeta) {
   const broker = new ethers.Contract(brokerAddr, BROKER_ABI, provider);
 
   // Get core address + market ID
@@ -117,13 +153,24 @@ async function fetchSingleBond(provider, brokerAddr, fallbackRate) {
   const block = await provider.getBlock("latest");
   const now = BigInt(block.timestamp);
 
-  // Read saved metadata
+  // Read metadata: prefer indexer data, then localStorage
   let savedMeta = null;
-  try {
-    const key = `rld_bond_${brokerAddr.toLowerCase()}`;
-    const raw = localStorage.getItem(key);
-    if (raw) savedMeta = JSON.parse(raw);
-  } catch {}
+  if (indexedMeta) {
+    // Use indexed data from API
+    savedMeta = {
+      notionalUSD: Number(indexedMeta.notional || 0) / 1e6,
+      durationHours: (indexedMeta.duration || 0) / 3600,
+      createdAt: (indexedMeta.created_timestamp || 0) * 1000,
+      txHash: indexedMeta.created_tx || null,
+      ratePercent: fallbackRate || 0,
+    };
+  } else {
+    try {
+      const key = `rld_bond_${brokerAddr.toLowerCase()}`;
+      const raw = localStorage.getItem(key);
+      if (raw) savedMeta = JSON.parse(raw);
+    } catch {}
+  }
 
   // Compute values
   const normFactor = BigInt(marketState.normalizationFactor ?? marketState[0]);
@@ -151,9 +198,12 @@ async function fetchSingleBond(provider, brokerAddr, fallbackRate) {
     : remainingDays;
   const createdAt = savedMeta?.createdAt || 0;
 
-  // Elapsed
-  const elapsedMs = createdAt ? Date.now() - createdAt : 0;
-  const elapsedDays = Math.floor(elapsedMs / 86400000);
+  // Elapsed — use chain time (block.timestamp), NOT Date.now(),
+  // because the simulation runs on forked Ethereum timestamps (~Jan 2025)
+  // while wall-clock time is much later (~Mar 2026).
+  const chainNowMs = nowSec * 1000;
+  const elapsedMs = createdAt ? chainNowMs - createdAt : 0;
+  const elapsedDays = Math.max(0, Math.floor(elapsedMs / 86400000));
 
   // Accrued = notional × rate × elapsed/365
   const accrued = notional * (rate / 100) * (elapsedDays / 365);
@@ -177,5 +227,7 @@ async function fetchSingleBond(provider, brokerAddr, fallbackRate) {
     orderId,
     hasActiveOrder,
     txHash: savedMeta?.txHash || null,
+    // Indexed metadata (for closed bonds)
+    status: indexedMeta?.status || "active",
   };
 }
