@@ -8,9 +8,15 @@ import {PrimeBroker} from "../rld/broker/PrimeBroker.sol";
 import {PrimeBrokerFactory} from "../rld/core/PrimeBrokerFactory.sol";
 import {IERC20} from "../shared/interfaces/IERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
+import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {IJTM} from "../twamm/IJTM.sol";
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {IV4Quoter} from "v4-periphery/src/interfaces/IV4Quoter.sol";
 
 /// @dev Minimal interface for WrappedAToken (waUSDC, waUSDT, etc.)
 interface IWrappedAToken {
@@ -71,12 +77,13 @@ interface IAavePool {
 ///   Total: 1 wallet popup per action. Zero approvals for close.
 ///
 contract BondFactory is ReentrancyGuard {
+    using CurrencySettler for Currency;
     /* ============================= IMMUTABLES ============================= */
 
     /// @notice The PrimeBrokerFactory that deploys broker clones and mints NFTs
     PrimeBrokerFactory public immutable BROKER_FACTORY;
 
-    /// @notice The BrokerRouter for executing short positions
+    /// @notice The BrokerRouter for executing short positions (mint only)
     address public immutable ROUTER;
 
     /// @notice The TWAMM hook for streaming orders
@@ -84,6 +91,12 @@ contract BondFactory is ReentrancyGuard {
 
     /// @notice The collateral token (waUSDC)
     address public immutable COLLATERAL;
+
+    /// @notice Uniswap V4 PoolManager for direct swaps
+    IPoolManager public immutable POOL_MANAGER;
+
+    /// @notice V4 Quoter for exact output quotes
+    IV4Quoter public immutable QUOTER;
 
     /* =============================== STATE ================================ */
 
@@ -119,23 +132,38 @@ contract BondFactory is ReentrancyGuard {
     /// @notice Emitted when user returns NFT to BondFactory custody
     event BondReturned(address indexed user, address indexed broker);
 
+    /* ========================= SWAP CALLBACK ============================== */
+
+    /// @dev Data passed through PoolManager.unlock() for swap settlement
+    struct SwapCallback {
+        address sender;
+        PoolKey key;
+        SwapParams params;
+    }
+
     /* ============================ CONSTRUCTOR ============================= */
 
     constructor(
         address brokerFactory_,
         address router_,
         address twammHook_,
-        address collateral_
+        address collateral_,
+        address poolManager_,
+        address quoter_
     ) {
         require(brokerFactory_ != address(0), "Invalid factory");
         require(router_ != address(0), "Invalid router");
         require(twammHook_ != address(0), "Invalid twamm");
         require(collateral_ != address(0), "Invalid collateral");
+        require(poolManager_ != address(0), "Invalid poolManager");
+        require(quoter_ != address(0), "Invalid quoter");
 
         BROKER_FACTORY = PrimeBrokerFactory(brokerFactory_);
         ROUTER = router_;
         TWAMM_HOOK = twammHook_;
         COLLATERAL = collateral_;
+        POOL_MANAGER = IPoolManager(poolManager_);
+        QUOTER = IV4Quoter(quoter_);
     }
 
     /* =========================== MINT BOND ================================ */
@@ -148,16 +176,16 @@ contract BondFactory is ReentrancyGuard {
     ///   3. Execute short via BrokerRouter (we are NFT owner → authorized)
     ///   4. Submit TWAMM buy-back order (we are owner → authorized)
     ///   5. Freeze broker (we are owner → passes onlyOwner)
-    ///   6. Transfer NFT to user
+    ///   6. Track ownership in bondOwner mapping
     ///
     /// @param notional       Collateral for the short position (waUSDC, 6 decimals)
     /// @param hedgeAmount    Amount to allocate for TWAMM buy-back (waUSDC, 6 decimals)
     /// @param duration       TWAMM order duration in seconds
     /// @param poolKey        The Uniswap V4 pool key (wRLP/waUSDC)
-    /// @return broker        The deployed broker address (also the NFT token)
     /// @param useUnderlying If true, pull underlying (e.g. USDC) from user and
     ///                     auto-wrap to collateral (e.g. waUSDC). If false, pull
     ///                     collateral directly.
+    /// @return broker        The deployed broker address (also the NFT token)
     function mintBond(
         uint256 notional,
         uint256 hedgeAmount,
@@ -218,12 +246,16 @@ contract BondFactory is ReentrancyGuard {
 
     /// @notice Close a bond in a single transaction.
     ///
-    /// @dev Supports two ownership modes:
-    ///   - Custodied (default): NFT on BondFactory, verified via bondOwner mapping
-    ///   - Claimed: NFT on user, pulled via transferFrom (requires approval)
+    /// @dev Self-contained flow — no BrokerRouter dependency:
+    ///   1. Verify ownership (custodied or claimed)
+    ///   2. Unfreeze broker
+    ///   3. Cancel/claim TWAMM order
+    ///   4. If wRLP shortfall: quote exact amount → withdraw waUSDC → swap on V4 → repay debt
+    ///   5. Convert leftover wRLP → waUSDC via V4 swap
+    ///   6. Withdraw collateral to user (optionally unwrap to USDC)
     ///
     /// @param broker         The bond's PrimeBroker address
-    /// @param poolKey        The Uniswap V4 pool key (needed for potential closeShort)
+    /// @param poolKey        The Uniswap V4 pool key (needed for swaps)
     /// @param useUnderlying  If true, unwrap collateral to underlying (e.g. USDC)
     ///                       before returning to user
     function closeBond(
@@ -251,20 +283,17 @@ contract BondFactory is ReentrancyGuard {
         // ── 3. Handle TWAMM order ───────────────────────────────────────
         (, , bytes32 orderId) = pb.activeTwammOrder();
         if (orderId != bytes32(0)) {
-            // Read order expiration
             (, IJTM.OrderKey memory orderKey, ) = pb.activeTwammOrder();
             uint256 expiration = uint256(orderKey.expiration);
 
             if (block.timestamp >= expiration) {
-                // Expired → claim tokens (no whenNotFrozen needed)
                 pb.claimExpiredTwammOrder();
             } else {
-                // Active → cancel (returns earned + refund)
                 pb.cancelTwammOrder();
             }
         }
 
-        // ── 4. Check wRLP balance vs debt ───────────────────────────────
+        // ── 4. Repay wRLP debt ──────────────────────────────────────────
         address coreAddr = pb.CORE();
         MarketId mktId = pb.marketId();
         bytes32 rawMarketId = MarketId.unwrap(mktId);
@@ -275,93 +304,55 @@ contract BondFactory is ReentrancyGuard {
         );
         uint128 debtPrincipal = pos.debtPrincipal;
 
-        // Grant Router operator access for closeShort/closeLong calls
-        pb.setOperator(ROUTER, true);
-
         if (debtPrincipal > 0) {
             address positionToken = pb.positionToken();
             uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
 
-            // If wRLP insufficient, buy the shortfall via BrokerRouter
+            // If wRLP insufficient, buy the exact shortfall via V4 swap
             if (wrlpBalance < debtPrincipal) {
-                address collToken = pb.collateralToken();
-                uint256 waUSDCBal = ERC20(collToken).balanceOf(broker);
-
-                if (waUSDCBal > 0) {
-                    (bool ok, ) = ROUTER.call(
-                        abi.encodeWithSignature(
-                            "closeShort(address,uint256,(address,address,uint24,int24,address))",
-                            broker,
-                            waUSDCBal,
-                            poolKey
-                        )
-                    );
-                    if (!ok) {
-                        (ok, ) = ROUTER.call(
-                            abi.encodeWithSignature(
-                                "closeShort(address,uint256,(address,address,uint24,int24,address))",
-                                broker,
-                                waUSDCBal / 2,
-                                poolKey
-                            )
-                        );
-                    }
-                }
+                uint256 shortfall = debtPrincipal - wrlpBalance;
+                _buyExactWRLP(pb, shortfall, positionToken, poolKey);
             }
 
-            // Re-fetch debt and balance after closeShort
-            pos = IRLDCore(coreAddr).getPosition(mktId, broker);
-            debtPrincipal = pos.debtPrincipal;
+            // Re-fetch wRLP balance after swap
+            uint256 availableWRLP = ERC20(positionToken).balanceOf(broker);
+            uint256 repayAmount = availableWRLP < debtPrincipal
+                ? availableWRLP
+                : debtPrincipal;
 
-            // ── 5. Repay remaining debt (capped to available wRLP) ──────
-            if (debtPrincipal > 0) {
-                address posToken2 = pb.positionToken();
-                uint256 availableWRLP = ERC20(posToken2).balanceOf(broker);
-                uint256 repayAmount = availableWRLP < debtPrincipal
-                    ? availableWRLP
-                    : debtPrincipal;
-
-                if (repayAmount > 0) {
-                    pb.modifyPosition(
-                        rawMarketId,
-                        int256(0),
-                        -int256(repayAmount)
-                    );
-                }
+            if (repayAmount > 0) {
+                pb.modifyPosition(rawMarketId, int256(0), -int256(repayAmount));
             }
         }
 
-        // ── 6. Convert any leftover wRLP → waUSDC ───────────────────────
+        // ── 5. Convert leftover wRLP → waUSDC ───────────────────────────
         {
             address positionToken = pb.positionToken();
             uint256 leftoverWRLP = ERC20(positionToken).balanceOf(broker);
             if (leftoverWRLP > 0) {
-                // closeLong swaps wRLP → waUSDC, proceeds stay in broker
-                ROUTER.call(
-                    abi.encodeWithSignature(
-                        "closeLong(address,uint256,(address,address,uint24,int24,address))",
-                        broker,
-                        leftoverWRLP,
-                        poolKey
-                    )
+                // Withdraw wRLP from broker → this contract
+                pb.withdrawPositionToken(address(this), leftoverWRLP);
+                // Swap wRLP → waUSDC on V4
+                uint256 waUSDCReceived = _swapExactInput(
+                    positionToken,
+                    COLLATERAL,
+                    leftoverWRLP,
+                    poolKey
                 );
+                // Send waUSDC to broker so it's included in final withdrawal
+                IERC20(COLLATERAL).transfer(broker, waUSDCReceived);
             }
         }
 
-        // Revoke Router operator access
-        pb.setOperator(ROUTER, false);
-
-        // ── 7. Withdraw collateral ───────────────────────────────────────
+        // ── 6. Withdraw collateral ───────────────────────────────────────
         address collateralToken = pb.collateralToken();
         uint256 collBal = ERC20(collateralToken).balanceOf(broker);
 
         if (collBal > 0) {
             if (useUnderlying) {
-                // Withdraw waUSDC to this contract, then unwrap → USDC to user
                 pb.withdrawCollateral(address(this), collBal);
                 _unwrapAndSend(collBal, msg.sender);
             } else {
-                // Withdraw waUSDC directly to user
                 pb.withdrawCollateral(msg.sender, collBal);
             }
         }
@@ -390,6 +381,138 @@ contract BondFactory is ReentrancyGuard {
         BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
         bondOwner[broker] = msg.sender;
         emit BondReturned(msg.sender, broker);
+    }
+
+    /* ========================= V4 SWAP HELPERS ============================ */
+
+    /// @dev Buy exact amount of wRLP by swapping waUSDC from the broker.
+    ///      Uses quoter to determine exact waUSDC needed, then swaps on V4.
+    function _buyExactWRLP(
+        PrimeBroker pb,
+        uint256 wrlpNeeded,
+        address positionToken,
+        PoolKey calldata poolKey
+    ) internal {
+        address collToken = pb.collateralToken();
+
+        // 1. Quote exact waUSDC input needed for wrlpNeeded output
+        bool zeroForOne = collToken < positionToken;
+        (uint256 amountIn, ) = QUOTER.quoteExactOutputSingle(
+            IV4Quoter.QuoteExactSingleParams({
+                poolKey: poolKey,
+                zeroForOne: zeroForOne,
+                exactAmount: uint128(wrlpNeeded),
+                hookData: new bytes(0)
+            })
+        );
+
+        // 2. Withdraw exactly amountIn waUSDC from broker to this contract
+        pb.withdrawCollateral(address(this), amountIn);
+
+        // 3. Swap waUSDC → wRLP on V4 (exact input = amountIn)
+        uint256 wrlpReceived = _swapExactInput(
+            collToken,
+            positionToken,
+            amountIn,
+            poolKey
+        );
+
+        // 4. Transfer wRLP to broker for debt repayment
+        IERC20(positionToken).transfer(address(pb), wrlpReceived);
+    }
+
+    /// @dev Swap exact input amount on V4 pool. Returns output amount.
+    function _swapExactInput(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        PoolKey calldata poolKey
+    ) internal returns (uint256 amountOut) {
+        bool zeroForOne = tokenIn < tokenOut;
+
+        SwapParams memory swapParams = SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: -int256(amountIn), // negative = exact input
+            sqrtPriceLimitX96: zeroForOne
+                ? uint160(4295128740) // MIN_SQRT_PRICE + 1
+                : uint160(1461446703485210103287273052203988822378723970341) // MAX_SQRT_PRICE - 1
+        });
+
+        // Approve PoolManager to pull input tokens
+        IERC20(tokenIn).approve(address(POOL_MANAGER), amountIn);
+
+        BalanceDelta delta = abi.decode(
+            POOL_MANAGER.unlock(
+                abi.encode(
+                    SwapCallback({
+                        sender: address(this),
+                        key: poolKey,
+                        params: swapParams
+                    })
+                )
+            ),
+            (BalanceDelta)
+        );
+
+        // Output is the positive delta on the output side
+        amountOut = zeroForOne
+            ? uint256(int256(delta.amount1()))
+            : uint256(int256(delta.amount0()));
+    }
+
+    /// @notice Uniswap V4 swap settlement callback
+    /// @dev Called by PoolManager during unlock(). Settles token transfers.
+    function unlockCallback(
+        bytes calldata rawData
+    ) external returns (bytes memory) {
+        require(msg.sender == address(POOL_MANAGER), "Not PoolManager");
+
+        SwapCallback memory data = abi.decode(rawData, (SwapCallback));
+
+        BalanceDelta delta = POOL_MANAGER.swap(
+            data.key,
+            data.params,
+            new bytes(0)
+        );
+
+        // Settle: pay tokens we owe, take tokens we're owed
+        if (data.params.zeroForOne) {
+            if (delta.amount0() < 0) {
+                data.key.currency0.settle(
+                    POOL_MANAGER,
+                    data.sender,
+                    uint256(-int256(delta.amount0())),
+                    false
+                );
+            }
+            if (delta.amount1() > 0) {
+                data.key.currency1.take(
+                    POOL_MANAGER,
+                    data.sender,
+                    uint256(int256(delta.amount1())),
+                    false
+                );
+            }
+        } else {
+            if (delta.amount1() < 0) {
+                data.key.currency1.settle(
+                    POOL_MANAGER,
+                    data.sender,
+                    uint256(-int256(delta.amount1())),
+                    false
+                );
+            }
+            if (delta.amount0() > 0) {
+                data.key.currency0.take(
+                    POOL_MANAGER,
+                    data.sender,
+                    uint256(int256(delta.amount0())),
+                    false
+                );
+            }
+        }
+
+        return abi.encode(delta);
     }
 
     /* =========================== INTERNAL ================================= */

@@ -82,7 +82,7 @@ cd /workspace/contracts
 
 log_step "1.1" "Deploying RLD Protocol..."
 DEPLOY_OUTPUT=$(forge script script/DeployRLDProtocol.s.sol --tc DeployRLDProtocol \
-    --rpc-url "$RPC_URL" --broadcast -v 2>&1)
+    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
 
 if ! echo "$DEPLOY_OUTPUT" | grep -q "DEPLOYMENT COMPLETE"; then
     echo "$DEPLOY_OUTPUT"
@@ -139,7 +139,7 @@ cd /workspace/contracts
 log_step "2.1" "Deploying wrapped market..."
 MARKET_OUTPUT=$(USE_MOCK_ORACLE=true MOCK_ORACLE=$MOCK_ORACLE \
     forge script script/DeployWrappedMarket.s.sol --tc DeployWrappedMarket \
-    --rpc-url "$RPC_URL" --broadcast -v 2>&1)
+    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
 
 if ! echo "$MARKET_OUTPUT" | grep -q "WRAPPED MARKET CREATED"; then
     echo "$MARKET_OUTPUT"
@@ -372,7 +372,7 @@ cd /workspace/contracts
 AUSDC_AMOUNT=$LP_WEI WRLP_AMOUNT=$LP_WEI \
     WAUSDC=$WAUSDC POSITION_TOKEN=$POSITION_TOKEN TWAMM_HOOK=$TWAMM_HOOK \
     forge script script/AddLiquidityWrapped.s.sol --tc AddLiquidityWrappedScript \
-    --rpc-url "$RPC_URL" --broadcast -v > /tmp/lp_output.log 2>&1 || true
+    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v > /tmp/lp_output.log 2>&1 || true
 
 if grep -q "LP Position Created" /tmp/lp_output.log; then
     log_ok "LP position created"
@@ -460,7 +460,7 @@ export RPC_URL DEPLOYER_KEY MM_KEY CHAOS_KEY WAUSDC POSITION_TOKEN
 
 cd /workspace/contracts
 ROUTER_OUTPUT=$(forge script script/DeploySwapRouter.s.sol --tc DeploySwapRouter \
-    --rpc-url "$RPC_URL" --broadcast -v 2>&1)
+    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
 
 SWAP_ROUTER=$(echo "$ROUTER_OUTPUT" | grep "SWAP_ROUTER:" | awk -F: '{print $NF}' | tr -d ' ')
 if [ -z "$SWAP_ROUTER" ]; then
@@ -527,6 +527,34 @@ for name, key_env in [('MM', 'MM_KEY'), ('Chaos', 'CHAOS_KEY')]:
 fi
 
 # ═══════════════════════════════════════════════════════════════
+# PHASE 4.5: DEPLOY BONDFACTORY
+# ═══════════════════════════════════════════════════════════════
+log_phase "4.5" "DEPLOY BONDFACTORY"
+
+cd /workspace/contracts
+
+log_step "4.5" "Deploying BondFactory (single-TX bond mint/close)..."
+BOND_FACTORY=$(forge create src/periphery/BondFactory.sol:BondFactory \
+    --private-key $DEPLOYER_KEY \
+    --rpc-url $RPC_URL \
+    --broadcast \
+    --constructor-args \
+        $BROKER_FACTORY_ADDR \
+        $BROKER_ROUTER \
+        $TWAMM_HOOK \
+        $WAUSDC \
+        $POOL_MANAGER \
+        $V4_QUOTER \
+    2>&1 | grep "Deployed to:" | awk '{print $3}')
+
+if [ -n "$BOND_FACTORY" ]; then
+    log_ok "BondFactory: $BOND_FACTORY"
+else
+    log_info "BondFactory deploy failed (non-critical)"
+    BOND_FACTORY=""
+fi
+
+# ═══════════════════════════════════════════════════════════════
 # PHASE 5: WRITE DEPLOYMENT CONFIG
 # ═══════════════════════════════════════════════════════════════
 log_phase "5" "WRITE DEPLOYMENT CONFIG"
@@ -545,6 +573,7 @@ cat > /config/deployment.json << EOF
     "position_token": "$POSITION_TOKEN",
     "broker_factory": "$BROKER_FACTORY_ADDR",
     "swap_router": "$SWAP_ROUTER",
+    "bond_factory": "$BOND_FACTORY",
     "pool_manager": "$POOL_MANAGER",
     "pool_id": "$POOL_ID",
     "v4_quoter": "$V4_QUOTER",

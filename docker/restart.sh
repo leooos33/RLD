@@ -223,12 +223,16 @@ step "2b" "Starting Anvil (fork block $FORK_BLOCK)..."
 dim "Fork URL: ${MAINNET_RPC_URL%%\?*}..."
 dim "Log file: $ANVIL_LOG"
 
+# Ensure state dump directory exists (for crash recovery via anvil-rotate.sh)
+mkdir -p /tmp/anvil-state
+
 nohup anvil \
     --fork-url "$MAINNET_RPC_URL" \
     --fork-block-number "$FORK_BLOCK" \
     --chain-id 31337 \
     --block-time 1 \
     --host "$ANVIL_HOST" \
+    --dump-state /tmp/anvil-state/state.json \
     > "$ANVIL_LOG" 2>&1 &
 
 ANVIL_PID=$!
@@ -493,6 +497,17 @@ else
     step "7a" "Installing cron job for status.json generation..."
     (sudo crontab -l 2>/dev/null; echo "$CRON_LINE") | sudo crontab -
     ok "Cron job installed: generate-status.sh (every minute)"
+fi
+
+# 7b. Anvil rotation cron (every 12 hours — prevents OOM from memory leak)
+ROTATE_SCRIPT="$SCRIPT_DIR/scripts/anvil-rotate.sh"
+ROTATE_CRON="0 */12 * * * $ROTATE_SCRIPT >> /tmp/anvil-rotate.log 2>&1"
+if crontab -l 2>/dev/null | grep -qF "anvil-rotate.sh"; then
+    ok "Cron job already exists for anvil-rotate.sh"
+else
+    step "7b" "Installing cron job for Anvil rotation (every 12h)..."
+    (crontab -l 2>/dev/null; echo "$ROTATE_CRON") | crontab -
+    ok "Cron job installed: anvil-rotate.sh (every 12 hours)"
 fi
 
 # ─── TIMESTAMP SYNC DAEMON ─────────────────────────────────────
