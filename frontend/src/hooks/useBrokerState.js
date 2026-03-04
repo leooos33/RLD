@@ -125,87 +125,119 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
       // Normalization factor as a human-readable multiplier (e.g., 1.05 = 5% funding accrued)
       const normFactorDisplay = normFactor / 1e18;
 
-      // LP position details
-      let lpPosition = null;
-      const tokenId = Number(activeTokenId);
-      if (tokenId > 0) {
-        const posmAddr = marketInfo?.infrastructure?.v4_position_manager;
-        const stateViewAddr = marketInfo?.infrastructure?.v4_state_view;
-        const twammHook = marketInfo?.infrastructure?.twamm_hook;
-        const posToken = marketInfo?.position_token?.address;
-        const colToken = marketInfo?.collateral?.address;
+      // LP position details — enumerate ALL positions owned by broker
+      const lpPositions = [];
+      const activeTokenIdNum = Number(activeTokenId);
+      const posmAddr = marketInfo?.infrastructure?.v4_position_manager;
+      const stateViewAddr = marketInfo?.infrastructure?.v4_state_view;
+      const twammHook = marketInfo?.infrastructure?.twamm_hook;
+      const posToken = marketInfo?.position_token?.address;
+      const colToken = marketInfo?.collateral?.address;
 
-        if (posmAddr && stateViewAddr && twammHook && posToken && colToken) {
-          try {
-            const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
-            const [infoBytes, liquidity] = await Promise.all([
-              posm.positionInfo(tokenId),
-              posm.getPositionLiquidity(tokenId),
-            ]);
+      if (posmAddr && stateViewAddr && twammHook && posToken && colToken) {
+        try {
+          const posm = new ethers.Contract(posmAddr, [
+            ...POSM_ABI,
+            "function ownerOf(uint256 tokenId) view returns (address)",
+            "function balanceOf(address owner) view returns (uint256)",
+          ], provider);
 
-            const { tickLower, tickUpper } = decodePositionInfo(infoBytes);
-
-            // Get current tick from StateView
-            const [c0, c1] = posToken.toLowerCase() < colToken.toLowerCase()
-              ? [posToken, colToken] : [colToken, posToken];
-            const tickSpacing = marketInfo?.infrastructure?.tick_spacing || 5;
-            const poolId = ethers.keccak256(
-              ethers.AbiCoder.defaultAbiCoder().encode(
-                ["address", "address", "uint24", "int24", "address"],
-                [c0, c1, 500, tickSpacing, twammHook],
-              ),
-            );
-            const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
-            const slot0 = await stateView.getSlot0(poolId);
-            const currentTick = Number(slot0.tick);
-
-            const priceLower = tickToPrice(tickLower);
-            const priceUpper = tickToPrice(tickUpper);
-            const currentPrice = tickToPrice(currentTick);
-            const { amount0, amount1 } = liquidityToAmounts(
-              liquidity, tickLower, tickUpper, currentTick,
-            );
-
-            const inRange = currentTick >= tickLower && currentTick < tickUpper;
-
-            // Fetch entry price from Transfer event + indexer
-            let entryPrice = null;
-            try {
-              const transferFilter = posm.filters.Transfer(null, brokerAddress, tokenId);
-              const transferLogs = await posm.queryFilter(transferFilter, 0, "latest");
-              if (transferLogs.length > 0) {
-                const mintBlock = transferLogs[0].blockNumber;
-                const res = await fetch(`/api/block/${mintBlock}`);
-                if (res.ok) {
-                  const data = await res.json();
-                  entryPrice = data.pool_states?.[0]?.mark_price || null;
-                }
-              }
-            } catch (e) {
-              console.warn("[BrokerState] entry price fetch failed:", e);
-            }
-
-            lpPosition = {
-              tokenId,
-              tickLower,
-              tickUpper,
-              priceLower: priceLower.toFixed(4),
-              priceUpper: priceUpper.toFixed(4),
-              currentPrice: currentPrice.toFixed(4),
-              entryPrice: entryPrice ? parseFloat(entryPrice).toFixed(4) : null,
-              amount0,
-              amount1,
-              inRange,
-              value: v4LPValue,
-            };
-          } catch (e) {
-            console.warn("[BrokerState] LP position fetch failed:", e);
-            lpPosition = { tokenId, value: v4LPValue };
+          // Discover token IDs: scan Transfer events TO this broker
+          const inFilter = posm.filters.Transfer(null, brokerAddress);
+          const inEvents = await posm.queryFilter(inFilter, 0, "latest");
+          const candidateIds = new Set();
+          for (const ev of inEvents) {
+            candidateIds.add(Number(ev.args.tokenId));
           }
-        } else {
-          lpPosition = { tokenId, value: v4LPValue };
+          // Also include activeTokenId if set
+          if (activeTokenIdNum > 0) candidateIds.add(activeTokenIdNum);
+
+          // Verify current ownership and fetch details for each
+          const [c0, c1] = posToken.toLowerCase() < colToken.toLowerCase()
+            ? [posToken, colToken] : [colToken, posToken];
+          const tickSpacing = marketInfo?.infrastructure?.tick_spacing || 5;
+          const poolId = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ["address", "address", "uint24", "int24", "address"],
+              [c0, c1, 500, tickSpacing, twammHook],
+            ),
+          );
+          const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
+          const slot0 = await stateView.getSlot0(poolId);
+          const currentTick = Number(slot0.tick);
+
+          for (const tokenId of candidateIds) {
+            try {
+              const owner = await posm.ownerOf(tokenId);
+              if (owner.toLowerCase() !== brokerAddress.toLowerCase()) continue;
+
+              const [infoBytes, liquidity] = await Promise.all([
+                posm.positionInfo(tokenId),
+                posm.getPositionLiquidity(tokenId),
+              ]);
+
+              if (Number(liquidity) === 0) continue; // Skip burned/empty positions
+
+              const { tickLower, tickUpper } = decodePositionInfo(infoBytes);
+              const priceLower = tickToPrice(tickLower);
+              const priceUpper = tickToPrice(tickUpper);
+              const currentPrice = tickToPrice(currentTick);
+              const { amount0, amount1 } = liquidityToAmounts(
+                liquidity, tickLower, tickUpper, currentTick,
+              );
+              const inRange = currentTick >= tickLower && currentTick < tickUpper;
+              const isActive = tokenId === activeTokenIdNum;
+
+              // Fetch entry price from Transfer event
+              let entryPrice = null;
+              try {
+                const transferFilter = posm.filters.Transfer(null, brokerAddress, tokenId);
+                const transferLogs = await posm.queryFilter(transferFilter, 0, "latest");
+                if (transferLogs.length > 0) {
+                  const mintBlock = transferLogs[0].blockNumber;
+                  const res = await fetch(`/api/block/${mintBlock}`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    entryPrice = data.pool_states?.[0]?.mark_price || null;
+                  }
+                }
+              } catch (e) {
+                // non-critical
+              }
+
+              // Value: use V4 contract value for active, estimate for others
+              const posValue = isActive
+                ? v4LPValue
+                : (amount0 * currentPrice + amount1);
+
+              lpPositions.push({
+                tokenId,
+                tickLower,
+                tickUpper,
+                priceLower: priceLower.toFixed(4),
+                priceUpper: priceUpper.toFixed(4),
+                currentPrice: currentPrice.toFixed(4),
+                entryPrice: entryPrice ? parseFloat(entryPrice).toFixed(4) : null,
+                amount0,
+                amount1,
+                inRange,
+                isActive,
+                value: posValue,
+              });
+            } catch (e) {
+              // Token may have been burned or transferred away
+            }
+          }
+        } catch (e) {
+          console.warn("[BrokerState] LP enumeration failed:", e);
         }
       }
+
+      // Sort: active position first, then by value descending
+      lpPositions.sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0) || b.value - a.value);
+
+      // Backward-compat: provide single lpPosition (active one or first)
+      const lpPosition = lpPositions.find(p => p.isActive) || lpPositions[0] || null;
 
       const parsed = {
         collateralBalance,
@@ -221,8 +253,9 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
         isSolvent: fullState.isSolvent,
         colRatio,
         normFactor: normFactorDisplay,
-        activeTokenId: tokenId,
+        activeTokenId: activeTokenIdNum,
         lpPosition,
+        lpPositions,
       };
 
       if (mountedRef.current) {

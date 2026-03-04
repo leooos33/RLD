@@ -555,7 +555,26 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# PHASE 5: WRITE DEPLOYMENT CONFIG
+# PHASE 4.6: DEPLOY BROKER EXECUTOR
+# ═══════════════════════════════════════════════════════════════
+log_phase "4.6" "DEPLOY BROKER EXECUTOR"
+
+cd /workspace/contracts
+
+log_step "4.6" "Deploying BrokerExecutor (atomic multicall with ephemeral operator)..."
+BROKER_EXECUTOR=$(forge create src/periphery/BrokerExecutor.sol:BrokerExecutor \
+    --private-key $DEPLOYER_KEY \
+    --rpc-url $RPC_URL \
+    --broadcast \
+    2>&1 | grep "Deployed to:" | awk '{print $3}')
+
+if [ -n "$BROKER_EXECUTOR" ]; then
+    log_ok "BrokerExecutor: $BROKER_EXECUTOR"
+else
+    log_info "BrokerExecutor deploy failed (non-critical)"
+    BROKER_EXECUTOR=""
+fi
+
 # ═══════════════════════════════════════════════════════════════
 log_phase "5" "WRITE DEPLOYMENT CONFIG"
 
@@ -574,6 +593,7 @@ cat > /config/deployment.json << EOF
     "broker_factory": "$BROKER_FACTORY_ADDR",
     "swap_router": "$SWAP_ROUTER",
     "bond_factory": "$BOND_FACTORY",
+    "broker_executor": "$BROKER_EXECUTOR",
     "pool_manager": "$POOL_MANAGER",
     "pool_id": "$POOL_ID",
     "v4_quoter": "$V4_QUOTER",

@@ -228,6 +228,21 @@ export default function SimulationTerminal() {
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
   const [activeAction, setActiveAction] = useState(null);
+  const [actionsHeight, setActionsHeight] = useState(null);
+  const actionsRef = useRef(null);
+
+  // Sync Operations panel height to Actions panel (when inactive)
+  useEffect(() => {
+    const el = actionsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (!activeAction) setActionsHeight(el.offsetHeight);
+    });
+    ro.observe(el);
+    if (!activeAction) setActionsHeight(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [activeAction]);
+
   const [tradeAction, setTradeAction] = useState("OPEN"); // OPEN or CLOSE
   const [collateral, setCollateral] = useState(1000);
   const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
@@ -1121,7 +1136,7 @@ export default function SimulationTerminal() {
             <div className="xl:col-span-9 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             {/* Your Position (2/3 width) */}
             <div className="lg:col-span-2 border border-white/10 flex flex-col">
-              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
                 <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                   <Wallet size={14} className="text-gray-500" />
                   Your Position
@@ -1171,19 +1186,37 @@ export default function SimulationTerminal() {
                 ) : (
                   <>
                     {/* Top metrics row */}
-                    <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
-                      {[
-                        { label: "NAV", value: brokerState ? `$${brokerState.nav.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
-                        { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
-                        { label: "Health", value: brokerState ? (brokerState.healthFactor === Infinity ? "∞" : `${brokerState.healthFactor.toFixed(2)}x`) : "—", color: brokerState && brokerState.healthFactor < 1.5 ? "text-red-400" : "text-green-400" },
-                        { label: "Col. Ratio", value: brokerState ? (brokerState.colRatio === Infinity ? "∞" : `${brokerState.colRatio.toFixed(0)}%`) : "—", color: brokerState && brokerState.colRatio < 150 ? "text-red-400" : brokerState && brokerState.colRatio < 200 ? "text-yellow-400" : "text-green-400" },
-                      ].map((m) => (
-                        <div key={m.label} className="p-4 text-center">
-                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
-                          <div className={`text-lg font-light font-mono tracking-tight ${m.color}`}>{m.value}</div>
+                    {(() => {
+                      // Collateral = contract's netAccountValue (on-chain recognized: tracked LP, TWAMM, tokens - debt)
+                      const collateral = brokerState ? brokerState.nav : null;
+
+                      // NAV = true net value = all assets (collateral + untracked) - debt
+                      const untrackedLPValue = (brokerState?.lpPositions || [])
+                        .filter(lp => !lp.isActive)
+                        .reduce((sum, lp) => sum + (lp.value || 0), 0);
+                      const totalNav = collateral !== null ? collateral + untrackedLPValue - brokerState.debtValue : null;
+
+                      // Col. ratio uses on-chain collateral (what protocol sees for risk)
+                      const totalColRatio = brokerState && brokerState.debtValue > 0
+                        ? brokerState.colRatio
+                        : Infinity;
+
+                      return (
+                        <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
+                          {[
+                            { label: "NAV", value: totalNav !== null ? `$${totalNav.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                            { label: "Collateral", value: collateral !== null ? `$${collateral.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                            { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
+                            { label: "Col. Ratio", value: totalColRatio === Infinity ? "∞" : `${totalColRatio.toFixed(0)}%`, color: totalColRatio < 150 ? "text-red-400" : totalColRatio < 200 ? "text-yellow-400" : "text-green-400" },
+                          ].map((m) => (
+                            <div key={m.label} className="p-4 text-center">
+                              <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
+                              <div className={`text-lg font-light font-mono tracking-tight ${m.color}`}>{m.value}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })()}
 
                     {/* Two-column: Assets | Debt */}
                     <div className="grid grid-cols-2 divide-x divide-white/10">
@@ -1195,7 +1228,7 @@ export default function SimulationTerminal() {
                           <div className="flex items-center gap-3">
                             <div className="flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
-                              <span className="text-xs text-gray-600">Tracked in NAV</span>
+                              <span className="text-xs text-gray-600">Tracked</span>
                             </div>
                             <div className="flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
@@ -1251,17 +1284,16 @@ export default function SimulationTerminal() {
                         <div>
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">LP Positions</div>
                           <div className="space-y-1">
-                            {brokerState?.lpPosition ? (() => {
-                              const lp = brokerState.lpPosition;
+                            {(brokerState?.lpPositions?.length > 0) ? brokerState.lpPositions.map((lp) => {
                               const lpKey = `lp-${lp.tokenId}`;
                               return (
-                                <div className="relative">
+                                <div key={lpKey} className="relative">
                                   <button
                                     onClick={() => setPositionDropdown(positionDropdown === lpKey ? null : lpKey)}
                                     className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                                      <span className={`w-1.5 h-1.5 rounded-full ${lp.isActive ? "bg-cyan-500" : "bg-gray-600"}`} />
                                       {lp.priceLower && (
                                         <span className="text-sm text-gray-600 font-mono">{lp.priceLower} — {lp.priceUpper}</span>
                                       )}
@@ -1295,12 +1327,15 @@ export default function SimulationTerminal() {
                                           <div className="flex justify-between"><span>Entry Price</span><span>{lp.entryPrice}</span></div>
                                         )}
                                         <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${lp.value.toFixed(2)}</span></div>
+                                        {lp.isActive && (
+                                          <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
+                                        )}
                                       </div>
                                     </div>
                                   )}
                                 </div>
                               );
-                            })() : (
+                            }) : (
                               <div className="text-sm text-gray-600 font-mono px-6 py-2">No LP positions</div>
                             )}
                           </div>
@@ -1357,6 +1392,7 @@ export default function SimulationTerminal() {
                                           cancelTwammOrder(() => {
                                             refreshTwamm();
                                             addToast({ type: "success", title: "Order Cancelled" });
+                                            refreshBrokerState?.();
                                           });
                                         }}
                                         disabled={cancellingTwamm}
@@ -1432,8 +1468,8 @@ export default function SimulationTerminal() {
             </div>
 
             {/* Actions panel (1/3 of col-span-9) */}
-            <div className="border border-white/10 flex flex-col">
-                <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+            <div ref={actionsRef} className="border border-white/10 flex flex-col">
+                <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
                   <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                     <Layers size={14} className="text-gray-500" />
                     Actions
@@ -1483,6 +1519,7 @@ export default function SimulationTerminal() {
                         account={account}
                         addToast={addToast}
                         marketInfo={marketInfo}
+                        onStateChange={refreshBrokerState}
                       />
                     )}
                     </React.Fragment>
@@ -1493,8 +1530,8 @@ export default function SimulationTerminal() {
 
             {/* Right: Operations panel (col-span-3) */}
             <div className="xl:col-span-3">
-              <div className="border border-white/10 flex flex-col">
-              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+              <div className="border border-white/10 flex flex-col" style={actionsHeight && !activeAction ? { maxHeight: actionsHeight, overflow: 'hidden' } : undefined}>
+              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
                 <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                   <Activity size={14} className="text-gray-500" />
                   Operations
@@ -1527,7 +1564,7 @@ export default function SimulationTerminal() {
                   </button>
                 )}
               </div>
-              <div className="p-6 flex-1">
+              <div className="p-6 flex-1 overflow-y-auto">
                 <OperationsFeed
                   operations={operations}
                   loading={opsLoading}
@@ -1551,6 +1588,7 @@ export default function SimulationTerminal() {
           // Refresh broker state & show toast
           if (addr) {
             fetchBrokerBalance(addr);
+            refreshBrokerState?.();
             addToast({
               type: "success",
               title: "Account Created",
@@ -1581,6 +1619,7 @@ export default function SimulationTerminal() {
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
               }
+              refreshBrokerState?.();
               addToast({
                 type: "success",
                 title: "Long Closed",
@@ -1598,6 +1637,7 @@ export default function SimulationTerminal() {
                 if (fetchBrokerBalance && brokerAddress) {
                   fetchBrokerBalance(brokerAddress);
                 }
+                refreshBrokerState?.();
                 addToast({
                   type: "success",
                   title: "Debt Repaid",
@@ -1614,6 +1654,7 @@ export default function SimulationTerminal() {
                 if (fetchBrokerBalance && brokerAddress) {
                   fetchBrokerBalance(brokerAddress);
                 }
+                refreshBrokerState?.();
                 addToast({
                   type: "success",
                   title: "Short Closed",
@@ -1630,6 +1671,7 @@ export default function SimulationTerminal() {
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
               }
+              refreshBrokerState?.();
               addToast({
                 type: "success",
                 title: "Short Opened",
@@ -1644,6 +1686,7 @@ export default function SimulationTerminal() {
               if (fetchBrokerBalance && brokerAddress) {
                 fetchBrokerBalance(brokerAddress);
               }
+              refreshBrokerState?.();
               addToast({
                 type: "success",
                 title: "Long Opened",

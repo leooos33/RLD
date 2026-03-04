@@ -25,6 +25,7 @@ import ChartControlBar from "./ChartControlBar";
 import ClaimFeesModal from "./ClaimFeesModal";
 import WithdrawModal from "./WithdrawModal";
 import AddLiquidityModal from "./AddLiquidityModal";
+import AccountModal from "./AccountModal";
 import { ToastContainer } from "./Toast";
 
 const RPC_URL = `${window.location.origin}/rpc`;
@@ -338,7 +339,7 @@ export default function PoolLP() {
     chartData,
   } = sim;
 
-  const { hasBroker, brokerAddress } = useBrokerAccount(
+  const { hasBroker, brokerAddress, checkBroker, fetchBrokerBalance } = useBrokerAccount(
     account,
     marketInfo?.broker_factory,
     marketInfo?.collateral?.address,
@@ -428,6 +429,7 @@ export default function PoolLP() {
   const [claimPosition, setClaimPosition] = useState(null);
   const [withdrawPosition, setWithdrawPosition] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showAccountModal, setShowAccountModal] = useState(false);
   const [chartView, setChartView] = useState("PRICE");
   const [chartDropdown, setChartDropdown] = useState(null); // 'resolution' | 'timeframe' | null
 
@@ -1045,10 +1047,17 @@ export default function PoolLP() {
               },
             ]}
             actionButton={{
-              label: lpExecuting
-                ? (lpStep || "Processing...")
-                : activeTab === "ADD" ? "Add Liquidity" : "Remove Liquidity",
+              label:
+                !account || !hasBroker
+                  ? "Create Account"
+                  : lpExecuting
+                    ? (lpStep || "Processing...")
+                    : activeTab === "ADD" ? "Add Liquidity" : "Remove Liquidity",
               onClick: () => {
+                if (!account || !hasBroker) {
+                  setShowAccountModal(true);
+                  return;
+                }
                 if (lpExecuting) return;
                 if (activeTab === "ADD") {
                   setShowAddModal(true);
@@ -1056,7 +1065,10 @@ export default function PoolLP() {
                   setWithdrawPosition(selectedPosition);
                 }
               },
-              disabled: lpExecuting || (activeTab === "REMOVE" && !selectedPosition),
+              disabled:
+                !account || !hasBroker
+                  ? false
+                  : lpExecuting || (activeTab === "REMOVE" && !selectedPosition),
               variant: activeTab === "ADD" ? "cyan" : "pink",
             }}
             footer={null}
@@ -1579,6 +1591,26 @@ export default function PoolLP() {
         executing={lpExecuting}
         executionStep={lpStep}
         executionError={lpError}
+      />
+
+      <AccountModal
+        isOpen={showAccountModal}
+        onClose={() => setShowAccountModal(false)}
+        onComplete={(addr) => {
+          setShowAccountModal(false);
+          checkBroker();
+          if (addr) {
+            fetchBrokerBalance(addr);
+            addToast({
+              type: "success",
+              title: "Account Created",
+              message: "Broker deployed & funded successfully",
+              duration: 5000,
+            });
+          }
+        }}
+        brokerFactoryAddr={marketInfo?.broker_factory}
+        waUsdcAddr={marketInfo?.collateral?.address}
       />
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />

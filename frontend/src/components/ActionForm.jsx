@@ -14,7 +14,7 @@ const PRIME_BROKER_ABI = [
 ];
 
 /* ── Mint Form ────────────────────────────────────────────────── */
-function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account, addToast }) {
+function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account, addToast, onStateChange }) {
   const [collateral, setCollateral] = useState("");
   const [mintAmount, setMintAmount] = useState("");
   const [executing, setExecuting] = useState(false);
@@ -83,6 +83,7 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
       setCollateral("");
       setMintAmount("");
       addToast({ type: "success", title: "Mint Successful", message: `Minted ${mintAmount} wRLP` });
+      onStateChange?.();
     } catch (err) {
       console.error("[MINT] Full error:", err);
       const reason = err?.revert?.args?.[0]
@@ -409,7 +410,7 @@ function computeTokenSplit(deposit, minP, maxP, currentP, depositMode) {
   }
 }
 
-function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
+function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onStateChange }) {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
@@ -436,6 +437,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
   const infrastructure = marketInfo?.infrastructure;
 
   const {
+    executeAddLiquidity,
     executeRemoveLiquidity,
     activePosition,
     refreshPosition,
@@ -474,8 +476,9 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
     return computeTokenSplit(d, pL, pU, price, depositMode);
   }, [depositAmount, minPrice, maxPrice, price, depositMode]);
 
+  const hasExecutor = !!infrastructure?.broker_executor;
   const canAdd = account && brokerAddress && split && split.swapAmount >= 0 &&
-    (split.wRLP > 0 || split.waUSDC > 0) && infrastructure?.broker_executor;
+    (split.wRLP > 0 || split.waUSDC > 0);
 
   // Computed active position token amounts
   const activeAmounts = useMemo(() => {
@@ -491,7 +494,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
 
   // ── Atomic one-click execution via BrokerExecutor ─────────────
   const executeAtomicLP = useCallback(async () => {
-    if (!canAdd || !infrastructure?.broker_executor || !infrastructure?.broker_router) return;
+    if (!canAdd) return;
     setLpExecuting(true);
     setLpError(null);
     setLpStep("Computing token split...");
@@ -603,6 +606,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
       setLpStep("Liquidity added ✓");
       setDepositAmount("");
       addToast({ type: "success", title: "Liquidity Added", message: "Swap + LP executed atomically", duration: 5000 });
+      onStateChange?.();
     } catch (err) {
       console.error("[LP] Atomic execution failed:", err);
       setLpError(err.reason || err.shortMessage || err.message || "Transaction failed");
@@ -741,7 +745,21 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
       )}
 
       <button
-        onClick={() => { setLpError(null); executeAtomicLP(); }}
+        onClick={() => {
+          setLpError(null);
+          if (hasExecutor) {
+            executeAtomicLP();
+          } else {
+            // Direct LP fallback (no swap, just addPoolLiquidity)
+            const pL = parseFloat(minPrice);
+            const pU = parseFloat(maxPrice);
+            executeAddLiquidity(pL, pU, String(split?.wRLP || 0), String(split?.waUSDC || 0), price, () => {
+              setDepositAmount("");
+              addToast({ type: "success", title: "Liquidity Added", message: "LP position created", duration: 5000 });
+              onStateChange?.();
+            });
+          }
+        }}
         disabled={!canAdd || executing}
         className={`w-full py-3 text-sm font-bold tracking-[0.2em] uppercase transition-all bg-cyan-500 text-black hover:bg-cyan-400 ${
           !canAdd || executing ? "opacity-50 cursor-not-allowed" : ""
@@ -849,11 +867,11 @@ function BatchForm() {
 }
 
 /* ── ActionForm Router ────────────────────────────────────────── */
-export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo }) {
+export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo, onStateChange }) {
   const forms = {
-    mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} />,
+    mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} onStateChange={onStateChange} />,
     twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} />,
-    lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} />,
+    lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} onStateChange={onStateChange} />,
     loop: <LoopForm />,
     batch: <BatchForm />,
   };
