@@ -210,8 +210,8 @@ export default function SimulationTerminal() {
     market?.indexPrice,
   );
 
-  // TWAMM order actions (cancel)
-  const { cancelOrder: cancelTwammOrder, executing: cancellingTwamm } = useTwammOrder(
+  // TWAMM order actions (cancel + claim)
+  const { cancelOrder: cancelTwammOrder, claimExpiredOrder: claimTwammOrder, executing: cancellingTwamm } = useTwammOrder(
     account,
     brokerAddress,
     marketInfo?.infrastructure,
@@ -1355,6 +1355,22 @@ export default function SimulationTerminal() {
                                         className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors"
                                       >
                                         {cancellingTwamm ? "Cancelling..." : "Cancel Order"}
+                                      </button>
+                                    )}
+                                    {tw.isDone && tw.tracked && (
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          claimTwammOrder(() => {
+                                            refreshTwamm();
+                                            refreshBrokerState?.();
+                                            addToast({ type: "success", title: "Tokens Claimed", message: "Expired order tokens returned to broker" });
+                                          });
+                                        }}
+                                        disabled={cancellingTwamm}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-white/5 transition-colors"
+                                      >
+                                        {cancellingTwamm ? "Claiming..." : "Claim Tokens"}
                                       </button>
                                     )}
                                   </div>

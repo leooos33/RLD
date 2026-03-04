@@ -1190,6 +1190,59 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
     }
 
+    /// @notice Claims tokens from an expired TWAMM order
+    /// @dev For expired orders, cancelOrder() reverts with OrderAlreadyExpired.
+    ///      This function uses syncAndClaimTokens() which handles expired orders
+    ///      correctly: syncs earnings, deletes the order, and transfers tokens.
+    /// @return claimed0 Amount of token0 claimed
+    /// @return claimed1 Amount of token1 claimed
+    function claimExpiredTwammOrder()
+        external
+        onlyAuthorized
+        nonReentrant
+        returns (uint256 claimed0, uint256 claimed1)
+    {
+        require(activeTwammOrder.orderId != bytes32(0), "No active order");
+
+        // syncAndClaimTokens: syncs earnings, auto-deletes expired orders,
+        // and transfers both token0 and token1 owed to this broker
+        (claimed0, claimed1) = IJTM(address(activeTwammOrder.key.hooks))
+            .syncAndClaimTokens(
+                IJTM.SyncParams({
+                    key: activeTwammOrder.key,
+                    orderKey: activeTwammOrder.orderKey
+                })
+            );
+
+        // Clear tracking
+        delete activeTwammOrder;
+    }
+
+    /// @notice Claims tokens from an arbitrary expired TWAMM order (not tracked)
+    /// @dev Used when the broker has untracked expired orders (e.g., after
+    ///      submitting a new order that overwrote activeTwammOrder tracking)
+    /// @param twammHook The TWAMM hook address
+    /// @param key The pool key
+    /// @param orderKey The order key (owner, expiration, zeroForOne)
+    /// @return claimed0 Amount of token0 claimed
+    /// @return claimed1 Amount of token1 claimed
+    function claimExpiredTwammOrderWithKey(
+        address twammHook,
+        PoolKey calldata key,
+        IJTM.OrderKey calldata orderKey
+    )
+        external
+        onlyAuthorized
+        nonReentrant
+        returns (uint256 claimed0, uint256 claimed1)
+    {
+        require(orderKey.owner == address(this), "Not owner");
+
+        (claimed0, claimed1) = IJTM(twammHook).syncAndClaimTokens(
+            IJTM.SyncParams({key: key, orderKey: orderKey})
+        );
+    }
+
     /* ============================================================================================ */
     /*                                  CORE POSITION MANAGEMENT                                   */
     /* ============================================================================================ */

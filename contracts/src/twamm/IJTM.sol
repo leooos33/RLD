@@ -168,6 +168,11 @@ interface IJTM {
         SyncParams calldata params
     ) external returns (uint256 earningsAmount);
 
+    /// @notice Sync + claim all owed tokens + auto-delete expired orders
+    function syncAndClaimTokens(
+        SyncParams calldata params
+    ) external returns (uint256 claimed0, uint256 claimed1);
+
     /// @notice Claim owed tokens for a specific pool
     function claimTokens(
         PoolKey calldata key,

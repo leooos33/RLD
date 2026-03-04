@@ -61,6 +61,16 @@ const PRIME_BROKER_TWAMM_ABI = [
       { name: "sellTokensRefund", type: "uint256" },
     ],
   },
+  {
+    name: "claimExpiredTwammOrder",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [
+      { name: "claimed0", type: "uint256" },
+      { name: "claimed1", type: "uint256" },
+    ],
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -282,9 +292,77 @@ export function useTwammOrder(
     [account, brokerAddress],
   );
 
+  /**
+   * Claim tokens from an expired TWAMM order via PrimeBroker.
+   * Uses claimExpiredTwammOrder() which calls JTM.syncAndClaimTokens().
+   *
+   * @param {Function} onSuccess Called with tx receipt on success
+   */
+  const claimExpiredOrder = useCallback(
+    async (onSuccess) => {
+      if (!account || !brokerAddress) {
+        setError("Missing required addresses");
+        return;
+      }
+      if (!window.ethereum) {
+        setError("MetaMask not found");
+        return;
+      }
+
+      setExecuting(true);
+      setError(null);
+      setTxHash(null);
+      setStep("Claiming expired TWAMM order...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(
+          brokerAddress,
+          PRIME_BROKER_TWAMM_ABI,
+          signer,
+        );
+
+        setStep("Confirm claim in wallet...");
+        const tx = await broker.claimExpiredTwammOrder({ gasLimit: 1_000_000n });
+        setTxHash(tx.hash);
+
+        setStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setStep("Tokens claimed ✓");
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setError("Claim reverted");
+          setStep("");
+        }
+      } catch (e) {
+        console.error("[TWAMM] claimExpiredOrder failed:", e);
+        let msg = "Claim failed";
+        if (e.code === "ACTION_REJECTED") {
+          msg = "Transaction rejected";
+        } else {
+          const reason =
+            e.revert?.args?.[0] ||
+            e.reason ||
+            e.shortMessage ||
+            e.message;
+          msg = reason || msg;
+        }
+        setError(msg);
+        setStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [account, brokerAddress],
+  );
+
   return {
     submitOrder,
     cancelOrder,
+    claimExpiredOrder,
     executing,
     error,
     step,
