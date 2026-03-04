@@ -1,9 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
 import { InputGroup, SummaryRow } from "./TradingTerminal";
 import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 import { useTwammOrder } from "../hooks/useTwammOrder";
+import { usePoolLiquidity, liquidityToAmounts, computeLiquidity } from "../hooks/usePoolLiquidity";
 import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
+import { ChevronDown } from "lucide-react";
 
 
 // PrimeBroker ABI subset for mint
@@ -321,69 +323,431 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast }) {
 }
 
 /* ── LP Form ──────────────────────────────────────────────────── */
-function LpForm() {
-  const [amount, setAmount] = useState("");
-  const [tickLower, setTickLower] = useState("");
-  const [tickUpper, setTickUpper] = useState("");
+const RANGE_PRESETS = [
+  { label: "±5%", factor: 0.05 },
+  { label: "±10%", factor: 0.10 },
+  { label: "±25%", factor: 0.25 },
+  { label: "Full", factor: null },
+];
 
-  const rangeWidth =
-    tickLower && tickUpper
-      ? Math.abs(Number(tickUpper) - Number(tickLower))
-      : "—";
+// ABI fragments for BrokerExecutor atomic flow
+const BROKER_EXECUTOR_ABI = [
+  "function execute(address broker, bytes calldata ownerSignature, tuple(address target, bytes data)[] calldata calls) external",
+  "function getEthSignedMessageHash(address broker, uint256 nonce, bytes32 callsHash) view returns (bytes32)",
+];
+
+const BROKER_NONCE_ABI = [
+  "function operatorNonces(address operator) view returns (uint256)",
+];
+
+const POOL_KEY_TUPLE = {
+  name: "poolKey", type: "tuple",
+  components: [
+    { name: "currency0", type: "address" },
+    { name: "currency1", type: "address" },
+    { name: "fee", type: "uint24" },
+    { name: "tickSpacing", type: "int24" },
+    { name: "hooks", type: "address" },
+  ],
+};
+
+const ROUTER_LONG_ABI = [{
+  name: "executeLong", type: "function", stateMutability: "nonpayable",
+  inputs: [{ name: "broker", type: "address" }, { name: "amountIn", type: "uint256" }, POOL_KEY_TUPLE],
+  outputs: [{ name: "amountOut", type: "uint256" }],
+}];
+
+const BROKER_ADD_LP_ABI = [
+  "function addPoolLiquidity(address twammHook, int24 tickLower, int24 tickUpper, uint128 liquidity, uint128 amount0Max, uint128 amount1Max) external returns (uint256 tokenId)",
+];
+
+/**
+ * Compute the token split for a concentrated LP position.
+ * Given a deposit D (in terms of the selected token), price range, and current price,
+ * returns { waUSDC: amount for LP, wRLP: amount for LP, swapNeeded: amount to swap }.
+ */
+function computeTokenSplit(deposit, minP, maxP, currentP, depositMode) {
+  const sqrtPL = Math.sqrt(minP);
+  const sqrtPU = Math.sqrt(maxP);
+  const sqrtPC = Math.sqrt(currentP);
+
+  // Compute ratio of each token per unit of liquidity
+  let ratio0 = 0; // wRLP (token0)
+  let ratio1 = 0; // waUSDC (token1)
+
+  if (currentP <= minP) {
+    ratio0 = 1 / sqrtPL - 1 / sqrtPU;
+    ratio1 = 0;
+  } else if (currentP >= maxP) {
+    ratio0 = 0;
+    ratio1 = sqrtPU - sqrtPL;
+  } else {
+    ratio0 = 1 / sqrtPC - 1 / sqrtPU;
+    ratio1 = sqrtPC - sqrtPL;
+  }
+
+  // value0 = ratio0 * price (in USDC terms), value1 = ratio1 (already USDC)
+  const value0 = ratio0 * currentP;
+  const value1 = ratio1;
+  const totalValue = value0 + value1;
+
+  if (totalValue <= 0) return { waUSDC: 0, wRLP: 0, swapAmount: 0 };
+
+  if (depositMode === "USDC") {
+    // Deposit D USDC total
+    const waUSDC_for_LP = deposit * (value1 / totalValue);
+    const waUSDC_to_swap = deposit - waUSDC_for_LP;
+    const wRLP_needed = waUSDC_to_swap / currentP;
+    return { waUSDC: waUSDC_for_LP, wRLP: wRLP_needed, swapAmount: waUSDC_to_swap };
+  } else {
+    // Deposit D wRLP total
+    const depositUSD = deposit * currentP;
+    const wRLP_for_LP = deposit * (value0 / totalValue);
+    const wRLP_to_swap = deposit - wRLP_for_LP;
+    const waUSDC_needed = wRLP_to_swap * currentP;
+    return { waUSDC: waUSDC_needed, wRLP: wRLP_for_LP, swapAmount: wRLP_to_swap };
+  }
+}
+
+function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate }) {
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositMode, setDepositMode] = useState("USDC"); // "USDC" or "wRLP"
+  const [removePercent, setRemovePercent] = useState(100);
+  const [lpExecuting, setLpExecuting] = useState(false);
+  const [lpStep, setLpStep] = useState("");
+  const [lpError, setLpError] = useState(null);
+  const [lpDropdownOpen, setLpDropdownOpen] = useState(false);
+  const lpDropdownRef = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (lpDropdownRef.current && !lpDropdownRef.current.contains(e.target)) setLpDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const price = currentRate || 0;
+  const positionToken = marketInfo?.position_token;
+  const collateralToken = marketInfo?.collateral;
+  const infrastructure = marketInfo?.infrastructure;
+
+  const {
+    executeRemoveLiquidity,
+    activePosition,
+    refreshPosition,
+    executing: removeExecuting,
+  } = usePoolLiquidity(brokerAddress, marketInfo);
+  const executing = lpExecuting || removeExecuting;
+
+  // Token ordering (V4 sorts by address)
+  const token0IsPosition = positionToken && collateralToken
+    ? positionToken.address.toLowerCase() < collateralToken.address.toLowerCase()
+    : true;
+  const token0 = token0IsPosition
+    ? { symbol: "wRLP", decimals: 6 }
+    : { symbol: "waUSDC", decimals: 6 };
+  const token1 = token0IsPosition
+    ? { symbol: "waUSDC", decimals: 6 }
+    : { symbol: "wRLP", decimals: 6 };
+
+  const applyPreset = (factor) => {
+    if (price <= 0) return;
+    if (factor === null) {
+      setMinPrice("0.01");
+      setMaxPrice((price * 10).toFixed(4));
+    } else {
+      setMinPrice((price * (1 - factor)).toFixed(4));
+      setMaxPrice((price * (1 + factor)).toFixed(4));
+    }
+  };
+
+  // Computed token split
+  const split = useMemo(() => {
+    const d = parseFloat(depositAmount) || 0;
+    const pL = parseFloat(minPrice) || 0;
+    const pU = parseFloat(maxPrice) || 0;
+    if (d <= 0 || pL <= 0 || pU <= 0 || pL >= pU || price <= 0) return null;
+    return computeTokenSplit(d, pL, pU, price, depositMode);
+  }, [depositAmount, minPrice, maxPrice, price, depositMode]);
+
+  const canAdd = account && brokerAddress && split && split.swapAmount >= 0 &&
+    (split.wRLP > 0 || split.waUSDC > 0) && infrastructure?.broker_executor;
+
+  // Computed active position token amounts
+  const activeAmounts = useMemo(() => {
+    if (!activePosition || !price) return null;
+    const currentTick = Math.log(price) / Math.log(1.0001);
+    return liquidityToAmounts(
+      activePosition.liquidity,
+      activePosition.tickLower,
+      activePosition.tickUpper,
+      currentTick,
+    );
+  }, [activePosition, price]);
+
+  // ── Atomic one-click execution via BrokerExecutor ─────────────
+  const executeAtomicLP = useCallback(async () => {
+    if (!canAdd || !infrastructure?.broker_executor || !infrastructure?.broker_router) return;
+    setLpExecuting(true);
+    setLpError(null);
+    setLpStep("Computing token split...");
+
+    try {
+      const signer = await getAnvilSigner();
+      const provider = signer.provider;
+      const executorAddr = infrastructure.broker_executor;
+      const routerAddr = infrastructure.broker_router;
+      const hookAddr = infrastructure.twamm_hook;
+      const tickSpacing = infrastructure.tick_spacing || 5;
+
+      // Build pool key
+      const c0 = collateralToken.address.toLowerCase() < positionToken.address.toLowerCase()
+        ? collateralToken.address : positionToken.address;
+      const c1 = collateralToken.address.toLowerCase() < positionToken.address.toLowerCase()
+        ? positionToken.address : collateralToken.address;
+      const poolKey = {
+        currency0: c0, currency1: c1,
+        fee: infrastructure.pool_fee || 500,
+        tickSpacing, hooks: hookAddr,
+      };
+
+      // Compute tick range
+      const pL = parseFloat(minPrice);
+      const pU = parseFloat(maxPrice);
+      const tickLower = Math.floor(Math.log(pL) / Math.log(1.0001) / tickSpacing) * tickSpacing;
+      const tickUpper = Math.floor(Math.log(pU) / Math.log(1.0001) / tickSpacing) * tickSpacing;
+
+      // Compute amounts in raw units (6 decimals)
+      const wRLP_raw = ethers.parseUnits(split.wRLP.toFixed(6), 6);
+      const waUSDC_raw = ethers.parseUnits(split.waUSDC.toFixed(6), 6);
+      const swapAmount_raw = ethers.parseUnits(split.swapAmount.toFixed(6), 6);
+
+      // Compute liquidity from amounts
+      const currentTick = Math.log(price) / Math.log(1.0001);
+      // Map to token0/token1 order
+      const amt0_raw = token0IsPosition ? wRLP_raw : waUSDC_raw;
+      const amt1_raw = token0IsPosition ? waUSDC_raw : wRLP_raw;
+      const liquidity = computeLiquidity(Number(amt0_raw), Number(amt1_raw), tickLower, tickUpper, currentTick);
+
+      if (liquidity <= 0n) throw new Error("Computed liquidity is zero — increase amount");
+
+      // Build Call[] array for BrokerExecutor
+      const calls = [];
+
+      // Call 1: Swap (if swap needed)
+      if (swapAmount_raw > 0n) {
+        if (depositMode === "USDC") {
+          // executeLong: swap waUSDC → wRLP
+          const routerIface = new ethers.Interface(ROUTER_LONG_ABI);
+          const swapData = routerIface.encodeFunctionData("executeLong", [brokerAddress, swapAmount_raw, poolKey]);
+          calls.push({ target: routerAddr, data: swapData });
+        }
+        // TODO: wRLP deposit mode would use closeLong
+      }
+
+      // Call 2: addPoolLiquidity
+      const brokerIface = new ethers.Interface(BROKER_ADD_LP_ABI);
+      const slippage = 3n; // 3× slippage for simulation
+      const a0Max = amt0_raw > 0n ? amt0_raw * slippage : ethers.MaxUint256;
+      const a1Max = amt1_raw > 0n ? amt1_raw * slippage : ethers.MaxUint256;
+      const lpData = brokerIface.encodeFunctionData("addPoolLiquidity", [
+        hookAddr, tickLower, tickUpper, liquidity, a0Max, a1Max,
+      ]);
+      calls.push({ target: brokerAddress, data: lpData });
+
+      // Get nonce for executor
+      setLpStep("Preparing signature...");
+      const brokerContract = new ethers.Contract(brokerAddress, BROKER_NONCE_ABI, provider);
+      const nonce = await brokerContract.operatorNonces(executorAddr);
+
+      // Compute calls hash (matches BrokerExecutor.sol encoding)
+      const callsTupleType = "tuple(address target, bytes data)[]";
+      const callsHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          [callsTupleType],
+          [calls.map(c => [c.target, c.data])],
+        ),
+      );
+
+      // Get raw message hash (without EIP-191 prefix)
+      // signer.signMessage will add EIP-191 prefix, matching the contract's ecrecover
+      const executorForHash = new ethers.Contract(executorAddr, [
+        ...BROKER_EXECUTOR_ABI,
+        "function getMessageHash(address broker, uint256 nonce, bytes32 callsHash) view returns (bytes32)",
+      ], provider);
+      const rawMsgHash = await executorForHash.getMessageHash(brokerAddress, nonce, callsHash);
+
+      setLpStep("Sign authorization in wallet...");
+      const ownerSignature = await signer.signMessage(ethers.getBytes(rawMsgHash));
+
+      // Execute atomically
+      setLpStep("Executing swap + LP atomically...");
+      const executorSigned = new ethers.Contract(executorAddr, BROKER_EXECUTOR_ABI, signer);
+      const tx = await executorSigned.execute(
+        brokerAddress,
+        ownerSignature,
+        calls,
+        { gasLimit: 3_000_000 },
+      );
+
+      setLpStep("Waiting for confirmation...");
+      await tx.wait();
+
+      // Refresh position
+      await refreshPosition();
+
+      setLpStep("Liquidity added ✓");
+      setDepositAmount("");
+      addToast({ type: "success", title: "Liquidity Added", message: "Swap + LP executed atomically", duration: 5000 });
+    } catch (err) {
+      console.error("[LP] Atomic execution failed:", err);
+      setLpError(err.reason || err.shortMessage || err.message || "Transaction failed");
+    } finally {
+      await restoreAnvilChainId();
+      setLpExecuting(false);
+    }
+  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition]);
 
   return (
     <div className="flex flex-col gap-4">
+
+
+      {/* Lower / Upper price inputs */}
       <InputGroup
-        label="Deposit"
-        subLabel="waUSDC"
-        value={amount}
-        onChange={setAmount}
-        suffix="waUSDC"
+        label="Lower"
+        subLabel={price > 0 ? `Curr: ${price.toFixed(4)}` : ""}
+        value={minPrice}
+        onChange={setMinPrice}
+        suffix=""
         placeholder="0.00"
       />
       <InputGroup
-        label="Min Tick"
-        subLabel="lower"
-        value={tickLower}
-        onChange={setTickLower}
+        label="Upper"
+        value={maxPrice}
+        onChange={setMaxPrice}
         suffix=""
-        placeholder="-100"
-      />
-      <InputGroup
-        label="Max Tick"
-        subLabel="upper"
-        value={tickUpper}
-        onChange={setTickUpper}
-        suffix=""
-        placeholder="100"
+        placeholder="0.00"
       />
 
+      {/* Preset buttons */}
+      <div className="flex gap-1">
+        {RANGE_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            onClick={() => applyPreset(p.factor)}
+            className="flex-1 py-1.5 text-xs font-bold tracking-widest uppercase border border-white/10 text-gray-500 hover:text-gray-300 hover:border-white/20 transition-colors"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Deposit input with token dropdown */}
+      <div className="flex items-center justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
+        <span>Deposit_In</span>
+        <div className="relative" ref={lpDropdownRef}>
+          <button
+            type="button"
+            onClick={() => setLpDropdownOpen(!lpDropdownOpen)}
+            className={`
+              h-[28px] border border-white/10 bg-[#0a0a0a] flex items-center justify-between px-2 gap-2
+              text-sm font-mono text-white focus:outline-none uppercase tracking-widest
+              hover:border-white/30 transition-colors
+              ${lpDropdownOpen ? "border-white/30" : ""}
+            `}
+          >
+            <span>{depositMode === "USDC" ? "waUSDC" : "wRLP"}</span>
+            <ChevronDown
+              size={12}
+              className={`transition-transform duration-200 flex-shrink-0 ${lpDropdownOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {lpDropdownOpen && (
+            <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/10 z-50 flex flex-col shadow-xl whitespace-nowrap">
+              {[
+                { value: "USDC", label: "waUSDC" },
+                { value: "wRLP", label: "wRLP" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    setDepositMode(opt.value);
+                    setDepositAmount("");
+                    setLpDropdownOpen(false);
+                  }}
+                  className={`
+                    w-full flex items-center px-3 py-2 text-sm text-left uppercase tracking-widest transition-colors
+                    ${
+                      depositMode === opt.value
+                        ? "bg-cyan-500/10 text-cyan-400"
+                        : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                    }
+                  `}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <InputGroup
+        label={depositMode === "USDC" ? "waUSDC" : "wRLP"}
+        value={depositAmount}
+        onChange={setDepositAmount}
+        suffix={depositMode === "USDC" ? "waUSDC" : "wRLP"}
+        placeholder="0.00"
+      />
+
+      {/* Summary */}
       <div className="border-t border-white/10 pt-3 space-y-2">
-        <SummaryRow label="Range Width" value={`${rangeWidth} ticks`} />
-        <SummaryRow label="Fee Tier" value="0.30%" />
         <SummaryRow
-          label="Capital Eff."
+          label="Price Range"
+          value={minPrice && maxPrice ? `${Number(minPrice).toFixed(2)} — ${Number(maxPrice).toFixed(2)}` : "—"}
+        />
+        <SummaryRow label="Fee Tier" value="0.05%" />
+        <SummaryRow
+          label="Projected APY"
           value={
-            rangeWidth !== "—" && rangeWidth > 0
-              ? `${(10000 / rangeWidth).toFixed(1)}x`
+            minPrice && maxPrice && Number(minPrice) > 0 && Number(maxPrice) > Number(minPrice)
+              ? (() => {
+                  const ticks = Math.abs(
+                    Math.round(Math.log(Number(maxPrice)) / Math.log(1.0001)) -
+                    Math.round(Math.log(Number(minPrice)) / Math.log(1.0001))
+                  );
+                  return ticks > 0 ? `${((887272 * 2 / ticks) * 0.05).toFixed(1)}%` : "—";
+                })()
               : "—"
           }
-          valueColor="text-cyan-400"
+          valueColor="text-green-400"
         />
       </div>
 
+      {/* Execution feedback */}
+      {lpStep && (
+        <div className="text-xs text-gray-400 font-mono animate-pulse">
+          {lpStep}
+        </div>
+      )}
+      {lpError && (
+        <div className="text-xs text-red-400 font-mono truncate">
+          {lpError}
+        </div>
+      )}
+
       <button
-        onClick={() =>
-          console.log("[LP]", { amount, tickLower, tickUpper })
-        }
-        disabled={!amount || !tickLower || !tickUpper}
+        onClick={() => { setLpError(null); executeAtomicLP(); }}
+        disabled={!canAdd || executing}
         className={`w-full py-3 text-sm font-bold tracking-[0.2em] uppercase transition-all bg-cyan-500 text-black hover:bg-cyan-400 ${
-          !amount || !tickLower || !tickUpper
-            ? "opacity-50 cursor-not-allowed"
-            : ""
+          !canAdd || executing ? "opacity-50 cursor-not-allowed" : ""
         }`}
       >
-        Provide Liquidity
+        {executing ? lpStep || "Processing..." : "Provide Liquidity"}
       </button>
     </div>
   );
@@ -489,7 +853,7 @@ export default function ActionForm({ type, brokerBalance, currentRate, brokerAdd
   const forms = {
     mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} />,
     twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} />,
-    lp: <LpForm />,
+    lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} />,
     loop: <LoopForm />,
     batch: <BatchForm />,
   };

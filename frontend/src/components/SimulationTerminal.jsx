@@ -309,6 +309,7 @@ export default function SimulationTerminal() {
     executeCloseLong,
     executeShort,
     executeCloseShort,
+    executeRepayDebt,
     executing: swapExecuting,
     error: swapError,
     step: swapStep,
@@ -947,7 +948,7 @@ export default function SimulationTerminal() {
                   {/* Debt_To_Repay — always shown */}
                   <InputGroup
                     label="Debt_To_Repay"
-                    subLabel={`Total_Debt: ${shortAmount > 0 ? shortAmount.toFixed(1) + " wRLP" : "—"}`}
+                    subLabel={`Total_Debt: ${brokerState?.debtPrincipal > 0 ? brokerState.debtPrincipal.toFixed(1) + " wRLP" : "—"}`}
                     value={closeShortDebt}
                     onChange={(v) => {
                       setCloseShortDebt(v);
@@ -959,20 +960,27 @@ export default function SimulationTerminal() {
                             num > 0 ? (num * currentRate).toFixed(2) : "",
                           );
                         }
+                      } else {
+                        // wRLP direct repay: amount = debt
+                        setCloseShortAmount(v);
                       }
                     }}
                     suffix="wRLP"
                     onMax={() => {
-                      setCloseShortDebt(String(shortAmount || 0));
+                      const onChainDebt = brokerState?.debtPrincipal ?? 0;
+                      setCloseShortDebt(String(onChainDebt));
                       setLastCloseShortEdit("debt");
                       if (
                         closeShortRepayMode === "waUSDC" &&
                         currentRate > 0 &&
-                        shortAmount > 0
+                        onChainDebt > 0
                       ) {
                         setCloseShortAmount(
-                          (shortAmount * currentRate).toFixed(2),
+                          (onChainDebt * currentRate).toFixed(2),
                         );
+                      } else {
+                        // wRLP direct repay: amount = debt
+                        setCloseShortAmount(String(onChainDebt));
                       }
                     }}
                   />
@@ -1582,20 +1590,39 @@ export default function SimulationTerminal() {
               setCloseAmount("");
             });
           } else if (tradeAction === "CLOSE" && tradeSide === "SHORT") {
-            // Close Short flow — spend waUSDC to buy wRLP and repay debt
-            executeCloseShort(parseFloat(closeShortAmount), () => {
-              setShowSwapConfirm(false);
-              if (fetchBrokerBalance && brokerAddress) {
-                fetchBrokerBalance(brokerAddress);
-              }
-              addToast({
-                type: "success",
-                title: "Short Closed",
-                message: `Spent ${parseFloat(closeShortAmount).toLocaleString()} waUSDC to repay wRLP debt`,
-                duration: 5000,
+            // Close Short flow
+            if (closeShortRepayMode === "wRLP") {
+              // Direct repay: burn wRLP to reduce debt
+              executeRepayDebt(parseFloat(closeShortDebt), () => {
+                setShowSwapConfirm(false);
+                if (fetchBrokerBalance && brokerAddress) {
+                  fetchBrokerBalance(brokerAddress);
+                }
+                addToast({
+                  type: "success",
+                  title: "Debt Repaid",
+                  message: `Repaid ${parseFloat(closeShortDebt).toLocaleString()} wRLP debt directly`,
+                  duration: 5000,
+                });
+                setCloseShortDebt("");
+                setCloseShortAmount("");
               });
-              setCloseShortAmount("");
-            });
+            } else {
+              // waUSDC mode: spend waUSDC to buy wRLP and repay debt
+              executeCloseShort(parseFloat(closeShortAmount), () => {
+                setShowSwapConfirm(false);
+                if (fetchBrokerBalance && brokerAddress) {
+                  fetchBrokerBalance(brokerAddress);
+                }
+                addToast({
+                  type: "success",
+                  title: "Short Closed",
+                  message: `Spent ${parseFloat(closeShortAmount).toLocaleString()} waUSDC to repay wRLP debt`,
+                  duration: 5000,
+                });
+                setCloseShortAmount("");
+              });
+            }
           } else if (tradeSide === "SHORT" && tradeAction === "OPEN") {
             // Open Short flow — shortAmount is already in wRLP
             executeShort(collateral, shortAmount, () => {

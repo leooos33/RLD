@@ -162,7 +162,7 @@ function computeLiquidity(amount0, amount1, tickLower, tickUpper, currentTick) {
  *  - activePosition — { tokenId, liquidity } from on-chain
  *  - refreshPosition() — re-read active position
  */
-export { liquidityToAmounts };
+export { liquidityToAmounts, computeLiquidity };
 
 export function usePoolLiquidity(brokerAddress, marketInfo) {
   const [executing, setExecuting] = useState(false);

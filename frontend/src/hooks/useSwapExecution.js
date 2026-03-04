@@ -125,6 +125,7 @@ async function ensureOperator(brokerAddress, routerAddress, setStep) {
  * - executeCloseLong(amountIn, onSuccess) — close long: wRLP → waUSDC
  * - executeShort(collateral, debt, onSuccess) — open short: deposit + borrow + sell wRLP
  * - executeCloseShort(amountIn, onSuccess) — close short: buy wRLP + repay debt
+ * - executeRepayDebt(wrlpAmount, onSuccess) — direct repay: burn wRLP to reduce debt
  */
 export function useSwapExecution(
   account,
@@ -412,11 +413,75 @@ export function useSwapExecution(
     [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
   );
 
+  /**
+   * Direct Debt Repay: burn wRLP on broker to reduce debt (no swap)
+   * @param {number} wrlpAmount — wRLP amount to repay (human-readable, 6 decimals)
+   */
+  const executeRepayDebt = useCallback(
+    async (wrlpAmount, onSuccess) => {
+      if (!account || !brokerAddress) return;
+      setExecuting(true);
+      setError(null);
+      setTxHash(null);
+      setStep("Preparing debt repayment...");
+
+      try {
+        const signer = await getAnvilSigner();
+
+        // Read marketId from broker
+        const broker = new ethers.Contract(
+          brokerAddress,
+          [
+            "function marketId() view returns (bytes32)",
+            "function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external",
+          ],
+          signer,
+        );
+
+        const rawMarketId = await broker.marketId();
+        const repayWei = ethers.parseUnits(String(wrlpAmount), 6);
+
+        setStep("Confirm debt repay in wallet...");
+        const tx = await broker.modifyPosition(
+          rawMarketId,
+          0,            // no collateral change
+          -repayWei,    // negative = repay debt
+          { gasLimit: 1_500_000 },
+        );
+        setTxHash(tx.hash);
+
+        setStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setStep("Debt repaid ✓");
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setError("Transaction reverted");
+          setStep("");
+        }
+      } catch (e) {
+        console.error("Repay debt failed:", e);
+        const msg =
+          e.code === "ACTION_REJECTED"
+            ? "Transaction rejected"
+            : e.shortMessage || e.message || "Debt repay failed";
+        setError(msg);
+        setStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [account, brokerAddress],
+  );
+
   return {
     executeLong,
     executeCloseLong,
     executeShort,
     executeCloseShort,
+    executeRepayDebt,
     executing,
     error,
     step,
