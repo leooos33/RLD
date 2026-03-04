@@ -7,6 +7,6 @@
  */
 
 export const SIM_API =
-  import.meta.env.VITE_SIM_API_URL || "http://localhost:8080";
+  import.meta.env.VITE_SIM_API_URL || "";
 
 export const ZERO_FOR_ONE_LONG = false;
