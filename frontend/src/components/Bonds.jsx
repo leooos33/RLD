@@ -579,12 +579,25 @@ export default function BondsPage() {
       {/* Close Bond Confirmation Modal */}
       <CloseBondModal
         isOpen={showCloseModal}
-        onClose={() => setShowCloseModal(false)}
+        onClose={() => { if (!bondExecuting) setShowCloseModal(false); }}
         onConfirm={() => {
-          setShowCloseModal(false);
-          setSelectedBond(null);
+          const bond = userBonds.find(b => b.id === selectedBond);
+          if (!bond?.brokerAddress) return;
+          closeBond(bond.brokerAddress, () => {
+            setShowCloseModal(false);
+            setSelectedBond(null);
+            addToast({
+              type: "success",
+              title: "Bond Closed",
+              message: `Bond #${String(bond.id).padStart(4, "0")} closed — funds returned to wallet`,
+            });
+            refreshBonds();
+          });
         }}
         bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}
+        executing={bondExecuting}
+        executionStep={bondStep}
+        executionError={bondError}
       />
 
 
