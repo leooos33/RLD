@@ -324,8 +324,13 @@ export function useTwammPositions(
         return a.expiration - b.expiration;
       });
 
+      // Filter out fully-claimed orders (deleted from JTM — sellRate=0 AND no tokens owed)
+      const visibleOrders = enrichedOrders.filter(
+        (o) => !(o.isDone && o.earned === 0 && o.sellRefund === 0 && o.valueUsd === 0),
+      );
+
       if (mountedRef.current) {
-        setOrders(enrichedOrders);
+        setOrders(visibleOrders);
       }
     } catch (e) {
       console.warn("[TWAMM] fetchOrders failed:", e);
