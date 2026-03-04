@@ -25,8 +25,8 @@ const ERC20_ABI = [
 ];
 
 const ERC721_ABI = [
-  "function approve(address to, uint256 tokenId)",
-  "function getApproved(uint256 tokenId) view returns (address)",
+  "function setApprovalForAll(address operator, bool approved)",
+  "function isApprovedForAll(address owner, address operator) view returns (bool)",
 ];
 
 // ── Hook ──────────────────────────────────────────────────────────
@@ -291,18 +291,18 @@ export function useBondExecution(
         const signer = await getAnvilSigner();
         const tokenId = BigInt(brokerAddress); // tokenId = uint256(uint160(broker))
 
-        // ── 1. Ensure NFT approval ────────────────────────────────
+        // ── 1. Ensure blanket NFT approval (one-time) ──────────────
         setStep("Checking NFT approval...");
         const nftContract = new ethers.Contract(brokerFactoryAddr, ERC721_ABI, signer);
-        const approved = await nftContract.getApproved(tokenId);
+        const isApproved = await nftContract.isApprovedForAll(account, bondFactoryAddr);
 
-        if (approved.toLowerCase() !== bondFactoryAddr.toLowerCase()) {
-          setStep("Approving NFT transfer...");
-          const approveTx = await nftContract.approve(bondFactoryAddr, tokenId, {
+        if (!isApproved) {
+          setStep("Approving BondFactory for all bonds (one-time)...");
+          const approveTx = await nftContract.setApprovalForAll(bondFactoryAddr, true, {
             gasLimit: 200_000,
           });
           await approveTx.wait();
-          console.log("[CloseBond] NFT approved for BondFactory");
+          console.log("[CloseBond] BondFactory approved for all NFTs");
         }
 
         // ── 2. Build pool key ─────────────────────────────────────
