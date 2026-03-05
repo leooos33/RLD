@@ -577,8 +577,8 @@ export default function SimulationTerminal() {
                       <StatItem
                         label="FUNDING_ANN"
                         value={
-                          fundingFromNF
-                            ? `${fundingFromNF.annualPct >= 0 ? "+" : ""}${fundingFromNF.annualPct.toFixed(2)}%`
+                          funding?.annualizedPct != null
+                            ? `${funding.annualizedPct >= 0 ? "+" : ""}${funding.annualizedPct.toFixed(2)}%`
                             : "—"
                         }
                       />
