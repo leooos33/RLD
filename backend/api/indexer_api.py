@@ -1028,9 +1028,10 @@ def _rpc_scan_positions(request):
             if liq == 0:
                 continue
 
-            # positionInfo layout: poolId(25) | tickLower(3) | tickUpper(3) | hasSubscriber(1)
-            tick_lower_raw = int.from_bytes(info[25:28], "big")
-            tick_upper_raw = int.from_bytes(info[28:31], "big")
+            # positionInfo layout from LSB: hasSubscriber(8) | tickLower(24) | tickUpper(24) | poolId(200)
+            val = int.from_bytes(info, 'big')
+            tick_lower_raw = (val >> 8) & 0xFFFFFF
+            tick_upper_raw = (val >> 32) & 0xFFFFFF
             tick_lower = tick_lower_raw if tick_lower_raw < 0x800000 else tick_lower_raw - 0x1000000
             tick_upper = tick_upper_raw if tick_upper_raw < 0x800000 else tick_upper_raw - 0x1000000
             positions.append({
