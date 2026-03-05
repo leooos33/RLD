@@ -610,7 +610,7 @@ export default function Markets() {
               id="markets-chart-container"
               className="h-[350px] md:h-[500px] w-full"
             >
-              {!usdcHistory ? (
+              {!chartGqlData ? (
                 <div className="h-full flex items-center justify-center">
                   <Loader2 className="animate-spin text-gray-700" />
                 </div>
