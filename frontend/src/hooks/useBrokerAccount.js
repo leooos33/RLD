@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, anvilRpc, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
 const FACTORY_ABI = [

@@ -231,7 +231,7 @@ export function useTwammPositions(
           }
 
           // Compute progress based on actual active period [startEpoch, expiration]
-          const amountInNum = Number(evt.amountIn);
+          const _amountInNum = Number(evt.amountIn);
           const refundNum = Number(sellTokensRefund);
           const startTs = Number(evt.startEpoch || 0);
           const expTs = Number(evt.expiration);

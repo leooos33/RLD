@@ -727,7 +727,7 @@ function ClearBotLogs() {
   }, []);
 
   useEffect(() => {
-    fetchLogs();
+    fetchLogs(); // eslint-disable-line react-hooks/set-state-in-effect
     const iv = setInterval(fetchLogs, 5000);
     return () => clearInterval(iv);
   }, [fetchLogs]);

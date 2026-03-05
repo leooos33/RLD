@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import {
   Droplets,
@@ -349,9 +349,9 @@ export default function PoolLP() {
   const {
     executeAddLiquidity,
     executeRemoveLiquidity,
-    activePosition,
+    activePosition: _activePosition,
     allPositions,
-    refreshPosition,
+    refreshPosition: _refreshPosition,
     executing: lpExecuting,
     executionStep: lpStep,
     executionError: lpError,
@@ -615,7 +615,7 @@ export default function PoolLP() {
         decimals: 6,
       },
     };
-  }, [pool, market, marketInfo, funding, volumeData, protocolStats]);
+  }, [pool, market, marketInfo, funding, volumeData, protocolStats, poolTVL]);
 
   // ── Chart configuration ─────────────────────────────────────
   const CHART_VIEWS = useMemo(

@@ -169,7 +169,7 @@ async function fetchSingleBond(provider, brokerAddr, fallbackRate, indexedMeta) 
       const key = `rld_bond_${brokerAddr.toLowerCase()}`;
       const raw = localStorage.getItem(key);
       if (raw) savedMeta = JSON.parse(raw);
-    } catch {}
+    } catch { /* ignore localStorage parse errors */ }
   }
 
   // Compute values

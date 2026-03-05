@@ -250,7 +250,7 @@ export function useBondExecution(
                 existing.push(brokerAddress.toLowerCase());
                 localStorage.setItem(listKey, JSON.stringify(existing));
               }
-            } catch {}
+            } catch { /* ignore localStorage errors */ }
           }
 
           setStep("Bond created ✓");
@@ -267,13 +267,13 @@ export function useBondExecution(
         else if (e.data) {
           try {
             msg = ethers.toUtf8String("0x" + e.data.slice(138));
-          } catch {}
+          } catch { /* ignore decode errors */ }
         }
         setError(msg);
         setStep("");
       } finally {
         setExecuting(false);
-        try { await restoreAnvilChainId(); } catch {}
+        try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
     [account, infrastructure, collateralAddr, positionAddr],
@@ -356,7 +356,7 @@ export function useBondExecution(
                 console.log("[CloseBond] Returned:", collReturned, "waUSDC");
                 break;
               }
-            } catch {}
+            } catch { /* not our event */ }
           }
 
           // Clean up localStorage
@@ -368,7 +368,7 @@ export function useBondExecution(
             );
             localStorage.setItem(listKey, JSON.stringify(filtered));
             localStorage.removeItem(`rld_bond_${brokerAddress.toLowerCase()}`);
-          } catch {}
+          } catch { /* ignore localStorage errors */ }
 
           setStep("Bond closed ✓");
           if (onSuccess) onSuccess({ brokerAddress });
@@ -389,7 +389,7 @@ export function useBondExecution(
         setStep("");
       } finally {
         setExecuting(false);
-        try { await restoreAnvilChainId(); } catch {}
+        try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
     [account, infrastructure, collateralAddr, positionAddr],

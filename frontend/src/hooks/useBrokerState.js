@@ -201,7 +201,7 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
                     entryPrice = data.pool_states?.[0]?.mark_price || null;
                   }
                 }
-              } catch (e) {
+              } catch {
                 // non-critical
               }
 
@@ -224,7 +224,7 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
                 isActive,
                 value: posValue,
               });
-            } catch (e) {
+            } catch {
               // Token may have been burned or transferred away
             }
           }
@@ -268,7 +268,7 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
         setLoading(false);
       }
     }
-  }, [brokerAddress]);
+  }, [brokerAddress, marketInfo]);
 
   useEffect(() => {
     mountedRef.current = true;

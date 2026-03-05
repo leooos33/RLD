@@ -234,7 +234,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
           ? [positionToken, collateralToken]
           : [collateralToken, positionToken];
-        poolId = ethers.keccak256(
+        const _poolId = ethers.keccak256(
           ethers.AbiCoder.defaultAbiCoder().encode(
             ["address", "address", "uint24", "int24", "address"],
             [c0, c1, 500, tickSpacing, twammHook],
@@ -271,7 +271,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
                 mintBlockPrices.set(blockNum, ps.mark_price);
               }
             }
-          } catch {}
+          } catch { /* ignore fetch errors */ }
         }),
       );
 
@@ -292,7 +292,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
               const decoded = decodePositionInfo(info);
               tickLower = decoded.tickLower;
               tickUpper = decoded.tickUpper;
-            } catch {}
+            } catch { /* ignore decode errors */ }
 
             // Entry price from indexed pool state at mint block
             let entryPrice = null;

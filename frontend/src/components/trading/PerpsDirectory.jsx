@@ -71,7 +71,7 @@ export default function PerpsDirectory() {
     }
   };
 
-  const SortIcon = ({ col }) => {
+  const getSortIcon = (col) => {
     if (sortKey !== col) return <ArrowUpDown size={10} className="opacity-30" />;
     return sortDir === "desc"
       ? <ChevronDown size={10} className="text-cyan-400" />
@@ -152,28 +152,28 @@ export default function PerpsDirectory() {
           {/* Table Header */}
           <div className="hidden md:grid grid-cols-8 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 bg-[#0a0a0a]">
             <button onClick={() => toggleSort("pair")} className="relative flex items-center gap-1.5 text-left hover:text-white transition-colors">
-              Market <SortIcon col="pair" />
+              Market {getSortIcon("pair")}
             </button>
             <button onClick={() => toggleSort("price")} className="relative text-center hover:text-white transition-colors">
-              Price <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="price" /></span>
+              Price <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("price")}</span>
             </button>
             <button onClick={() => toggleSort("change24h")} className="relative text-center hover:text-white transition-colors">
-              24H <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="change24h" /></span>
+              24H <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("change24h")}</span>
             </button>
             <button onClick={() => toggleSort("base")} className="relative text-center hover:text-white transition-colors">
-              Base <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="base" /></span>
+              Base <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("base")}</span>
             </button>
             <button onClick={() => toggleSort("protocol")} className="relative text-center hover:text-white transition-colors">
-              Protocol <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="protocol" /></span>
+              Protocol <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("protocol")}</span>
             </button>
             <button onClick={() => toggleSort("openInterest")} className="relative text-center hover:text-white transition-colors">
-              Open Interest <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="openInterest" /></span>
+              Open Interest <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("openInterest")}</span>
             </button>
             <button onClick={() => toggleSort("volume24h")} className="relative text-center hover:text-white transition-colors">
-              Volume 24H <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="volume24h" /></span>
+              Volume 24H <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("volume24h")}</span>
             </button>
             <button onClick={() => toggleSort("liquidity")} className="relative text-center hover:text-white transition-colors">
-              Pool Liquidity <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="liquidity" /></span>
+              Pool Liquidity <span className="absolute ml-1 top-1/2 -translate-y-1/2">{getSortIcon("liquidity")}</span>
             </button>
           </div>
 

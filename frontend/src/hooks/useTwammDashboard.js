@@ -316,7 +316,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             ? amountInTokens
             : amountInTokens * poolPrice;
           const spentUsd = isBuy ? tokensSpent : tokensSpent * poolPrice;
-          const valueUsd = earnedUsd + remainingUsd; // base (updated below with ghost)
+          const _valueUsd = earnedUsd + remainingUsd; // base (updated below with ghost)
 
           // ── Ghost attribution (pro-rata) ──
           // Ghost accrues in the buy-token direction:
