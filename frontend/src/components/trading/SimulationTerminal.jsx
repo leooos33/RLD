@@ -1557,33 +1557,42 @@ export default function SimulationTerminal() {
                     { id: "mint", label: "Mint", desc: "Mint wRLP from collateral" },
                     { id: "twap", label: "TWAP", desc: "Time-weighted swap" },
                     { id: "lp", label: "LP", desc: "Provide liquidity" },
-                    { id: "loop", label: "Loop", desc: "Leveraged position" },
-                    { id: "batch", label: "Batch", desc: "Multi-action bundle" },
+                    { id: "loop", label: "Loop", desc: "Leveraged position", soon: true },
+                    { id: "batch", label: "Batch", desc: "Multi-action bundle", soon: true },
                   ].map((action) => (
                     <React.Fragment key={action.id}>
                     <button
-                      onClick={() => setActiveAction(activeAction === action.id ? null : action.id)}
-                      className={`w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-all text-left group ${
-                        activeAction === action.id ? "bg-white/5" : ""
+                      onClick={() => !action.soon && setActiveAction(activeAction === action.id ? null : action.id)}
+                      className={`w-full flex items-center justify-between px-4 py-3 transition-all text-left group ${
+                        action.soon ? "opacity-40 cursor-default" :
+                        activeAction === action.id ? "bg-white/5 hover:bg-white/5" : "hover:bg-white/5"
                       }`}
                     >
                       <div>
-                        <div className={`text-sm font-bold uppercase tracking-widest transition-colors ${
+                        <div className={`text-sm font-bold uppercase tracking-widest transition-colors flex items-center gap-2 ${
+                          action.soon ? "text-gray-500" :
                           activeAction === action.id ? "text-cyan-400" : "text-white group-hover:text-cyan-400"
                         }`}>
                           {action.label}
+                          {action.soon && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-white/5 border border-white/10 text-gray-500 tracking-[0.15em] font-medium">
+                              SOON
+                            </span>
+                          )}
                         </div>
-                        <div className="text-sm text-gray-600 font-mono mt-0.5">
+                        <div className={`text-sm font-mono mt-0.5 ${action.soon ? "text-gray-700" : "text-gray-600"}`}>
                           {action.desc}
                         </div>
                       </div>
-                      <ChevronDown size={14} className={`transition-all ${
-                        activeAction === action.id
-                          ? "text-cyan-400 rotate-0"
-                          : "text-gray-600 group-hover:text-cyan-400 -rotate-90"
-                      }`} />
+                      {!action.soon && (
+                        <ChevronDown size={14} className={`transition-all ${
+                          activeAction === action.id
+                            ? "text-cyan-400 rotate-0"
+                            : "text-gray-600 group-hover:text-cyan-400 -rotate-90"
+                        }`} />
+                      )}
                     </button>
-                    {activeAction === action.id && (
+                    {activeAction === action.id && !action.soon && (
                       <ActionForm
                         type={action.id}
                         onClose={() => setActiveAction(null)}
