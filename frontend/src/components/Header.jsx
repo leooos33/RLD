@@ -35,7 +35,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
   return (
     <>
-      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-md z-50 w-full border-b border-transparent">
+      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-md z-50 w-full border-b border-white/10">
         <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-5 pl-1">
             {/* LOGO */}
@@ -53,6 +53,15 @@ export default function Header({ isCapped, ratesLoaded }) {
             {/* DESKTOP NAV */}
             <div className="hidden md:flex text-sm items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
+
+              <Link
+                to="/bonds"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+              >
+                BONDS
+              </Link>
+
+              <span className="text-white/10">|</span>
 
               <div className="relative group">
                 <Link
@@ -82,32 +91,17 @@ export default function Header({ isCapped, ratesLoaded }) {
                       to="/markets/perps"
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
                     >
-                      Long/Short
+                      Perps
                     </Link>
                     <Link
                       to="/markets/pools"
-                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
-                    >
-                      Pools
-                    </Link>
-                    <Link
-                      to="/markets/twamm"
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
                     >
-                      TWAMM
+                      LP Pools
                     </Link>
                   </div>
                 </div>
               </div>
-
-              <span className="text-white/10">|</span>
-
-              <Link
-                to="/bonds"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-              >
-                BONDS
-              </Link>
 
               <span className="text-white/10">|</span>
 
@@ -124,7 +118,7 @@ export default function Header({ isCapped, ratesLoaded }) {
                 to="/explore"
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
-                EXPLORE
+                DATA
               </Link>
             </div>
           </div>
@@ -213,7 +207,7 @@ export default function Header({ isCapped, ratesLoaded }) {
                 to="/explore"
                 className={`py-2 ${location.pathname === "/explore" ? "text-white" : "text-gray-500"}`}
               >
-                EXPLORE
+                DATA
               </Link>
 
               <Link
