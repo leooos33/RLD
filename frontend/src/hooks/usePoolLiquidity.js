@@ -6,6 +6,7 @@ import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 const BROKER_LP_ABI = [
   "function addPoolLiquidity(address twammHook, int24 tickLower, int24 tickUpper, uint128 liquidity, uint128 amount0Max, uint128 amount1Max) external returns (uint256 tokenId)",
   "function removePoolLiquidity(uint256 tokenId, uint128 liquidity) external returns (uint256 amount0, uint256 amount1)",
+  "function collectV4Fees() external",
   "function setActiveV4Position(uint256 newTokenId) external",
   "function activeTokenId() view returns (uint256)",
   "function hookAddress() view returns (address)",
@@ -595,9 +596,78 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
     [brokerAddress, refreshPosition],
   );
 
+  /**
+   * Collect accrued V4 LP fees for a given position.
+   * The contract's collectV4Fees() operates on activeTokenId, so we:
+   *   1. Track the target position (setActiveV4Position)
+   *   2. Call collectV4Fees()
+   *   3. Restore the previously tracked position
+   */
+  const executeCollectFees = useCallback(
+    async (tokenId, onSuccess) => {
+      if (!brokerAddress) { setExecutionError("Missing broker address"); return; }
+      if (!window.ethereum) { setExecutionError("MetaMask not found"); return; }
+
+      setExecuting(true);
+      setExecutionError(null);
+      setExecutionStep("Preparing fee collection...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
+
+        // Read current activeTokenId to restore later
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const brokerRead = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
+        const currentActive = await brokerRead.activeTokenId();
+
+        // If the target position isn't already tracked, temporarily track it
+        const needsSwitch = currentActive !== BigInt(tokenId);
+        if (needsSwitch) {
+          setExecutionStep("Tracking position for fee collection...");
+          const trackTx = await broker.setActiveV4Position(tokenId, { gasLimit: 300_000n });
+          await trackTx.wait();
+        }
+
+        // Collect fees
+        setExecutionStep("Collecting fees...");
+        const tx = await broker.collectV4Fees({ gasLimit: 500_000n });
+
+        setExecutionStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        // Restore previously tracked position if we switched
+        if (needsSwitch && currentActive !== 0n) {
+          setExecutionStep("Restoring tracked position...");
+          const restoreTx = await broker.setActiveV4Position(currentActive, { gasLimit: 300_000n });
+          await restoreTx.wait();
+        }
+
+        if (receipt.status === 1) {
+          setExecutionStep("Fees collected ✓");
+          refreshPosition();
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setExecutionError("Transaction reverted");
+          setExecutionStep("");
+        }
+      } catch (e) {
+        console.error("[LP] collectV4Fees failed:", e);
+        const reason = e.revert?.args?.[0] || e.reason || e.shortMessage || e.message;
+        setExecutionError(reason || "Fee collection failed");
+        setExecutionStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [brokerAddress, refreshPosition],
+  );
+
   return {
     executeAddLiquidity,
     executeRemoveLiquidity,
+    executeCollectFees,
     trackLpPosition,
     untrackLpPosition,
     activePosition,

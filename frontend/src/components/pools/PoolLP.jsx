@@ -352,6 +352,7 @@ export default function PoolLP() {
   // ── Pool liquidity hook (contract integration) ──────────────
   const {
     executeAddLiquidity,
+    executeCollectFees,
     executeRemoveLiquidity,
     activePosition: _activePosition,
     allPositions,
@@ -1517,14 +1518,32 @@ export default function PoolLP() {
       {/* Claim Fees Modal */}
       <ClaimFeesModal
         isOpen={!!claimPosition}
-        onClose={() => setClaimPosition(null)}
+        onClose={() => {
+          if (!lpExecuting) {
+            setClaimPosition(null);
+            clearLpError();
+          }
+        }}
         onConfirm={() => {
-          // TODO: execute claim transaction
-          setClaimPosition(null);
+          if (!claimPosition?.tokenId) return;
+          executeCollectFees(
+            claimPosition.tokenId,
+            () => {
+              setClaimPosition(null);
+              addToast({
+                type: "success",
+                title: "Fees Collected",
+                message: `Collected fees from position #${claimPosition.id}`,
+              });
+            },
+          );
         }}
         position={claimPosition}
         token0={poolData.token0}
         token1={poolData.token1}
+        executing={lpExecuting}
+        executionStep={lpStep}
+        executionError={lpError}
       />
 
       {/* Withdraw Modal */}
