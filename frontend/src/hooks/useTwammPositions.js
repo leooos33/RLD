@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import useSWR from "swr";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
+import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
 
 const RPC_URL = `${window.location.origin}/rpc`;
+const GQL_URL = `${SIM_API}/graphql`;
 
-// ── ABI fragments ────────────────────────────────────────────────
-
-const JTM_EVENTS_ABI = [
-  "event SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 amountIn, uint160 expiration, bool zeroForOne, uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)",
-  "event CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)",
-];
+// ── ABI: only view functions (no event scanning) ──────────────────
 
 const JTM_VIEW_ABI = [
   "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
@@ -17,11 +14,8 @@ const JTM_VIEW_ABI = [
 ];
 
 const BROKER_ACTIVE_ORDER_ABI = [
-  "function activeTwammOrder() view returns ((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey, bytes32 orderId)",
+  "function activeTwammOrder() view returns (address, uint160, bytes32)",
 ];
-
-const IFACE = new ethers.Interface(JTM_EVENTS_ABI);
-const SUBMIT_TOPIC = IFACE.getEvent("SubmitOrder").topicHash;
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -44,27 +38,53 @@ function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
 }
 
 function formatTimeLeft(seconds) {
-  if (seconds <= 0) return "Done";
+  if (seconds <= 0) return "Expired";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
   if (h >= 24) {
     const d = Math.floor(h / 24);
     const remH = h % 24;
     return `${d}d ${remH}h`;
   }
-  return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
-// ── Hook ──────────────────────────────────────────────────────────
+// ── GraphQL query replaces getLogs scanning ────────────────────────
+
+const TWAMM_ORDERS_QUERY = `
+  query TwammPositions($owner: String!) {
+    twammOrders(owner: $owner) {
+      orderId owner amountIn sellRate
+      expiration startEpoch zeroForOne
+      blockNumber txHash isCancelled
+    }
+  }
+`;
+
+const gqlFetcher = ([url, query, variables]) => {
+  const body = { query };
+  if (variables) body.variables = variables;
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then((r) => {
+      if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}`);
+      return r.json();
+    })
+    .then((r) => r.data);
+};
 
 /**
- * useTwammPositions — Fetch all TWAMM orders for a broker from on-chain events.
+ * useTwammPositions — Fetch TWAMM orders for a specific broker.
  *
- * Returns an array of enriched order objects with real-time progress, values, and status.
+ * BEFORE: 2 getLogs calls scanning ALL on-chain events + N×2 getOrder RPC
+ * AFTER:  1 GraphQL query (filtered by owner in DB) + N×2 order enrichment RPC
  *
- * @param {string} brokerAddress PrimeBroker contract address
- * @param {object} marketInfo    From useSimulation (has infrastructure, collateral, position_token)
- * @param {number} pollInterval  Refresh interval in ms (default 30s)
+ * Event scanning completely eliminated by reading indexed data via GraphQL.
  */
 export function useTwammPositions(
   brokerAddress,
@@ -80,97 +100,49 @@ export function useTwammPositions(
   const collateralAddr = marketInfo?.collateral?.address;
   const positionAddr = marketInfo?.position_token?.address;
 
-  const fetchOrders = useCallback(async () => {
-    if (!brokerAddress || !hookAddr || !collateralAddr || !positionAddr) {
-      setOrders([]);
+  // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
+  const { data: gqlData, mutate: refreshGql } = useSWR(
+    brokerAddress && hookAddr
+      ? [GQL_URL, TWAMM_ORDERS_QUERY, { owner: brokerAddress }]
+      : null,
+    gqlFetcher,
+    {
+      refreshInterval: pollInterval,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+      keepPreviousData: true,
+    },
+  );
+
+  // ── Enrich with on-chain data ───────────────────────────────────
+  const enrichOrders = useCallback(async () => {
+    if (
+      !brokerAddress ||
+      !hookAddr ||
+      !collateralAddr ||
+      !positionAddr ||
+      !marketInfo?.infrastructure ||
+      !gqlData?.twammOrders
+    ) {
       return;
     }
 
     try {
       setLoading(true);
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-      // 1. Scan SubmitOrder events from JTM hook
-      const logs = await provider.getLogs({
-        address: hookAddr,
-        fromBlock: 0,
-        toBlock: "latest",
-        topics: [SUBMIT_TOPIC],
-      });
+      const rawOrders = gqlData.twammOrders;
+      const activeOrders = rawOrders.filter((o) => !o.isCancelled);
 
-      // Parse and filter by broker as owner
-      const submitEvents = [];
-      for (const log of logs) {
-        try {
-          const parsed = IFACE.parseLog({
-            topics: log.topics,
-            data: log.data,
-          });
-          if (!parsed) continue;
-          // Owner check (case-insensitive)
-          if (
-            parsed.args.owner.toLowerCase() !== brokerAddress.toLowerCase()
-          )
-            continue;
-
-          submitEvents.push({
-            orderId: log.topics[2], // indexed orderId
-            owner: parsed.args.owner,
-            amountIn: parsed.args.amountIn,
-            expiration: parsed.args.expiration,
-            zeroForOne: parsed.args.zeroForOne,
-            sellRate: parsed.args.sellRate,
-            startEpoch: parsed.args.startEpoch,
-            blockNumber: log.blockNumber,
-            txHash: log.transactionHash,
-          });
-        } catch {
-          // skip unparsable
-        }
-      }
-
-      if (submitEvents.length === 0) {
+      if (activeOrders.length === 0) {
         if (mountedRef.current) setOrders([]);
         return;
       }
 
-      // Check for CancelOrder events to filter out cancelled orders
-      const cancelTopic = IFACE.getEvent("CancelOrder").topicHash;
-      const cancelLogs = await provider.getLogs({
-        address: hookAddr,
-        fromBlock: 0,
-        toBlock: "latest",
-        topics: [cancelTopic],
-      });
-
-      const cancelledOrderIds = new Set();
-      for (const log of cancelLogs) {
-        try {
-          const parsed = IFACE.parseLog({
-            topics: log.topics,
-            data: log.data,
-          });
-          if (
-            parsed &&
-            parsed.args.owner.toLowerCase() === brokerAddress.toLowerCase()
-          ) {
-            cancelledOrderIds.add(log.topics[2]);
-          }
-        } catch {
-          // skip
-        }
-      }
-
-      // Filter out cancelled orders
-      const activeSubmits = submitEvents.filter(
-        (e) => !cancelledOrderIds.has(e.orderId),
-      );
-
-      // 2. Get current block timestamp
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
       const block = await provider.getBlock("latest");
       const now = block.timestamp;
 
-      // 3. Read activeTwammOrder from broker
+      // Read activeTwammOrder from broker
       let trackedOrderId = null;
       try {
         const broker = new ethers.Contract(
@@ -179,7 +151,7 @@ export function useTwammPositions(
           provider,
         );
         const result = await broker.activeTwammOrder();
-        trackedOrderId = result[2]; // orderId (bytes32)
+        trackedOrderId = result[2];
         if (
           trackedOrderId ===
           "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -189,10 +161,8 @@ export function useTwammPositions(
         // No active order or function doesn't exist
       }
 
-      // 4. Use oracle price for wRLP → USD conversion
       const markPrice = oraclePrice > 0 ? oraclePrice : 1;
 
-      // 5. For each order, fetch current state
       const poolKey = buildPoolKey(
         marketInfo.infrastructure,
         collateralAddr,
@@ -201,10 +171,10 @@ export function useTwammPositions(
       const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
 
       const enrichedOrders = await Promise.all(
-        activeSubmits.map(async (evt) => {
+        activeOrders.map(async (evt) => {
           const orderKeyTuple = [
             evt.owner,
-            evt.expiration,
+            parseInt(evt.expiration),
             evt.zeroForOne,
           ];
 
@@ -230,8 +200,7 @@ export function useTwammPositions(
             console.warn("[TWAMM] getCancelOrderState failed:", e.message);
           }
 
-          // Compute progress based on actual active period [startEpoch, expiration]
-          const _amountInNum = Number(evt.amountIn);
+          const amountInNum = Number(BigInt(evt.amountIn));
           const refundNum = Number(sellTokensRefund);
           const startTs = Number(evt.startEpoch || 0);
           const expTs = Number(evt.expiration);
@@ -242,52 +211,30 @@ export function useTwammPositions(
               ? Math.min(100, Math.round((elapsed / totalDuration) * 100))
               : 0;
 
-          // Status: Pending (before startEpoch), Active, Done
           const isPending = now < startTs;
           const timeLeftSec = Math.max(0, expTs - now);
           const isExpired = timeLeftSec === 0;
           const isDone = isExpired || sellRate === 0n;
 
-          // Direction
-          // zeroForOne=true: selling token0. Check if that's collateral or position
           const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
           const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
 
-          // Token amounts (raw ÷ 1e6)
           const buyTokensRaw = Number(buyTokensOwed) / 1e6;
           const sellRefundRaw = refundNum / 1e6;
-          const amountInTokens = Number(evt.amountIn) / 1e6;
-
-          // Value in USD — total order value = earned + ghost (uncollected) + remaining
-          // BUY order (selling waUSDC, getting wRLP):
-          //   earned = wRLP × price, remaining = waUSDC (already USD)
-          //   ghost = waUSDC sold but not yet cleared → estimate at face value
-          // SELL order (selling wRLP, getting waUSDC):
-          //   earned = waUSDC (already USD), remaining = wRLP × price
-          //   ghost = wRLP sold but not yet cleared → estimate at mark price
+          const amountInTokens = amountInNum / 1e6;
           const tokensSpent = amountInTokens - sellRefundRaw;
-          const earnedUsd = isBuy
-            ? buyTokensRaw * markPrice
-            : buyTokensRaw;
+
+          const earnedUsd = isBuy ? buyTokensRaw * markPrice : buyTokensRaw;
           const remainingUsd = isBuy
-            ? sellRefundRaw                // waUSDC remaining
-            : sellRefundRaw * markPrice;   // wRLP remaining × price
-          // Order value = what you'd actually receive if you cancelled now
-          // earnedUsd = buyTokensOwed × price (real on-chain cleared value)
-          // remainingUsd = refundable sell tokens
+            ? sellRefundRaw
+            : sellRefundRaw * markPrice;
           const valueUsd = earnedUsd + remainingUsd;
 
-          // Sell/buy token labels
           const sellToken = isBuy ? "waUSDC" : "wRLP";
           const buyToken = isBuy ? "wRLP" : "waUSDC";
 
-          // Is this the tracked order?
           const tracked =
             trackedOrderId != null && trackedOrderId === evt.orderId;
-
-          // Actual buy-side output from getCancelOrderState (what you'd receive on cancel)
-          // This is the real on-chain value, not an estimate
-          const convertedBuyEstimate = buyTokensRaw;
 
           return {
             orderId: evt.orderId,
@@ -302,9 +249,11 @@ export function useTwammPositions(
             remainingUsd,
             sellRefund: sellRefundRaw,
             tokensSpent,
-            convertedBuyEstimate,
+            convertedBuyEstimate: buyTokensRaw,
             progress: isDone && progress < 100 ? 100 : progress,
-            timeLeft: isPending ? `Starts in ${formatTimeLeft(startTs - now)}` : formatTimeLeft(timeLeftSec),
+            timeLeft: isPending
+              ? `Starts in ${formatTimeLeft(startTs - now)}`
+              : formatTimeLeft(timeLeftSec),
             timeLeftSec,
             tracked,
             isPending,
@@ -318,38 +267,48 @@ export function useTwammPositions(
         }),
       );
 
-      // Sort: tracked first, then by expiration (soonest first)
       enrichedOrders.sort((a, b) => {
         if (a.tracked !== b.tracked) return a.tracked ? -1 : 1;
         return a.expiration - b.expiration;
       });
 
-      // Filter out fully-claimed orders (deleted from JTM — sellRate=0 AND no tokens owed)
       const visibleOrders = enrichedOrders.filter(
-        (o) => !(o.isDone && o.earned === 0 && o.sellRefund === 0 && o.valueUsd === 0),
+        (o) =>
+          !(o.isDone && o.earned === 0 && o.sellRefund === 0 && o.valueUsd === 0),
       );
 
       if (mountedRef.current) {
         setOrders(visibleOrders);
       }
     } catch (e) {
-      console.warn("[TWAMM] fetchOrders failed:", e);
+      console.warn("[TWAMM] enrichOrders failed:", e);
     } finally {
       if (mountedRef.current) {
         setLoading(false);
       }
     }
-  }, [brokerAddress, hookAddr, collateralAddr, positionAddr, marketInfo, oraclePrice]);
+  }, [brokerAddress, hookAddr, collateralAddr, positionAddr, marketInfo, oraclePrice, gqlData]);
+
+  // Re-enrich whenever GraphQL data updates
+  useEffect(() => {
+    if (gqlData?.twammOrders) {
+      enrichOrders();
+    }
+  }, [gqlData, enrichOrders]);
 
   useEffect(() => {
     mountedRef.current = true;
-    fetchOrders();
-    const interval = setInterval(fetchOrders, pollInterval);
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
     };
-  }, [fetchOrders, pollInterval]);
+  }, []);
 
-  return { orders, loading, refresh: fetchOrders };
+  return {
+    orders,
+    loading,
+    refresh: () => {
+      refreshGql();
+      enrichOrders();
+    },
+  };
 }

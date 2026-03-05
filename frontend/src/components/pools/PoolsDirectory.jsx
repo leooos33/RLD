@@ -7,7 +7,7 @@ import {
   ArrowUpDown,
   Loader2,
 } from "lucide-react";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 
 // ── Helpers ──────────────────────────────────────────────────
 const formatUSD = (val) => {
@@ -25,7 +25,7 @@ export default function PoolsDirectory() {
   const [sortKey, setSortKey] = useState("tvl");
   const [sortDir, setSortDir] = useState("desc");
 
-  const sim = useSimulation({ pollInterval: 5000 });
+  const sim = useSim();
   const { connected, loading, market, pool, poolTVL, volumeData, marketInfo } = sim;
 
   // ── Build live pool row from simulation data ────────────────

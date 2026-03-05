@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide-react";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 import BondBrandingPanel from "./BondBrandingPanel";
 
 // ── Token icon URLs ───────────────────────────────────────────
@@ -52,7 +52,7 @@ export default function BondsDirectory() {
     protocolStats,
     marketInfo,
     chartData,
-  } = useSimulation({ pollInterval: 5000 });
+  } = useSim();
 
   // ── Build bond markets from real data ────────────────────────
   const bondMarkets = useMemo(() => {

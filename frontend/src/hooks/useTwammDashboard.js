@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import useSWR from "swr";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
+import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
 
 const RPC_URL = `${window.location.origin}/rpc`;
+const GQL_URL = `${SIM_API}/graphql`;
 
-// ── ABI fragments ──────────────────────────────────────────────────
-
-const JTM_EVENTS_ABI = [
-  "event SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 amountIn, uint160 expiration, bool zeroForOne, uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)",
-  "event CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)",
-];
+// ── ABI: only view functions needed for enrichment (no event scanning) ──
 
 const JTM_VIEW_ABI = [
   "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
@@ -20,14 +17,6 @@ const JTM_VIEW_ABI = [
   "function maxDiscountBps() view returns (uint256)",
   "function expirationInterval() view returns (uint256)",
 ];
-
-const STATE_VIEW_ABI = [
-  "function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint16 protocolFee, uint24 lpFee)",
-];
-
-const IFACE = new ethers.Interface(JTM_EVENTS_ABI);
-const SUBMIT_TOPIC = IFACE.getEvent("SubmitOrder").topicHash;
-const CANCEL_TOPIC = IFACE.getEvent("CancelOrder").topicHash;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -68,16 +57,37 @@ function shortenAddress(addr) {
   return `${addr.substring(0, 6)}…${addr.substring(addr.length - 4)}`;
 }
 
+// ── GraphQL query replaces getLogs scanning ─────────────────────────
+
+const TWAMM_QUERY = `
+  query TwammDashboard {
+    twammOrders {
+      orderId owner amountIn sellRate
+      expiration startEpoch zeroForOne
+      blockNumber txHash isCancelled
+    }
+  }
+`;
+
+const gqlFetcher = ([url, query]) =>
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  })
+    .then((r) => r.json())
+    .then((r) => r.data);
+
 // ── Hook ────────────────────────────────────────────────────────────
 
 /**
  * useTwammDashboard — Fetch ALL TWAMM orders + system metrics.
  *
- * Unlike useTwammPositions (which filters by broker), this fetches
- * every order from event logs for a global dashboard view.
+ * BEFORE: 2 getLogs calls + 2 REST calls + N×2 getOrder/getCancelOrder RPC calls
+ * AFTER:  1 GraphQL query + 3 stream RPC calls + N×2 order enrichment RPC calls
  *
- * @param {object} marketInfo  From useSimulation
- * @param {number} pollInterval  Refresh interval in ms (default 5s)
+ * The event scanning (getLogs for Submit/Cancel) is completely eliminated
+ * by reading from the indexer DB via GraphQL.
  */
 export function useTwammDashboard(marketInfo, pollInterval = 5000) {
   const [orders, setOrders] = useState([]);
@@ -86,134 +96,55 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
   const mountedRef = useRef(true);
+  const configCacheRef = useRef(null); // cache hook config across refreshes
 
   const hookAddr = marketInfo?.infrastructure?.twamm_hook;
   const collateralAddr = marketInfo?.collateral?.address;
   const positionAddr = marketInfo?.position_token?.address;
 
-  const fetchDashboard = useCallback(async () => {
+  // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
+  const { data: gqlData, mutate: refreshGql } = useSWR(
+    hookAddr ? [GQL_URL, TWAMM_QUERY] : null,
+    gqlFetcher,
+    {
+      refreshInterval: pollInterval,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+      keepPreviousData: true,
+    },
+  );
+
+  // ── Enrich orders with on-chain state (stream + per-order) ──────
+  const enrichOrders = useCallback(async () => {
     if (
       !hookAddr ||
       !collateralAddr ||
       !positionAddr ||
-      !marketInfo?.infrastructure
+      !marketInfo?.infrastructure ||
+      !gqlData?.twammOrders
     ) {
       return;
     }
 
     try {
+      const rawOrders = gqlData.twammOrders;
+      const activeOrders = rawOrders.filter((o) => !o.isCancelled);
+
       const provider = new ethers.JsonRpcProvider(RPC_URL);
-
-      // 1. Scan ALL SubmitOrder events
-      const submitLogs = await provider.getLogs({
-        address: hookAddr,
-        fromBlock: 0,
-        toBlock: "latest",
-        topics: [SUBMIT_TOPIC],
-      });
-
-      const submitEvents = [];
-      for (const log of submitLogs) {
-        try {
-          const parsed = IFACE.parseLog({ topics: log.topics, data: log.data });
-          if (!parsed) continue;
-          submitEvents.push({
-            orderId: log.topics[2],
-            owner: parsed.args.owner,
-            amountIn: parsed.args.amountIn,
-            expiration: parsed.args.expiration,
-            zeroForOne: parsed.args.zeroForOne,
-            sellRate: parsed.args.sellRate,
-            startEpoch: parsed.args.startEpoch,
-            blockNumber: log.blockNumber,
-            txHash: log.transactionHash,
-          });
-        } catch {
-          /* skip */
-        }
-      }
-
-      // 2. Scan CancelOrder events
-      const cancelLogs = await provider.getLogs({
-        address: hookAddr,
-        fromBlock: 0,
-        toBlock: "latest",
-        topics: [CANCEL_TOPIC],
-      });
-
-      const cancelledIds = new Set();
-      for (const log of cancelLogs) {
-        try {
-          cancelledIds.add(log.topics[2]);
-        } catch {
-          /* skip */
-        }
-      }
-
-      const activeSubmits = submitEvents.filter(
-        (e) => !cancelledIds.has(e.orderId),
-      );
-
-      // 3. Current block timestamp
       const block = await provider.getBlock("latest");
       const now = block.timestamp;
 
-      // 4. Fetch pool price from sqrtPriceX96 (actual AMM exchange rate)
-      // NOTE: mark_price from /api/market-info is the INDEX price of the underlying,
-      //       NOT the trading price of wRLP in the pool. They are very different.
-      let poolPrice = 1; // waUSDC per wRLP (the actual AMM rate)
-      let markPrice = 1; // kept for reference display only
-      try {
-        const res = await fetch(`${window.location.origin}/api/market-info`);
-        if (res.ok) {
-          const d = await res.json();
-          markPrice = parseFloat(d.mark_price || d.index_price || "1");
-        }
-      } catch {
-        /* fallback */
+      // Get pool price from the current pool state (from useSim context)
+      // The pool.markPrice is passed via marketInfo, or we compute from sqrtPriceX96
+      let poolPrice = 1;
+      let markPrice = marketInfo?.mark_price || 1;
+
+      // Pool price from pool state if available
+      if (marketInfo?.pool_mark_price) {
+        poolPrice = marketInfo.pool_mark_price;
       }
 
-      // Get sqrtPriceX96 from pool slot0 via StateView
-      try {
-        const stateViewAddr = marketInfo.infrastructure.v4_state_view;
-        if (stateViewAddr) {
-          const sv = new ethers.Contract(
-            stateViewAddr,
-            STATE_VIEW_ABI,
-            provider,
-          );
-          const poolKeyArr = buildPoolKey(
-            marketInfo.infrastructure,
-            collateralAddr,
-            positionAddr,
-          );
-          const poolId = ethers.keccak256(
-            ethers.AbiCoder.defaultAbiCoder().encode(
-              ["address", "address", "uint24", "int24", "address"],
-              poolKeyArr,
-            ),
-          );
-          const slot0 = await sv.getSlot0(poolId);
-          const sqrtPriceX96 = Number(slot0[0]);
-          const Q96 = 2 ** 96;
-          // price = (sqrtPriceX96 / 2^96)^2 = token1 per token0
-          // token0 = wRLP, token1 = waUSDC (sorted order)
-          // So price = waUSDC per wRLP
-          const rawPrice = (sqrtPriceX96 / Q96) ** 2;
-          // Both tokens are 6 decimals, no adjustment needed
-          if (rawPrice > 0) {
-            // Check token order: if waUSDC < wRLP address, token0=waUSDC, token1=wRLP
-            // Then price = wRLP per waUSDC, and we need 1/price for waUSDC per wRLP
-            const waUSDCisToken0 =
-              collateralAddr.toLowerCase() < positionAddr.toLowerCase();
-            poolPrice = waUSDCisToken0 ? 1 / rawPrice : rawPrice;
-          }
-        }
-      } catch (e) {
-        console.warn("[TWAMM Dashboard] pool price fetch failed:", e.message);
-      }
-
-      // 5. Fetch stream state
+      // Fetch stream state (3 RPC calls — down from 2 getLogs + N×2 event parsing)
       const poolKey = buildPoolKey(
         marketInfo.infrastructure,
         collateralAddr,
@@ -242,27 +173,34 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
         console.warn("[TWAMM Dashboard] getStreamState failed:", e.message);
       }
 
-      // 6. Fetch hook config (once, cached)
-      let hookConfig = null;
-      try {
-        const [discountRate, maxDiscount, interval] = await Promise.all([
-          hook.discountRateScaled(),
-          hook.maxDiscountBps(),
-          hook.expirationInterval(),
-        ]);
-        hookConfig = {
-          discountRateScaled: Number(discountRate),
-          maxDiscountBps: Number(maxDiscount),
-          expirationInterval: Number(interval),
-        };
-      } catch (e) {
-        console.warn("[TWAMM Dashboard] config fetch failed:", e.message);
+      // Fetch hook config (cached — only once per mount)
+      let hookConfig = configCacheRef.current;
+      if (!hookConfig) {
+        try {
+          const [discountRate, maxDiscount, interval] = await Promise.all([
+            hook.discountRateScaled(),
+            hook.maxDiscountBps(),
+            hook.expirationInterval(),
+          ]);
+          hookConfig = {
+            discountRateScaled: Number(discountRate),
+            maxDiscountBps: Number(maxDiscount),
+            expirationInterval: Number(interval),
+          };
+          configCacheRef.current = hookConfig;
+        } catch (e) {
+          console.warn("[TWAMM Dashboard] config fetch failed:", e.message);
+        }
       }
 
-      // 7. Enrich each order with value preservation analysis
+      // Enrich each order with value preservation analysis
       const enriched = await Promise.all(
-        activeSubmits.map(async (evt) => {
-          const orderKeyTuple = [evt.owner, evt.expiration, evt.zeroForOne];
+        activeOrders.map(async (evt) => {
+          const orderKeyTuple = [
+            evt.owner,
+            parseInt(evt.expiration),
+            evt.zeroForOne,
+          ];
 
           let sellRate = 0n;
           let buyTokensOwed = 0n;
@@ -283,7 +221,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             /* skip */
           }
 
-          const amountInNum = Number(evt.amountIn);
+          const amountInNum = Number(BigInt(evt.amountIn));
           const refundNum = Number(sellTokensRefund);
           const startTs = Number(evt.startEpoch || 0);
           const expTs = Number(evt.expiration);
@@ -307,7 +245,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
           const amountInTokens = amountInNum / 1e6;
           const tokensSpent = amountInTokens - sellRefundRaw;
 
-          // USD values — use pool price for wRLP valuation
+          // USD values
           const earnedUsd = isBuy ? buyTokensRaw * poolPrice : buyTokensRaw;
           const remainingUsd = isBuy
             ? sellRefundRaw
@@ -316,75 +254,55 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             ? amountInTokens
             : amountInTokens * poolPrice;
           const spentUsd = isBuy ? tokensSpent : tokensSpent * poolPrice;
-          const _valueUsd = earnedUsd + remainingUsd; // base (updated below with ghost)
 
-          // ── Ghost attribution (pro-rata) ──
-          // Ghost accrues in the buy-token direction:
-          //   If zeroForOne=true (selling token0), ghost accrues as token1 (accrued1)
-          //   If zeroForOne=false (selling token1), ghost accrues as token0 (accrued0)
+          // Ghost attribution
           let ghostShare = 0;
           let ghostShareUsd = 0;
           const orderSellRate = Number(sellRate);
           if (stream && orderSellRate > 0) {
             if (evt.zeroForOne) {
-              // selling token0 → ghost accrues in token1
               const totalSR = stream.sellRate0For1;
               if (totalSR > 0) {
                 ghostShare =
                   (stream.accrued1 / 1e6) * (orderSellRate / totalSR);
-                ghostShareUsd = ghostShare; // token1 = waUSDC ≈ USD
+                ghostShareUsd = ghostShare;
               }
             } else {
-              // selling token1 → ghost accrues in token0
               const totalSR = stream.sellRate1For0;
               if (totalSR > 0) {
                 ghostShare =
                   (stream.accrued0 / 1e6) * (orderSellRate / totalSR);
-                ghostShareUsd = ghostShare * poolPrice; // token0 = wRLP
+                ghostShareUsd = ghostShare * poolPrice;
               }
             }
           }
 
-          // Discount applied to ghost
           const discountBps = stream?.discountBps || 0;
-          const discountedGhostUsd = ghostShareUsd * (1 - discountBps / 10000);
+          const discountedGhostUsd =
+            ghostShareUsd * (1 - discountBps / 10000);
           const discountCostUsd = ghostShareUsd - discountedGhostUsd;
 
-          // ── Ideal instant swap comparison ──
-          // If you sold tokensSpent at current POOL price in a single atomic swap
-          // (zero slippage, zero time-cost):
-          //   BUY (waUSDC → wRLP): ideal wRLP = tokensSpent / poolPrice
-          //   SELL (wRLP → waUSDC): ideal waUSDC = tokensSpent * poolPrice
           const idealOutputTokens = isBuy
             ? poolPrice > 0
               ? tokensSpent / poolPrice
               : 0
             : tokensSpent * poolPrice;
           const idealOutputUsd = isBuy
-            ? idealOutputTokens * poolPrice // wRLP back to USD
-            : idealOutputTokens; // waUSDC ≈ USD
-          // Note: idealOutputUsd ≈ spentUsd (zero-slippage reference at pool price)
+            ? idealOutputTokens * poolPrice
+            : idealOutputTokens;
 
-          // ── Value preservation ──
-          // Total value = earned (cleared) + ghost (uncollected) + remaining (refundable)
           const totalValueUsd = earnedUsd + discountedGhostUsd + remainingUsd;
-          // Actual total value = earned + discounted ghost (in buy-token USD terms)
           const actualOutputUsd = earnedUsd + discountedGhostUsd;
           const preservation =
             spentUsd > 0 ? (actualOutputUsd / spentUsd) * 100 : 0;
 
-          // ── Netting benefit ──
-          // Netting happens when opposing flows cancel out without AMM swap.
-          // This reduces slippage to zero on the netted portion.
-          // We can't directly measure it, but the ratio earned/spent gives us
-          // the effective execution price vs mark price.
           const effectivePrice = isBuy
             ? buyTokensRaw > 0
               ? tokensSpent / buyTokensRaw
-              : 0 // waUSDC per wRLP
+              : 0
             : tokensSpent > 0
               ? buyTokensRaw / tokensSpent
-              : 0; // waUSDC per wRLP
+              : 0;
           const priceImpactBps =
             poolPrice > 0
               ? Math.round(
@@ -392,7 +310,6 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
                 )
               : 0;
 
-          // Sell token label
           const sellToken = isBuy ? "waUSDC" : "wRLP";
           const buyToken = isBuy ? "wRLP" : "waUSDC";
 
@@ -414,7 +331,9 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             sellRefund: sellRefundRaw,
             tokensSpent,
             progress: isDone && progress < 100 ? 100 : progress,
-            timeLeft: isPending ? `Starts in ${formatTimeLeft(startTs - now)}` : formatTimeLeft(timeLeftSec),
+            timeLeft: isPending
+              ? `Starts in ${formatTimeLeft(startTs - now)}`
+              : formatTimeLeft(timeLeftSec),
             timeLeftSec,
             isPending,
             isExpired,
@@ -425,7 +344,6 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             txHash: evt.txHash,
             markPrice,
             poolPrice,
-            // Value analysis
             ghostShare,
             ghostShareUsd,
             discountedGhostUsd,
@@ -456,20 +374,24 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
         setLoading(false);
       }
     } catch (e) {
-      console.warn("[TWAMM Dashboard] fetch failed:", e);
+      console.warn("[TWAMM Dashboard] enrich failed:", e);
       if (mountedRef.current) setLoading(false);
     }
-  }, [hookAddr, collateralAddr, positionAddr, marketInfo]);
+  }, [hookAddr, collateralAddr, positionAddr, marketInfo, gqlData]);
+
+  // Re-enrich whenever GraphQL data updates
+  useEffect(() => {
+    if (gqlData?.twammOrders) {
+      enrichOrders();
+    }
+  }, [gqlData, enrichOrders]);
 
   useEffect(() => {
     mountedRef.current = true;
-    fetchDashboard();
-    const interval = setInterval(fetchDashboard, pollInterval);
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
     };
-  }, [fetchDashboard, pollInterval]);
+  }, []);
 
   return {
     orders,
@@ -477,6 +399,9 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
     config,
     loading,
     lastRefresh,
-    refresh: fetchDashboard,
+    refresh: () => {
+      refreshGql();
+      enrichOrders();
+    },
   };
 }

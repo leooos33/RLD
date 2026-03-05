@@ -12,6 +12,7 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { useSim } from "../../context/SimulationContext";
 import { useSimulation } from "../../hooks/useSimulation";
 import { useWallet } from "../../context/WalletContext";
 import { useBrokerAccount } from "../../hooks/useBrokerAccount";
@@ -310,7 +311,10 @@ export default function PoolLP() {
     return simBlockTs - (wallNow - wallEnd);
   }, [appliedEnd, simBlockTs]);
 
-  const sim = useSimulation({
+  // Shared data from global context (deduplicated across all pages)
+  const simShared = useSim();
+  // Chart-specific data with custom resolution/time range
+  const simChart = useSimulation({
     pollInterval: 2000,
     chartResolution: resolution,
     chartStartTime,
@@ -320,9 +324,9 @@ export default function PoolLP() {
   // Update simBlockTs once when simulation data first arrives
   useEffect(() => {
     if (simBlockTs) return; // only set once
-    const ts = sim?.latest?.market_states?.[0]?.block_timestamp;
+    const ts = simShared?.latest?.market_states?.[0]?.block_timestamp;
     if (ts) setSimBlockTs(ts);
-  }, [sim?.latest, simBlockTs]);
+  }, [simShared?.latest, simBlockTs]);
   const {
     connected,
     loading,
@@ -333,11 +337,11 @@ export default function PoolLP() {
     funding,
     fundingFromNF: _fundingFromNF,
     volumeData,
-    volumeHistory,
     protocolStats: _protocolStats,
     marketInfo,
-    chartData,
-  } = sim;
+  } = simShared;
+  // Chart data uses local sim with custom resolution params
+  const { chartData, volumeHistory } = simChart;
 
   const { hasBroker, brokerAddress, checkBroker, fetchBrokerBalance } = useBrokerAccount(
     account,

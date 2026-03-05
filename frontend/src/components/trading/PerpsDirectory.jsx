@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { TrendingUp, ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide-react";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 
 const formatUSD = (val) => {
   if (val == null || isNaN(val)) return "—";
@@ -34,7 +34,7 @@ export default function PerpsDirectory() {
     protocolStats,
     marketInfo,
     oracleChange24h,
-  } = useSimulation({ pollInterval: 5000 });
+  } = useSim();
 
   // ── Build markets array from real data ───────────────────────
   const markets = useMemo(() => {

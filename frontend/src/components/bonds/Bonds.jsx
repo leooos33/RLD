@@ -12,7 +12,7 @@ import { ToastContainer } from "../common/Toast";
 // Hooks
 import { useMarketData } from "../../hooks/useMarketData";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 import { useWealthProjection } from "../../hooks/useWealthProjection";
 
 import { useBondExecution } from "../../hooks/useBondExecution";
@@ -50,7 +50,7 @@ export default function BondsPage() {
   } = useMarketData();
 
   // Live simulation data for stats panel + infrastructure addresses
-  const { poolTVL, protocolStats, marketInfo } = useSimulation({ pollInterval: 5000 });
+  const { poolTVL, protocolStats, marketInfo } = useSim();
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
 
   // Wallet balance — track both USDC and waUSDC
@@ -116,7 +116,7 @@ export default function BondsPage() {
   const tradeLogic = useTradeLogic(latest.apy);
 
   // Real on-chain bond positions (all bond broker NFTs owned by account)
-  const { bonds: userBonds, refresh: refreshBonds } = useBondPositions(
+  const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
     account,
     latest?.apy,
   );
@@ -644,7 +644,12 @@ export default function BondsPage() {
               title: "Bond Created",
               message: `$${notional.toLocaleString()} bond minted — tx ${receipt.hash.slice(0, 10)}…`,
             });
-            refreshBonds();
+            // Optimistic: add placeholder bond instantly, background sync corrects
+            if (receipt.brokerAddress) {
+              optimisticCreate(receipt.brokerAddress, notional, maturityHours);
+            } else {
+              refreshBonds();
+            }
           }, { useUnderlying: selectedToken === "USDC" });
         }}
         notional={notional}
@@ -670,7 +675,8 @@ export default function BondsPage() {
               title: "Bond Closed",
               message: `Bond #${String(bond.id).padStart(4, "0")} closed — funds returned to wallet`,
             });
-            refreshBonds();
+            // Optimistic: remove closed bond instantly from UI
+            optimisticClose(bond.brokerAddress);
           }, { useUnderlying: selectedToken === "USDC" });
         }}
         bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}

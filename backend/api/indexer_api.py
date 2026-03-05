@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
 import json
+import math
+from fastapi.responses import JSONResponse
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,10 +33,30 @@ from db.comprehensive import (
     DB_PATH
 )
 
+
+
+def _sanitize_floats(obj):
+    """Recursively replace inf/nan floats with None."""
+    if isinstance(obj, float):
+        return None if (math.isinf(obj) or math.isnan(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
+
+
+class SafeJSONResponse(JSONResponse):
+    """JSONResponse that handles inf/nan floats."""
+    def render(self, content):
+        return super().render(_sanitize_floats(content))
+
+
 app = FastAPI(
     title="RLD Market Indexer API",
     description="Historical market state data for any RLD market",
-    version="2.0.0"
+    version="2.0.0",
+    default_response_class=SafeJSONResponse,
 )
 
 # Enable CORS for frontend
@@ -45,6 +67,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── ETag / Cache-Control Middleware ────────────────────────────
+# Returns 304 Not Modified when the latest indexed block hasn't changed.
+# Cuts bandwidth to zero for rapid polling when chain is idle.
+from starlette.responses import Response as StarletteResponse
+
+@app.middleware("http")
+async def etag_cache_middleware(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    # Only apply to API data endpoints (not GraphQL, not static)
+    if path.startswith("/api/") and request.method == "GET":
+        try:
+            block = get_last_indexed_block()
+            etag = f'"block-{block}"'
+            client_etag = request.headers.get("if-none-match", "")
+            if client_etag == etag:
+                return StarletteResponse(status_code=304, headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=1",
+                })
+            response.headers["ETag"] = etag
+            response.headers["Cache-Control"] = "public, max-age=1"
+        except Exception:
+            pass  # Don't fail the request if caching breaks
+    return response
+
 
 # Mount GraphQL endpoint
 try:
@@ -318,21 +368,266 @@ async def get_broker_history_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════
+# Bond Enrichment — server-side RPC for live on-chain state
+# ═══════════════════════════════════════════════════════════
+
+import time as _time
+
+# TTL cache: rapid UI interactions reuse cached enrichment (2s TTL)
+_bond_enrich_cache = {"data": None, "ts": 0, "key": None}
+
+
+def _enrich_bonds_cached(bonds: list, rpc_url: str, market_config: dict, owner: str = None) -> list:
+    """Cached wrapper for bond enrichment. Returns cached data if < 2s old."""
+    global _bond_enrich_cache
+    cache_key = f"{owner}:{len(bonds)}"
+    now = _time.monotonic()
+    if (
+        _bond_enrich_cache["data"] is not None
+        and _bond_enrich_cache["key"] == cache_key
+        and (now - _bond_enrich_cache["ts"]) < 2.0
+    ):
+        return _bond_enrich_cache["data"]
+    result = _enrich_bonds_with_rpc(bonds, rpc_url, market_config)
+    _bond_enrich_cache = {"data": result, "ts": now, "key": cache_key}
+    return result
+
+
+def _enrich_bonds_with_rpc(bonds: list, rpc_url: str, market_config: dict) -> list:
+    """
+    Enrich bond records with live on-chain data via batched JSON-RPC.
+    Fetches: debt principal, NF, TWAMM order, collateral balance, frozen flag.
+    All in 1-2 batch requests (vs 20+ sequential browser calls).
+    """
+    if not bonds:
+        return bonds
+
+    import urllib.request as urlreq
+    import math
+
+    active_bonds = [b for b in bonds if b.get("status") == "active"]
+    if not active_bonds:
+        # Closed bonds — just compute fields from DB data, no RPC needed
+        for b in bonds:
+            notional = int(b.get("notional") or 0) / 1e6
+            b["notional_usd"] = notional
+            b["debt_usd"] = 0
+            b["free_collateral"] = 0
+            b["remaining_days"] = 0
+            b["is_matured"] = True
+            b["frozen"] = False
+            b["has_active_order"] = False
+            b["bond_id"] = int(b["broker_address"][-4:], 16) % 10000
+        return bonds
+
+    # ── Build batch JSON-RPC request ──────────────────────────
+    # Function selectors (4 bytes):
+    SEL_CORE = "0xf8f9da28"              # CORE() -> address
+    SEL_MARKET_ID = "0x1dce43f9"         # marketId() -> bytes32
+    SEL_COLLATERAL = "0xb2016bd4"        # collateralToken() -> address
+    SEL_FROZEN = "0x054f7d9c"            # frozen() -> bool
+    SEL_TWAMM_ORDER = "0xe4d7907d"       # activeTwammOrder() -> (key, orderKey, orderId)
+    SEL_GET_POSITION = "0x713f9507"      # getPosition(bytes32, address)
+    SEL_GET_MARKET_STATE = "0x544e4c74"  # getMarketState(bytes32)
+    SEL_BALANCE_OF = "0x70a08231"        # balanceOf(address)
+
+    def pad_addr(addr):
+        return addr.lower().replace("0x", "").zfill(64)
+
+    batch = []
+    # Phase 1: Get broker metadata (core, marketId, collateral, frozen, twamm)
+    for i, b in enumerate(active_bonds):
+        addr = b["broker_address"]
+        base_id = i * 5
+        batch.append({"jsonrpc": "2.0", "id": base_id,     "method": "eth_call", "params": [{"to": addr, "data": SEL_CORE}, "latest"]})
+        batch.append({"jsonrpc": "2.0", "id": base_id + 1, "method": "eth_call", "params": [{"to": addr, "data": SEL_MARKET_ID}, "latest"]})
+        batch.append({"jsonrpc": "2.0", "id": base_id + 2, "method": "eth_call", "params": [{"to": addr, "data": SEL_COLLATERAL}, "latest"]})
+        batch.append({"jsonrpc": "2.0", "id": base_id + 3, "method": "eth_call", "params": [{"to": addr, "data": SEL_FROZEN}, "latest"]})
+        batch.append({"jsonrpc": "2.0", "id": base_id + 4, "method": "eth_call", "params": [{"to": addr, "data": SEL_TWAMM_ORDER}, "latest"]})
+
+    # Add a block number call at the end
+    block_id = len(active_bonds) * 5
+    batch.append({"jsonrpc": "2.0", "id": block_id, "method": "eth_getBlockByNumber", "params": ["latest", False]})
+
+    # Send batch 1
+    payload = json.dumps(batch).encode()
+    req = urlreq.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    with urlreq.urlopen(req, timeout=10) as resp:
+        results1 = json.loads(resp.read())
+
+    # Index results by id
+    r1_map = {r["id"]: r.get("result", "0x") for r in results1}
+
+    # Extract block timestamp
+    block_data = r1_map.get(block_id, {})
+    block_timestamp = int(block_data.get("timestamp", "0x0"), 16) if isinstance(block_data, dict) else 0
+
+    # Phase 2: Build position + balance batch using core/marketId/collateral
+    batch2 = []
+    broker_meta = {}
+    for i, b in enumerate(active_bonds):
+        base_id = i * 5
+        core_addr = "0x" + r1_map.get(base_id, "0x" + "0" * 64)[-40:]
+        market_id = r1_map.get(base_id + 1, "0x" + "0" * 64)
+        col_addr = "0x" + r1_map.get(base_id + 2, "0x" + "0" * 64)[-40:]
+        frozen_raw = r1_map.get(base_id + 3, "0x0")
+        frozen = int(frozen_raw, 16) != 0 if frozen_raw else False
+
+        # Parse TWAMM order
+        twamm_raw = r1_map.get(base_id + 4, "0x" + "0" * 64)
+        order_expiration = 0
+        order_id = "0x" + "0" * 64
+        if twamm_raw and len(twamm_raw) > 2:
+            raw_bytes = bytes.fromhex(twamm_raw.replace("0x", ""))
+            # activeTwammOrder returns: key(5 slots), orderKey(3 slots), orderId(1 slot)
+            # orderKey[1] = expiration (slot index 6 = byte offset 192)
+            # orderId = slot index 8 = byte offset 256
+            if len(raw_bytes) >= 288:
+                order_expiration = int.from_bytes(raw_bytes[192:224], "big")
+                order_id = "0x" + raw_bytes[256:288].hex()
+
+        broker_meta[b["broker_address"]] = {
+            "core": core_addr,
+            "market_id": market_id,
+            "col_addr": col_addr,
+            "frozen": frozen,
+            "order_expiration": order_expiration,
+            "order_id": order_id,
+        }
+
+        # getPosition(marketId, brokerAddr)
+        pos_data = SEL_GET_POSITION + market_id.replace("0x", "").zfill(64) + pad_addr(b["broker_address"])
+        batch2.append({"jsonrpc": "2.0", "id": i * 3, "method": "eth_call", "params": [{"to": core_addr, "data": pos_data}, "latest"]})
+
+        # getMarketState(marketId)
+        ms_data = SEL_GET_MARKET_STATE + market_id.replace("0x", "").zfill(64)
+        batch2.append({"jsonrpc": "2.0", "id": i * 3 + 1, "method": "eth_call", "params": [{"to": core_addr, "data": ms_data}, "latest"]})
+
+        # balanceOf(brokerAddr) on collateral token
+        bal_data = SEL_BALANCE_OF + pad_addr(b["broker_address"])
+        batch2.append({"jsonrpc": "2.0", "id": i * 3 + 2, "method": "eth_call", "params": [{"to": col_addr, "data": bal_data}, "latest"]})
+
+    # Send batch 2
+    if batch2:
+        payload2 = json.dumps(batch2).encode()
+        req2 = urlreq.Request(rpc_url, data=payload2, headers={"Content-Type": "application/json"})
+        with urlreq.urlopen(req2, timeout=10) as resp2:
+            results2 = json.loads(resp2.read())
+        r2_map = {r["id"]: r.get("result", "0x") for r in results2}
+    else:
+        r2_map = {}
+
+    # ── Assemble enriched bond data ───────────────────────────
+    for i, b in enumerate(active_bonds):
+        meta = broker_meta[b["broker_address"]]
+
+        # Parse position (debtPrincipal = first uint128 of tuple)
+        pos_raw = r2_map.get(i * 3, "0x" + "0" * 64)
+        debt_principal = int(pos_raw[-32:], 16) if pos_raw and len(pos_raw) > 2 else 0
+
+        # Parse market state (normalizationFactor = first uint128)
+        ms_raw = r2_map.get(i * 3 + 1, "0x" + "0" * 64)
+        nf = int(ms_raw[2:66], 16) if ms_raw and len(ms_raw) > 2 else int(1e18)
+
+        # Parse balance
+        bal_raw = r2_map.get(i * 3 + 2, "0x" + "0" * 64)
+        col_balance = int(bal_raw, 16) if bal_raw and len(bal_raw) > 2 else 0
+
+        # Compute values
+        true_debt = (debt_principal * nf) // (10 ** 18)
+        debt_usd = true_debt / 1e6
+        free_collateral = col_balance / 1e6
+        notional = int(b.get("notional") or 0) / 1e6
+
+        # TWAMM timing
+        has_active_order = meta["order_id"] != "0x" + "0" * 64
+        remaining_sec = max(0, meta["order_expiration"] - block_timestamp)
+        remaining_days = max(0, math.ceil(remaining_sec / 86400))
+        is_matured = has_active_order and remaining_sec <= 0
+
+        # Elapsed time
+        created_ts = b.get("created_timestamp") or 0
+        elapsed_sec = max(0, block_timestamp - created_ts) if created_ts else 0
+        elapsed_days = elapsed_sec // 86400
+
+        # Accrued interest estimate
+        duration_hours = (b.get("duration") or 0) / 3600
+        maturity_days = math.ceil(duration_hours / 24) if duration_hours else remaining_days
+
+        # Maturity date
+        maturity_date = "—"
+        if has_active_order and meta["order_expiration"] > 0:
+            from datetime import datetime, timezone
+            maturity_date = datetime.fromtimestamp(meta["order_expiration"], tz=timezone.utc).strftime("%Y-%m-%d")
+
+        b["notional_usd"] = notional
+        b["debt_usd"] = debt_usd
+        b["free_collateral"] = free_collateral
+        b["remaining_days"] = remaining_days
+        b["elapsed_days"] = elapsed_days
+        b["maturity_days"] = maturity_days
+        b["is_matured"] = is_matured
+        b["frozen"] = meta["frozen"]
+        b["has_active_order"] = has_active_order
+        b["order_id"] = meta["order_id"]
+        b["maturity_date"] = maturity_date
+        b["bond_id"] = int(b["broker_address"][-4:], 16) % 10000
+        b["block_timestamp"] = block_timestamp
+
+    # Also compute fields for non-active (closed) bonds
+    for b in bonds:
+        if b.get("status") != "active":
+            notional = int(b.get("notional") or 0) / 1e6
+            b["notional_usd"] = notional
+            b["debt_usd"] = 0
+            b["free_collateral"] = 0
+            b["remaining_days"] = 0
+            b["elapsed_days"] = 0
+            b["maturity_days"] = 0
+            b["is_matured"] = True
+            b["frozen"] = False
+            b["has_active_order"] = False
+            b["order_id"] = "0x" + "0" * 64
+            b["maturity_date"] = "—"
+            b["bond_id"] = int(b["broker_address"][-4:], 16) % 10000
+            b["block_timestamp"] = 0
+            # Collateral returned from close event
+            col_returned = int(b.get("collateral_returned") or 0) / 1e6
+            b["collateral_returned_usd"] = col_returned
+
+    return bonds
+
+
 @app.get("/api/bonds")
 async def get_bonds_endpoint(
+    request: Request,
     owner: Optional[str] = Query(None, description="Filter by owner address"),
     status: str = Query("all", description="Filter: active, closed, all"),
+    enrich: bool = Query(False, description="Enrich with live on-chain data (debt, TWAMM, collateral)"),
     limit: int = Query(100, le=500, description="Max results"),
 ):
-    """Get indexed bond positions from BondMinted/BondClosed events."""
+    """
+    Get indexed bond positions from BondMinted/BondClosed events.
+    With enrich=true, returns live on-chain state (debt, TWAMM order, frozen)
+    via server-side batched RPC — eliminates 20+ sequential frontend calls.
+    """
     try:
         from db.comprehensive import get_bonds_by_owner, get_all_bonds
         if owner:
             bonds = get_bonds_by_owner(owner, status if status != "all" else None)
         else:
             bonds = get_all_bonds(status if status != "all" else None, limit)
+
+        if enrich and bonds:
+            market_config = getattr(request.app.state, "market_config", None) or {}
+            rpc_url = market_config.get("rpc_url", os.environ.get("RPC_URL", "http://localhost:8545"))
+            bonds = _enrich_bonds_cached(bonds, rpc_url, market_config, owner=owner)
+
         return {"bonds": bonds, "count": len(bonds)}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

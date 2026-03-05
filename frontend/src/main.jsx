@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
 import { WalletProvider } from "./context/WalletContext.jsx";
+import { SimulationProvider } from "./context/SimulationContext.jsx";
 import Layout from "./components/layout/Layout";
 
 // Lazy Load All Pages
@@ -58,6 +59,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ErrorBoundary>
       <WalletProvider>
+        <SimulationProvider>
         <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
@@ -156,6 +158,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             </Route>
           </Routes>
         </BrowserRouter>
+        </SimulationProvider>
       </WalletProvider>
     </ErrorBoundary>
   </React.StrictMode>,

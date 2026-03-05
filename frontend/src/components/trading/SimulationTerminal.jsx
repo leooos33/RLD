@@ -18,7 +18,7 @@ import {
   ChevronDown,
   Link2,
 } from "lucide-react";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 import { useChartControls } from "../../hooks/useChartControls";
 import { useWallet } from "../../context/WalletContext";
 
@@ -141,7 +141,7 @@ function OperationsFeed({
 // ── Main Component ────────────────────────────────────────────
 
 export default function SimulationTerminal() {
-  const sim = useSimulation({ pollInterval: 2000 });
+  const sim = useSim();
   const {
     connected,
     loading,

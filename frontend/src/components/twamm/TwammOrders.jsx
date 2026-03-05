@@ -5,7 +5,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 import { useTwammDashboard } from "../../hooks/useTwammDashboard";
 import {
   Activity,
@@ -128,7 +128,7 @@ function fmtTokens(n, decimals = 2) {
 // ── Main Component ──────────────────────────────────────────────────
 
 export default function TwammOrders() {
-  const { marketInfo } = useSimulation();
+  const { marketInfo } = useSim();
   const { orders, streamState, config, loading, lastRefresh, refresh } =
     useTwammDashboard(marketInfo);
 

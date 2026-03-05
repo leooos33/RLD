@@ -513,7 +513,7 @@ fi
 # ─── TIMESTAMP SYNC DAEMON ─────────────────────────────────────
 # Fixes Anvil bug: evm_increaseTime + interval mining causes EVM
 # TIMESTAMP opcode to diverge from block header timestamps.
-section "STEP 8" "TIMESTAMP SYNC DAEMON"
+header "STEP 8: TIMESTAMP SYNC DAEMON"
 pkill -f "timestamp_sync.py" 2>/dev/null || true
 sleep 1
 RPC_URL="http://localhost:8545" nohup python3 "$DOCKER_DIR/scripts/timestamp_sync.py" \

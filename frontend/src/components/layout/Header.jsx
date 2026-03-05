@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../../context/WalletContext";
 import { useFaucet } from "../../hooks/useFaucet";
-import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
+import { mutate } from "swr";
+import { SIM_API } from "../../config/simulationConfig";
 import WalletModal from "../modals/WalletModal";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
 
@@ -13,7 +15,7 @@ export default function Header({ isCapped, ratesLoaded }) {
   const location = useLocation();
 
   // Faucet integration
-  const { marketInfo } = useSimulation();
+  const { marketInfo } = useSim();
   const waUsdcAddr = marketInfo?.collateral?.address;
   const { requestFaucet, loading: faucetLoading } = useFaucet(
     account,
@@ -32,6 +34,26 @@ export default function Header({ isCapped, ratesLoaded }) {
   React.useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [location]);
+
+  // ── SWR Prefetch on nav hover ──────────────────────────────
+  // Triggers background fetch so data is cached by the time user clicks
+  const fetcher = (url) => fetch(url).then((r) => r.json());
+  const prefetchBonds = useCallback(() => {
+    if (account) {
+      mutate(
+        `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`,
+        (prev) => prev || fetcher(`${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`),
+        { revalidate: false },
+      );
+    }
+  }, [account]);
+  const prefetchSim = useCallback(() => {
+    mutate(
+      `${SIM_API}/api/latest`,
+      (prev) => prev || fetcher(`${SIM_API}/api/latest`),
+      { revalidate: false },
+    );
+  }, []);
 
   return (
     <>
@@ -56,6 +78,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
               <Link
                 to="/bonds"
+                onMouseEnter={prefetchBonds}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 BONDS
@@ -66,6 +89,7 @@ export default function Header({ isCapped, ratesLoaded }) {
               <div className="relative group">
                 <Link
                   to="/markets"
+                  onMouseEnter={prefetchSim}
                   className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
                 >
                   Markets

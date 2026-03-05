@@ -5,25 +5,108 @@ import { SIM_API } from "../config/simulationConfig";
 // Broker labels by deployment order (deployer always creates in this sequence)
 const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
 
-const fetcher = (url) => fetch(url).then((r) => r.json());
+// ── GraphQL fetcher ──────────────────────────────────────────
+const GQL_URL = `${SIM_API}/graphql`;
 
-// Shallow-compare JSON arrays to skip SWR re-renders when data is identical
+const gqlFetcher = ([url, query, variables]) => {
+  const body = { query };
+  if (variables) body.variables = variables;
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then((r) => {
+      if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}`);
+      return r.json();
+    })
+    .then((r) => {
+      if (r.errors) console.warn("[GQL] errors:", r.errors);
+      return r.data;
+    });
+};
+
+// REST fetcher for chart data (resolution-specific, stays REST)
+const restFetcher = (url) => fetch(url).then((r) => r.json());
+
+// ── Single GraphQL query that replaces 7 REST calls ──────────
+const SIM_QUERY = `
+  query SimSnapshot {
+    latest {
+      blockNumber
+      market {
+        blockNumber
+        blockTimestamp
+        marketId
+        normalizationFactor
+        totalDebt
+        lastUpdateTimestamp
+        indexPrice
+      }
+      pool {
+        poolId
+        tick
+        markPrice
+        liquidity
+        sqrtPriceX96
+        token0Balance
+        token1Balance
+        feeGrowthGlobal0
+        feeGrowthGlobal1
+      }
+      brokers {
+        address
+        collateral
+        debt
+        collateralValue
+        debtValue
+        healthFactor
+      }
+    }
+    volume { volumeUsd swapCount }
+    volumeHistory(hours: 168, bucketHours: 1) { timestamp volumeUsd swapCount }
+    events(limit: 20, eventName: "Swap") {
+      id blockNumber txHash eventName timestamp data
+    }
+    marketInfo {
+      collateral { name symbol address }
+      positionToken { name symbol address }
+      brokerFactory
+      infrastructure {
+        brokerRouter brokerExecutor twammHook bondFactory
+        poolFee tickSpacing poolManager v4Quoter
+        v4PositionManager v4PositionDescriptor v4StateView
+        universalRouter permit2
+      }
+      riskParams {
+        minColRatio maintenanceMargin liqCloseFactor
+        fundingPeriodSec debtCap
+      }
+    }
+    status { totalBlockStates totalEvents lastIndexedBlock }
+  }
+`;
+
+// Shallow-compare chart data to skip re-renders
 const compareChartData = (a, b) => {
   if (a === b) return true;
   if (!a || !b) return false;
-  const ad = a?.data, bd = b?.data;
+  const ad = a?.data,
+    bd = b?.data;
   if (!ad || !bd || ad.length !== bd.length) return false;
-  // Compare first and last timestamps — if unchanged, data is the same
   if (ad.length === 0) return true;
-  return ad[0].timestamp === bd[0].timestamp &&
+  return (
+    ad[0].timestamp === bd[0].timestamp &&
     ad[ad.length - 1].timestamp === bd[bd.length - 1].timestamp &&
-    ad.length === bd.length;
+    ad.length === bd.length
+  );
 };
 
 /**
  * Hook that connects to the simulation indexer API.
- * Provides live market state, pool state, broker positions,
- * chart data and recent events.
+ * Uses a SINGLE GraphQL query for all core data (market, pool, brokers,
+ * volume, events, marketInfo, status) and a separate REST call for
+ * resolution-specific chart data.
  */
 export function useSimulation({
   pollInterval = 2000,
@@ -34,20 +117,21 @@ export function useSimulation({
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
 
-  // ── Live snapshot (polled) ──────────────────────────────────
+  // ── Single GraphQL query for ALL core data ──────────────────
   const {
-    data: latest,
-    error: latestError,
-    isLoading: latestLoading,
-  } = useSWR(`${SIM_API}/api/latest`, fetcher, {
+    data: gqlData,
+    error: gqlError,
+    isLoading: gqlLoading,
+  } = useSWR([GQL_URL, SIM_QUERY, null], gqlFetcher, {
     refreshInterval: pollInterval,
     revalidateOnFocus: false,
     dedupingInterval: 1000,
+    keepPreviousData: true,
     onSuccess: () => setConnected(true),
     onError: () => setConnected(false),
   });
 
-  // ── Chart data (price history — resolution-bucketed) ────────
+  // ── Chart data (price history — still REST, resolution-specific) ──
   const chartUrl = useMemo(() => {
     let url = `${SIM_API}/api/chart/price?resolution=${chartResolution}&limit=1000`;
     if (chartStartTime) url += `&start_time=${chartStartTime}`;
@@ -57,82 +141,99 @@ export function useSimulation({
 
   const { data: chartRaw, error: chartError } = useSWR(
     chartUrl,
-    fetcher,
+    restFetcher,
     {
-      refreshInterval: 30000, // 30s — chart data changes slowly
+      refreshInterval: 30000,
       revalidateOnFocus: false,
       compare: compareChartData,
-      keepPreviousData: false, // allow GC of old data
+      keepPreviousData: false,
     },
   );
 
-  // ── Recent events ───────────────────────────────────────────
-  const { data: eventsRaw } = useSWR(
-    `${SIM_API}/api/events?limit=20`,
-    fetcher,
-    { refreshInterval: pollInterval * 3, revalidateOnFocus: false },
-  );
+  // ── Extract data from GraphQL response ──────────────────────
+  const latest = gqlData?.latest;
+  const volumeRaw = gqlData?.volume;
+  const volumeHistoryRaw = gqlData?.volumeHistory;
+  const eventsRaw = gqlData?.events;
+  const marketInfo = useMemo(() => {
+    if (!gqlData?.marketInfo) return null;
+    const mi = gqlData.marketInfo;
+    return {
+      collateral: mi.collateral,
+      position_token: mi.positionToken,
+      broker_factory: mi.brokerFactory,
+      infrastructure: mi.infrastructure
+        ? {
+            broker_router: mi.infrastructure.brokerRouter,
+            broker_executor: mi.infrastructure.brokerExecutor,
+            twamm_hook: mi.infrastructure.twammHook,
+            bond_factory: mi.infrastructure.bondFactory,
+            pool_fee: mi.infrastructure.poolFee,
+            tick_spacing: mi.infrastructure.tickSpacing,
+            pool_manager: mi.infrastructure.poolManager,
+            v4_quoter: mi.infrastructure.v4Quoter,
+            v4_position_manager: mi.infrastructure.v4PositionManager,
+            v4_position_descriptor: mi.infrastructure.v4PositionDescriptor,
+            v4_state_view: mi.infrastructure.v4StateView,
+            universal_router: mi.infrastructure.universalRouter,
+            permit2: mi.infrastructure.permit2,
+          }
+        : null,
+      risk_params: mi.riskParams
+        ? {
+            min_col_ratio: mi.riskParams.minColRatio,
+            maintenance_margin: mi.riskParams.maintenanceMargin,
+            liq_close_factor: mi.riskParams.liqCloseFactor,
+            funding_period_sec: mi.riskParams.fundingPeriodSec,
+            debt_cap: mi.riskParams.debtCap,
+          }
+        : null,
+    };
+  }, [gqlData?.marketInfo]);
 
-  // ── 24h trade volume (server-aggregated) ────────────────────
-  const { data: volumeData } = useSWR(`${SIM_API}/api/volume`, fetcher, {
-    refreshInterval: pollInterval * 10,
-    revalidateOnFocus: false,
-  });
-
-  // ── Volume history (bar chart data) ─────────────────────────
-  const { data: volumeHistoryRaw } = useSWR(
-    `${SIM_API}/api/volume-history?hours=168&bucket=1`,
-    fetcher,
-    { refreshInterval: pollInterval * 10, revalidateOnFocus: false },
-  );
-
-  // ── On-chain market info (token names, risk params) ────────
-  const { data: marketInfo } = useSWR(`${SIM_API}/api/market-info`, fetcher, {
-    refreshInterval: 0, // static config, fetch once
-    revalidateOnFocus: false,
-  });
-
-  // ── Indexer status ──────────────────────────────────────────
-  const { data: statusData } = useSWR(`${SIM_API}/api/status`, fetcher, {
-    refreshInterval: pollInterval * 5,
-    revalidateOnFocus: false,
-  });
+  const statusData = useMemo(() => {
+    if (!gqlData?.status) return null;
+    const s = gqlData.status;
+    return {
+      total_block_states: s.totalBlockStates,
+      total_events: s.totalEvents,
+      last_indexed_block: s.lastIndexedBlock,
+    };
+  }, [gqlData?.status]);
 
   // ── Derived: market state ───────────────────────────────────
   const market = useMemo(() => {
-    if (!latest?.market_states?.length) return null;
-    const ms = latest.market_states[0];
+    if (!latest?.market) return null;
+    const ms = latest.market;
     return {
-      marketId: ms.market_id,
-      blockNumber: ms.block_number,
-      blockTimestamp: ms.block_timestamp,
-      normalizationFactor: ms.normalization_factor / 1e18,
-      totalDebt: ms.total_debt / 1e6,
-      indexPrice: ms.index_price / 1e18,
-      lastUpdateTimestamp: ms.last_update_timestamp,
+      marketId: ms.marketId,
+      blockNumber: ms.blockNumber,
+      blockTimestamp: ms.blockTimestamp,
+      normalizationFactor: parseInt(ms.normalizationFactor) / 1e18,
+      totalDebt: parseInt(ms.totalDebt) / 1e6,
+      indexPrice: parseInt(ms.indexPrice) / 1e18,
+      lastUpdateTimestamp: ms.lastUpdateTimestamp,
     };
   }, [latest]);
 
   // ── Derived: pool state ─────────────────────────────────────
   const pool = useMemo(() => {
-    if (!latest?.pool_states?.length) return null;
-    const ps = latest.pool_states[0];
+    if (!latest?.pool) return null;
+    const ps = latest.pool;
     return {
-      poolId: ps.pool_id,
-      markPrice: ps.mark_price,
+      poolId: ps.poolId,
+      markPrice: ps.markPrice,
       tick: ps.tick,
       liquidity: ps.liquidity,
-      sqrtPriceX96: ps.sqrt_price_x96,
-      token0Balance: parseInt(ps.token0_balance || '0'),
-      token1Balance: parseInt(ps.token1_balance || '0'),
-      feeGrowthGlobal0: ps.fee_growth_global0,
-      feeGrowthGlobal1: ps.fee_growth_global1,
+      sqrtPriceX96: ps.sqrtPriceX96,
+      token0Balance: parseInt(ps.token0Balance || "0"),
+      token1Balance: parseInt(ps.token1Balance || "0"),
+      feeGrowthGlobal0: ps.feeGrowthGlobal0,
+      feeGrowthGlobal1: ps.feeGrowthGlobal1,
     };
   }, [latest]);
 
   // ── Derived: pool TVL ───────────────────────────────────────
-  // TVL = (token0_balance / 1e6) * markPrice + (token1_balance / 1e6)
-  // Both tokens are 6 decimals
   const poolTVL = useMemo(() => {
     if (!pool) return 0;
     const t0 = pool.token0Balance / 1e6;
@@ -156,15 +257,15 @@ export function useSimulation({
 
   // ── Derived: broker positions ───────────────────────────────
   const brokers = useMemo(() => {
-    if (!latest?.broker_positions?.length) return [];
-    return latest.broker_positions.map((bp, i) => ({
-      address: bp.broker_address,
-      label: BROKER_LABELS[i] || bp.broker_address.slice(0, 8) + "...",
-      collateral: bp.collateral / 1e6,
-      debt: bp.debt / 1e6,
-      collateralValue: bp.collateral_value / 1e6,
-      debtValue: bp.debt_value / 1e6,
-      healthFactor: bp.health_factor,
+    if (!latest?.brokers?.length) return [];
+    return latest.brokers.map((bp, i) => ({
+      address: bp.address,
+      label: BROKER_LABELS[i] || bp.address.slice(0, 8) + "...",
+      collateral: parseInt(bp.collateral) / 1e6,
+      debt: parseInt(bp.debt) / 1e6,
+      collateralValue: parseInt(bp.collateralValue) / 1e6,
+      debtValue: parseInt(bp.debtValue) / 1e6,
+      healthFactor: bp.healthFactor,
     }));
   }, [latest]);
 
@@ -172,12 +273,10 @@ export function useSimulation({
   const protocolStats = useMemo(() => {
     if (!brokers?.length || !market) return null;
     const totalCollateral = brokers.reduce((s, b) => s + b.collateralValue, 0);
-    // debt is in wRLP units; convert to USD with indexPrice
     const totalDebtUnits = brokers.reduce((s, b) => s + b.debt, 0);
     const totalDebtUsd = totalDebtUnits * market.indexPrice;
     const overCollat =
       totalDebtUsd > 0 ? (totalCollateral / totalDebtUsd) * 100 : 0;
-
     return { totalCollateral, totalDebtUnits, totalDebtUsd, overCollat };
   }, [brokers, market]);
 
@@ -185,21 +284,16 @@ export function useSimulation({
   const chartData = useMemo(() => {
     if (!chartRaw?.data?.length) return [];
 
-    // Build a volume lookup from real volume history bars
-    const volBars = volumeHistoryRaw?.bars || [];
+    const volBars = volumeHistoryRaw || [];
     const volMap = new Map();
     for (const bar of volBars) {
-      volMap.set(bar.timestamp, bar.volume_usd);
+      volMap.set(bar.timestamp, bar.volumeUsd);
     }
-
-    // Bucket size in seconds (default 1 hour)
-    const bucketSec = (volumeHistoryRaw?.bucket_hours || 1) * 3600;
+    const bucketSec = 3600; // 1 hour default
 
     return chartRaw.data.map((d) => {
-      // Find volume for this data point's time bucket
       const bucketTs = Math.floor((d.timestamp || 0) / bucketSec) * bucketSec;
       const vol = volMap.get(bucketTs) || 0;
-
       return {
         timestamp: d.timestamp,
         blockNumber: d.block_number,
@@ -215,82 +309,125 @@ export function useSimulation({
   }, [chartRaw, volumeHistoryRaw]);
 
   // ── Derived: funding from NF change ─────────────────────────
-  // Per the whitepaper: NF(t+Δt) = NF(t) · (1 - F·Δt)
-  // NF starts at 1.0 and drifts based on cumulative funding.
-  // Daily rate = (NF_now - 1) / elapsed_days
   const fundingFromNF = useMemo(() => {
     if (!market) return null;
-
     const nfNow = market.normalizationFactor;
     const blockTs = market.blockTimestamp;
     const lastUpdate = market.lastUpdateTimestamp;
-
     if (!blockTs || !lastUpdate || lastUpdate >= blockTs) return null;
-
     const elapsedSec = blockTs - lastUpdate;
     if (elapsedSec < 60) return null;
-
-    // NF change from genesis (1.0)
     const totalChange = nfNow - 1.0;
     const dailyPct = (totalChange / (elapsedSec / 86400)) * 100;
     const annualPct = dailyPct * 365;
-
     return { dailyPct, annualPct };
   }, [market]);
 
   // ── Derived: oracle (index) price 24h change ───────────────
   const oracleChange24h = useMemo(() => {
     if (!market || !chartData?.length) return null;
-
     const nowPrice = market.indexPrice;
     const earliest = chartData[chartData.length - 1];
     if (!earliest || !earliest.indexPrice) return null;
-
     const oldPrice = earliest.indexPrice;
     if (oldPrice === 0) return null;
-
-    const changePct = ((nowPrice - oldPrice) / oldPrice) * 100;
-    return changePct;
+    return ((nowPrice - oldPrice) / oldPrice) * 100;
   }, [market, chartData]);
+
+  // ── Derived: volume data ────────────────────────────────────
+  const volumeData = useMemo(() => {
+    if (!volumeRaw) return null;
+    const vol = volumeRaw.volumeUsd;
+    let formatted;
+    if (vol >= 1e9) formatted = `$${(vol / 1e9).toFixed(2)}B`;
+    else if (vol >= 1e6) formatted = `$${(vol / 1e6).toFixed(2)}M`;
+    else if (vol >= 1e3) formatted = `$${(vol / 1e3).toFixed(0)}K`;
+    else formatted = `$${vol.toLocaleString()}`;
+    return {
+      volume_usd: vol,
+      swap_count: volumeRaw.swapCount,
+      volume_formatted: formatted,
+    };
+  }, [volumeRaw]);
 
   // ── Derived: events ─────────────────────────────────────────
   const events = useMemo(() => {
     if (!eventsRaw?.length) return [];
     return eventsRaw
-      .filter((e) => e.event_name === "Swap")
+      .filter((e) => e.eventName === "Swap")
       .map((e) => ({
         id: e.id,
-        blockNumber: e.block_number,
-        txHash: e.tx_hash,
-        eventName: e.event_name,
-        timestamp: e.block_timestamp,
-        data: e.event_data,
+        blockNumber: e.blockNumber,
+        txHash: e.txHash,
+        eventName: e.eventName,
+        timestamp: e.timestamp,
+        data: e.data ? JSON.parse(e.data) : null,
       }));
   }, [eventsRaw]);
 
   // ── Block change detection ──────────────────────────────────
   const [blockChanged, setBlockChanged] = useState(false);
   useEffect(() => {
-    if (!latest?.block_number) return;
+    if (!latest?.blockNumber) return;
     if (
       prevBlock.current !== null &&
-      latest.block_number !== prevBlock.current
+      latest.blockNumber !== prevBlock.current
     ) {
       setBlockChanged(true); // eslint-disable-line react-hooks/set-state-in-effect
       const timer = setTimeout(() => setBlockChanged(false), 300);
       return () => clearTimeout(timer);
     }
-    prevBlock.current = latest.block_number;
-  }, [latest?.block_number]);
+    prevBlock.current = latest.blockNumber;
+  }, [latest?.blockNumber]);
 
   return {
     // Connection
     connected,
-    loading: latestLoading,
-    error: latestError || chartError,
+    loading: gqlLoading && !gqlData,
+    error: gqlError || chartError,
 
-    // Raw
-    latest,
+    // Raw (for backward compat with components that access latest directly)
+    latest: latest
+      ? {
+          block_number: latest.blockNumber,
+          market_states: latest.market
+            ? [
+                {
+                  block_number: latest.market.blockNumber,
+                  block_timestamp: latest.market.blockTimestamp,
+                  market_id: latest.market.marketId,
+                  normalization_factor: parseInt(
+                    latest.market.normalizationFactor,
+                  ),
+                  total_debt: parseInt(latest.market.totalDebt),
+                  index_price: parseInt(latest.market.indexPrice),
+                  last_update_timestamp: latest.market.lastUpdateTimestamp,
+                },
+              ]
+            : [],
+          pool_states: latest.pool
+            ? [
+                {
+                  pool_id: latest.pool.poolId,
+                  tick: latest.pool.tick,
+                  mark_price: latest.pool.markPrice,
+                  liquidity: latest.pool.liquidity,
+                  sqrt_price_x96: latest.pool.sqrtPriceX96,
+                  token0_balance: latest.pool.token0Balance,
+                  token1_balance: latest.pool.token1Balance,
+                },
+              ]
+            : [],
+          broker_positions: (latest.brokers || []).map((b) => ({
+            broker_address: b.address,
+            collateral: parseInt(b.collateral),
+            debt: parseInt(b.debt),
+            collateral_value: parseInt(b.collateralValue),
+            debt_value: parseInt(b.debtValue),
+            health_factor: b.healthFactor,
+          })),
+        }
+      : null,
     statusData,
 
     // Derived
@@ -305,16 +442,16 @@ export function useSimulation({
     marketInfo,
     brokers,
     chartData,
-    volumeHistory: (volumeHistoryRaw?.bars || []).map((b) => ({
+    volumeHistory: (volumeHistoryRaw || []).map((b) => ({
       timestamp: b.timestamp,
-      volume: b.volume_usd,
-      swapCount: b.swap_count,
+      volume: b.volumeUsd,
+      swapCount: b.swapCount,
     })),
     events,
     blockChanged,
 
     // Meta
-    blockNumber: latest?.block_number || null,
+    blockNumber: latest?.blockNumber || null,
     totalBlocks: statusData?.total_block_states || 0,
     totalEvents: statusData?.total_events || 0,
   };

@@ -1,233 +1,124 @@
-import { useState, useEffect, useCallback } from "react";
-import { ethers } from "ethers";
-import { RPC_URL } from "../utils/anvil";
+import { useCallback } from "react";
+import useSWR from "swr";
 import { SIM_API } from "../config/simulationConfig";
 
-// ── ABI fragments ─────────────────────────────────────────────────
-
-const BROKER_ABI = [
-  "function CORE() view returns (address)",
-  "function marketId() view returns (bytes32)",
-  "function frozen() view returns (bool)",
-  "function activeTwammOrder() view returns (tuple(address,address,uint24,int24,address) key, tuple(address,uint160,bool) orderKey, bytes32 orderId)",
-  "function collateralToken() view returns (address)",
-];
-
-const CORE_ABI = [
-  "function getPosition(bytes32,address) view returns (tuple(uint128 debtPrincipal))",
-  "function getMarketState(bytes32) view returns (tuple(uint128 normalizationFactor, uint128 totalDebt, uint128 badDebt, uint48 lastUpdateTimestamp))",
-];
-
-const ERC20_ABI = [
-  "function balanceOf(address) view returns (uint256)",
-];
+const fetcher = (url) => fetch(url).then((r) => r.json());
 
 /**
- * useBondPositions — Fetch bond data from indexer API + on-chain state.
+ * useBondPositions — Fetch enriched bond data from the indexer API.
  *
- * Primary source: /api/bonds?owner=<account> (indexer)
- * Fallback: localStorage bonds not yet indexed
+ * Uses the enriched `/api/bonds?enrich=true` endpoint which returns
+ * all bond data (metadata + live on-chain state) in a single API call.
+ * Server-side batched RPC eliminates 20+ sequential browser calls.
  *
- * Each bond's live state (debt, TWAMM order, collateral) is enriched via RPC.
+ * Features:
+ * - SWR with keepPreviousData: bonds stay visible during refetch (no blank screen)
+ * - Optimistic updates: close/create instantly update local state
+ * - 15s polling for background sync
  *
- * @param {string}  account        Connected wallet address
- * @param {number}  entryRate      Fallback rate if no metadata
- * @param {number}  pollInterval   Polling ms (default 15000)
+ * @param {string}  account      Connected wallet address
+ * @param {number}  entryRate    Fallback rate (for accrued calculation)
+ * @param {number}  pollInterval Polling ms (default 15000)
  */
 export function useBondPositions(account, entryRate, pollInterval = 15000) {
-  const [bonds, setBonds] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const apiUrl = account
+    ? `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`
+    : null;
 
-  const fetchPositions = useCallback(async () => {
-    if (!account) return;
+  const { data, error, mutate, isLoading } = useSWR(apiUrl, fetcher, {
+    refreshInterval: pollInterval,
+    revalidateOnFocus: false,
+    dedupingInterval: 2000,
+    keepPreviousData: true, // ← critical: show stale bonds during revalidation
+  });
 
-    try {
-      setLoading(true);
+  // ── Transform server data to match existing component contract ──
+  const bonds = (data?.bonds || [])
+    .filter((b) => b.status === "active") // only active bonds (closed bonds hidden)
+    .map((b) => {
+      const notional = b.notional_usd || 0;
+      const rate = entryRate || 0;
+      const elapsedDays = b.elapsed_days || 0;
+      const accrued = notional * (rate / 100) * (elapsedDays / 365);
 
-      // 1. Fetch indexed bonds from API
-      let indexedBrokers = new Set();
-      let apiBonds = [];
-      try {
-        const res = await fetch(
-          `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all`,
-        );
-        if (res.ok) {
-          const data = await res.json();
-          apiBonds = data.bonds || [];
-          for (const b of apiBonds) {
-            indexedBrokers.add(b.broker_address?.toLowerCase());
-          }
-        }
-      } catch {
-        // API may be unavailable — fall through to localStorage
-      }
+      return {
+        id: b.bond_id,
+        brokerAddress: b.broker_address,
+        principal: notional,
+        debtTokens: b.debt_usd || 0,
+        fixedRate: rate,
+        maturityDays: b.maturity_days || 0,
+        elapsed: elapsedDays,
+        remaining: b.remaining_days || 0,
+        maturityDate: b.maturity_date || "—",
+        frozen: b.frozen || false,
+        isMatured: b.is_matured || false,
+        accrued,
+        freeCollateral: b.free_collateral || 0,
+        orderId: b.order_id || "0x" + "0".repeat(64),
+        hasActiveOrder: b.has_active_order || false,
+        txHash: b.created_tx || null,
+        status: b.status,
+      };
+    });
 
-      // 2. Get localStorage bonds not yet in the indexer
-      const listKey = `rld_bonds_${account.toLowerCase()}`;
-      const localAddresses = JSON.parse(localStorage.getItem(listKey) || "[]");
-      const unindexed = localAddresses.filter(
-        (addr) => !indexedBrokers.has(addr.toLowerCase()),
+  // ── Optimistic close: instantly remove bond from UI ──────────
+  const optimisticClose = useCallback(
+    (brokerAddress) => {
+      mutate(
+        (prev) => {
+          if (!prev?.bonds) return prev;
+          return {
+            ...prev,
+            bonds: prev.bonds.filter(
+              (b) =>
+                b.broker_address.toLowerCase() !== brokerAddress.toLowerCase(),
+            ),
+            count: prev.count - 1,
+          };
+        },
+        { revalidate: true }, // revalidate in background after optimistic update
       );
+    },
+    [mutate],
+  );
 
-      // 3. Merge: all API bond addresses + unindexed localStorage addresses
-      const allBrokers = [
-        ...apiBonds.map((b) => b.broker_address),
-        ...unindexed,
-      ];
-
-      if (allBrokers.length === 0) {
-        setBonds([]);
-        return;
-      }
-
-      // Build lookup from indexed data for metadata
-      const indexedMeta = {};
-      for (const b of apiBonds) {
-        indexedMeta[b.broker_address?.toLowerCase()] = b;
-      }
-
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
-      const results = [];
-
-      for (const brokerAddr of allBrokers) {
-        try {
-          const meta = indexedMeta[brokerAddr.toLowerCase()] || null;
-          const bond = await fetchSingleBond(provider, brokerAddr, entryRate, meta);
-          if (bond) results.push(bond);
-        } catch (err) {
-          console.warn(`[BondPositions] Error fetching ${brokerAddr}:`, err.message);
-        }
-      }
-
-      setBonds(results);
-    } catch (err) {
-      console.warn("[BondPositions] fetch error:", err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [account, entryRate]);
-
-  useEffect(() => {
-    fetchPositions();
-    const id = setInterval(fetchPositions, pollInterval);
-    return () => clearInterval(id);
-  }, [fetchPositions, pollInterval]);
-
-  return { bonds, loading, refresh: fetchPositions };
-}
-
-// ── Fetch a single bond's on-chain + metadata ───────────────────
-
-async function fetchSingleBond(provider, brokerAddr, fallbackRate, indexedMeta) {
-  const broker = new ethers.Contract(brokerAddr, BROKER_ABI, provider);
-
-  // Get core address + market ID
-  const [coreAddr, marketId, collateralTokenAddr, frozen] = await Promise.all([
-    broker.CORE(),
-    broker.marketId(),
-    broker.collateralToken(),
-    broker.frozen(),
-  ]);
-
-  const core = new ethers.Contract(coreAddr, CORE_ABI, provider);
-  const collateralToken = new ethers.Contract(collateralTokenAddr, ERC20_ABI, provider);
-
-  // Get position data
-  const [position, marketState, brokerWaUSDC] = await Promise.all([
-    core.getPosition(marketId, brokerAddr),
-    core.getMarketState(marketId),
-    collateralToken.balanceOf(brokerAddr),
-  ]);
-
-  const debtPrincipal = position.debtPrincipal ?? position[0];
-
-  // Skip if no debt (empty broker)
-  if (debtPrincipal === 0n) return null;
-
-  // TWAMM order
-  const twammOrder = await broker.activeTwammOrder();
-  const orderExpiration = BigInt(twammOrder.orderKey[1]);
-  const orderId = twammOrder.orderId;
-
-  // Block time
-  const block = await provider.getBlock("latest");
-  const now = BigInt(block.timestamp);
-
-  // Read metadata: prefer indexer data, then localStorage
-  let savedMeta = null;
-  if (indexedMeta) {
-    // Use indexed data from API
-    savedMeta = {
-      notionalUSD: Number(indexedMeta.notional || 0) / 1e6,
-      durationHours: (indexedMeta.duration || 0) / 3600,
-      createdAt: (indexedMeta.created_timestamp || 0) * 1000,
-      txHash: indexedMeta.created_tx || null,
-      ratePercent: fallbackRate || 0,
-    };
-  } else {
-    try {
-      const key = `rld_bond_${brokerAddr.toLowerCase()}`;
-      const raw = localStorage.getItem(key);
-      if (raw) savedMeta = JSON.parse(raw);
-    } catch { /* ignore localStorage parse errors */ }
-  }
-
-  // Compute values
-  const normFactor = BigInt(marketState.normalizationFactor ?? marketState[0]);
-  const trueDebt = (BigInt(debtPrincipal) * normFactor) / (10n ** 18n);
-  const debtUsd = Number(ethers.formatUnits(trueDebt, 6));
-  const freeWaUSDC = Number(ethers.formatUnits(brokerWaUSDC, 6));
-
-  // TWAMM timing
-  const hasActiveOrder = orderId !== ethers.ZeroHash;
-  const expirationSec = Number(orderExpiration);
-  const nowSec = Number(now);
-  const remainingSec = Math.max(0, expirationSec - nowSec);
-  const remainingDays = Math.max(0, Math.ceil(remainingSec / 86400));
-  const isMatured = hasActiveOrder && remainingSec <= 0;
-
-  // Bond ID from broker address
-  const tokenId = parseInt(brokerAddr.slice(-4), 16) % 10000;
-
-  // Use saved metadata
-  const notional = savedMeta?.notionalUSD || debtUsd;
-  const rate = savedMeta?.ratePercent || fallbackRate || 0;
-  const durationHours = savedMeta?.durationHours || 0;
-  const maturityDays = durationHours
-    ? Math.ceil(durationHours / 24)
-    : remainingDays;
-  const createdAt = savedMeta?.createdAt || 0;
-
-  // Elapsed — use chain time (block.timestamp), NOT Date.now(),
-  // because the simulation runs on forked Ethereum timestamps (~Jan 2025)
-  // while wall-clock time is much later (~Mar 2026).
-  const chainNowMs = nowSec * 1000;
-  const elapsedMs = createdAt ? chainNowMs - createdAt : 0;
-  const elapsedDays = Math.max(0, Math.floor(elapsedMs / 86400000));
-
-  // Accrued = notional × rate × elapsed/365
-  const accrued = notional * (rate / 100) * (elapsedDays / 365);
+  // ── Optimistic create: add placeholder bond immediately ──────
+  const optimisticCreate = useCallback(
+    (brokerAddress, notionalUsd, durationHours) => {
+      mutate(
+        (prev) => {
+          const bonds = prev?.bonds || [];
+          const newBond = {
+            broker_address: brokerAddress,
+            owner: account?.toLowerCase(),
+            status: "active",
+            notional_usd: notionalUsd,
+            debt_usd: notionalUsd, // approximate
+            free_collateral: 0,
+            remaining_days: Math.ceil(durationHours / 24),
+            elapsed_days: 0,
+            maturity_days: Math.ceil(durationHours / 24),
+            is_matured: false,
+            frozen: false,
+            has_active_order: true,
+            bond_id: parseInt(brokerAddress.slice(-4), 16) % 10000,
+            maturity_date: "—",
+            created_tx: null,
+          };
+          return { bonds: [newBond, ...bonds], count: bonds.length + 1 };
+        },
+        { revalidate: true },
+      );
+    },
+    [mutate, account],
+  );
 
   return {
-    id: tokenId,
-    brokerAddress: brokerAddr,
-    principal: notional,
-    debtTokens: debtUsd,
-    fixedRate: rate,
-    maturityDays,
-    elapsed: elapsedDays,
-    remaining: remainingDays,
-    maturityDate: hasActiveOrder
-      ? new Date(expirationSec * 1000).toISOString().slice(0, 10)
-      : "—",
-    frozen,
-    isMatured,
-    accrued,
-    freeCollateral: freeWaUSDC,
-    orderId,
-    hasActiveOrder,
-    txHash: savedMeta?.txHash || null,
-    // Indexed metadata (for closed bonds)
-    status: indexedMeta?.status || "active",
+    bonds,
+    loading: isLoading && !data,
+    refresh: () => mutate(),
+    optimisticClose,
+    optimisticCreate,
   };
 }
