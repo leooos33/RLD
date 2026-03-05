@@ -215,7 +215,49 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
           tickUpper: p.tickUpper,
           entryPrice: p.entryPrice,
           isActive: p.isActive,
+          feesEarned0: "0",
+          feesEarned1: "0",
         }));
+
+        // Compute unclaimed fees from V4 StateView
+        if (stateViewAddr && twammHook && positionToken && collateralToken) {
+          try {
+            const provider = new ethers.JsonRpcProvider(RPC_URL);
+            const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
+            const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
+              ? [positionToken, collateralToken]
+              : [collateralToken, positionToken];
+            const poolId = ethers.keccak256(
+              ethers.AbiCoder.defaultAbiCoder().encode(
+                ["address", "address", "uint24", "int24", "address"],
+                [c0, c1, 500, tickSpacing, twammHook],
+              ),
+            );
+            await Promise.all(
+              mapped.map(async (pos) => {
+                try {
+                  const salt = ethers.zeroPadValue(ethers.toBeHex(pos.tokenId), 32);
+                  const [posInfo, feeInside] = await Promise.all([
+                    stateView.getPositionInfo(poolId, posmAddr, pos.tickLower, pos.tickUpper, salt),
+                    stateView.getFeeGrowthInside(poolId, pos.tickLower, pos.tickUpper),
+                  ]);
+                  const Q128 = 1n << 128n;
+                  const delta0 = feeInside.feeGrowthInside0X128 - posInfo.feeGrowthInside0LastX128;
+                  const delta1 = feeInside.feeGrowthInside1X128 - posInfo.feeGrowthInside1LastX128;
+                  const raw0 = pos.liquidity * delta0 / Q128;
+                  const raw1 = pos.liquidity * delta1 / Q128;
+                  pos.feesEarned0 = ethers.formatUnits(raw0, 6);
+                  pos.feesEarned1 = ethers.formatUnits(raw1, 6);
+                } catch (e) {
+                  console.warn(`[LP] Fee calc failed for tokenId ${pos.tokenId}:`, e);
+                }
+              }),
+            );
+          } catch (e) {
+            console.warn("[LP] Fee computation failed:", e);
+          }
+        }
+
         setAllPositions(mapped);
         const active = mapped.find((p) => p.isActive) || mapped[0] || null;
         setActivePosition(active);
