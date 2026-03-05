@@ -242,18 +242,45 @@ export function useSimulation({
     return t0 * price + t1;
   }, [pool]);
 
-  // ── Derived: funding spread ─────────────────────────────────
+  // ── Derived: funding spread + annualized rate ────────────────
+  // Contract formula: NF *= exp(-fundingRate × dt / fundingPeriod)
+  //   fundingRate = (normalizedMark - index) / index
+  //   normalizedMark = markPrice / NF
+  //   fundingPeriod = configurable (default 30 days = 2_592_000s)
   const funding = useMemo(() => {
     if (!market || !pool) return null;
-    const spread = pool.markPrice - market.indexPrice;
-    const spreadPct =
-      market.indexPrice > 0 ? (spread / market.indexPrice) * 100 : 0;
+
+    const nf = market.normalizationFactor || 1;
+    const normalizedMark = pool.markPrice / nf;
+    const index = market.indexPrice;
+    if (index <= 0) return null;
+
+    const spread = normalizedMark - index;
+    const spreadPct = (spread / index) * 100;
+
+    // fundingRate as per contract (WAD-equivalent but in float)
+    const fundingRate = spread / index;
+
+    // Annualize: in the contract, rate is applied as exp(-rate * dt / period)
+    // Over 1 year (365 days), the NF multiplier would be exp(-rate * 365d / period)
+    // The annualized percentage change = (exp(-rate * 365*86400 / period) - 1) × 100
+    const fundingPeriod = marketInfo?.risk_params?.funding_period_sec || 2_592_000;
+    const yearSec = 365 * 86400;
+    const annExponent = -fundingRate * yearSec / fundingPeriod;
+
+    // Clamp exponent to avoid Infinity
+    const clampedExp = Math.max(-20, Math.min(20, annExponent));
+    const annPct = (Math.exp(clampedExp) - 1) * 100;
+
     return {
       spread,
       spreadPct,
+      fundingRate,
+      annualizedPct: annPct,      // contract-consistent annualized NF change %
+      fundingPeriod,
       direction: spread >= 0 ? "LONGS_PAY" : "SHORTS_PAY",
     };
-  }, [market, pool]);
+  }, [market, pool, marketInfo]);
 
   // ── Derived: broker positions ───────────────────────────────
   const brokers = useMemo(() => {
@@ -308,7 +335,9 @@ export function useSimulation({
     });
   }, [chartRaw, volumeHistoryRaw]);
 
-  // ── Derived: funding from NF change ─────────────────────────
+  // ── Derived: observed funding from NF change ────────────────
+  // This measures the actual cumulative NF drift and annualizes it
+  // using log-return math consistent with the exponential model
   const fundingFromNF = useMemo(() => {
     if (!market) return null;
     const nfNow = market.normalizationFactor;
@@ -317,9 +346,14 @@ export function useSimulation({
     if (!blockTs || !lastUpdate || lastUpdate >= blockTs) return null;
     const elapsedSec = blockTs - lastUpdate;
     if (elapsedSec < 60) return null;
-    const totalChange = nfNow - 1.0;
-    const dailyPct = (totalChange / (elapsedSec / 86400)) * 100;
-    const annualPct = dailyPct * 365;
+
+    // Use log-return: ln(NF) / elapsed, then annualize
+    // This is consistent with the exponential model NF = NF0 * exp(r*t)
+    const logReturn = Math.log(nfNow); // NF starts at 1.0, so log(NF/1) = log(NF)
+    const annualLogReturn = (logReturn / elapsedSec) * (365 * 86400);
+    const annualPct = (Math.exp(annualLogReturn) - 1) * 100;
+    const dailyPct = annualPct / 365;
+
     return { dailyPct, annualPct };
   }, [market]);
 
