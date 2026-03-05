@@ -50,12 +50,13 @@ export default function PnlCalculatorModal({ isOpen, onClose, currentRate }) {
   }, [isLong, entryRateNum, crNum]);
 
   const pnl = useMemo(() => {
-    let value = 0;
-    if (isLong) {
-      value = ((targetRateNum - entryRateNum) / 100) * notional;
-    } else {
-      value = ((entryRateNum - targetRateNum) / 100) * notional;
-    }
+    if (entryRateNum <= 0) return { value: 0, percent: 0 };
+    // PnL = ((rateChange / entryRate)) × notional
+    // Long profits when rate goes up, short profits when rate goes down
+    const rateChangePct = (targetRateNum - entryRateNum) / entryRateNum;
+    const value = isLong
+      ? rateChangePct * notional
+      : -rateChangePct * notional;
     const percent = collateralNum > 0 ? (value / collateralNum) * 100 : 0;
     return { value, percent };
   }, [isLong, targetRateNum, entryRateNum, notional, collateralNum]);
