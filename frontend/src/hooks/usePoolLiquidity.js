@@ -288,7 +288,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
             [c0, c1, 500, tickSpacing, twammHook],
           ),
         );
-        // positionInfo stores only the top 200 bits (25 bytes) of the poolId
         expectedPoolId = BigInt(fullPoolId) >> 56n;
       }
 
@@ -307,113 +306,75 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
 
       const candidateIds = [...new Set(logs.map(l => l.args.tokenId))];
 
-      // Pre-fetch entry prices from the indexer for all unique mint blocks
-      const uniqueMintBlocks = [...new Set(mintBlockMap.values())];
-      const mintBlockPrices = new Map(); // blockNumber → markPrice
-      await Promise.all(
-        uniqueMintBlocks.map(async (blockNum) => {
-          try {
-            const res = await fetch(`/api/block/${blockNum}`);
-            if (res.ok) {
-              const data = await res.json();
-              const ps = data.pool_states?.[0];
-              if (ps?.mark_price) {
-                mintBlockPrices.set(blockNum, ps.mark_price);
-              }
-            }
-          } catch { /* ignore fetch errors */ }
-        }),
-      );
+      // Build a StateView instance for fee computation (if available)
+      const stateView = (fullPoolId && stateViewAddr)
+        ? new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider)
+        : null;
 
-      // Fetch all position data in parallel (instead of sequential)
+      // Fetch ALL position data + fees in one parallel batch
       const positionResults = await Promise.all(
         candidateIds.map(async (tokenId) => {
           try {
-            const [owner, liquidity] = await Promise.all([
+            // All 3 RPC calls per candidate in parallel
+            const [owner, liquidity, info] = await Promise.all([
               posm.ownerOf(tokenId),
               posm.getPositionLiquidity(tokenId),
+              posm.positionInfo(tokenId),
             ]);
             if (owner.toLowerCase() !== brokerAddress.toLowerCase()) return null;
             if (liquidity === 0n) return null;
 
-            let tickLower = 0, tickUpper = 0;
-            try {
-              const info = await posm.positionInfo(tokenId);
-              const decoded = decodePositionInfo(info);
-              tickLower = decoded.tickLower;
-              tickUpper = decoded.tickUpper;
-              // Filter out positions from other pools
-              if (expectedPoolId !== null && decoded.poolId !== expectedPoolId) {
-                return null;
-              }
-            } catch { /* ignore decode errors */ }
+            const decoded = decodePositionInfo(info);
+            if (expectedPoolId !== null && decoded.poolId !== expectedPoolId) return null;
 
-            // Entry price from indexed pool state at mint block
+            const { tickLower, tickUpper } = decoded;
+
+            // Entry price from mint block (non-blocking, we'll set it later)
             let entryPrice = null;
             const mintBlock = mintBlockMap.get(tokenId);
-            if (mintBlock && mintBlockPrices.has(mintBlock)) {
-              entryPrice = mintBlockPrices.get(mintBlock);
-            }
+
+            // Fee computation — runs in parallel with nothing to wait for
+            let feesEarned0 = "0", feesEarned1 = "0";
+            const feePromise = stateView ? (async () => {
+              try {
+                const salt = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
+                const [posInfo, feeInside] = await Promise.all([
+                  stateView.getPositionInfo(fullPoolId, posmAddr, tickLower, tickUpper, salt),
+                  stateView.getFeeGrowthInside(fullPoolId, tickLower, tickUpper),
+                ]);
+                const Q128 = 1n << 128n;
+                const delta0 = feeInside.feeGrowthInside0X128 - posInfo.feeGrowthInside0LastX128;
+                const delta1 = feeInside.feeGrowthInside1X128 - posInfo.feeGrowthInside1LastX128;
+                feesEarned0 = ethers.formatUnits(liquidity * delta0 / Q128, 6);
+                feesEarned1 = ethers.formatUnits(liquidity * delta1 / Q128, 6);
+              } catch (e) {
+                console.warn(`[LP] Fee calc failed for tokenId ${tokenId}:`, e.message);
+              }
+            })() : Promise.resolve();
+
+            // Entry price fetch — parallel with fee computation
+            const pricePromise = mintBlock ? (async () => {
+              try {
+                const res = await fetch(`/api/block/${mintBlock}`);
+                if (res.ok) {
+                  const data = await res.json();
+                  entryPrice = data.pool_states?.[0]?.mark_price ?? null;
+                }
+              } catch { /* ignore */ }
+            })() : Promise.resolve();
+
+            // Wait for both to finish
+            await Promise.all([feePromise, pricePromise]);
 
             return {
               tokenId, liquidity, tickLower, tickUpper, entryPrice,
               isActive: tokenId === activeTokenIdOnChain,
+              feesEarned0, feesEarned1,
             };
           } catch { return null; }
         }),
       );
       const positions = positionResults.filter(Boolean);
-
-      // ── Compute unclaimed fees for each position ──────────────
-      console.log("[LP] Fee computation:", { fullPoolId, stateViewAddr, posCount: positions.length });
-      if (fullPoolId && stateViewAddr && positions.length > 0) {
-        try {
-          const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
-          await Promise.all(
-            positions.map(async (pos) => {
-              try {
-                // salt = bytes32(tokenId)
-                const salt = ethers.zeroPadValue(ethers.toBeHex(pos.tokenId), 32);
-                console.log("[LP] Fetching fees for tokenId", pos.tokenId.toString(), {
-                  poolId: fullPoolId,
-                  owner: posmAddr,
-                  tickLower: pos.tickLower,
-                  tickUpper: pos.tickUpper,
-                  salt,
-                });
-                const [posInfo, feeInside] = await Promise.all([
-                  stateView.getPositionInfo(fullPoolId, posmAddr, pos.tickLower, pos.tickUpper, salt),
-                  stateView.getFeeGrowthInside(fullPoolId, pos.tickLower, pos.tickUpper),
-                ]);
-                console.log("[LP] Fee data for tokenId", pos.tokenId.toString(), {
-                  liq: posInfo.liquidity?.toString(),
-                  fg0Last: posInfo.feeGrowthInside0LastX128?.toString(),
-                  fg1Last: posInfo.feeGrowthInside1LastX128?.toString(),
-                  fg0Inside: feeInside.feeGrowthInside0X128?.toString(),
-                  fg1Inside: feeInside.feeGrowthInside1X128?.toString(),
-                });
-                // unclaimed = liquidity × (feeGrowthInside - feeGrowthInsideLast) / 2^128
-                const Q128 = 1n << 128n;
-                const delta0 = feeInside.feeGrowthInside0X128 - posInfo.feeGrowthInside0LastX128;
-                const delta1 = feeInside.feeGrowthInside1X128 - posInfo.feeGrowthInside1LastX128;
-                const raw0 = pos.liquidity * delta0 / Q128;
-                const raw1 = pos.liquidity * delta1 / Q128;
-                pos.feesEarned0 = ethers.formatUnits(raw0, 6);
-                pos.feesEarned1 = ethers.formatUnits(raw1, 6);
-                console.log("[LP] Fees computed:", pos.feesEarned0, pos.feesEarned1);
-              } catch (e) {
-                console.error(`[LP] Fee calc failed for tokenId ${pos.tokenId}:`, e);
-                pos.feesEarned0 = "0";
-                pos.feesEarned1 = "0";
-              }
-            }),
-          );
-        } catch (e) {
-          console.error("[LP] Fee computation batch failed:", e);
-        }
-      } else {
-        console.warn("[LP] Skipping fee computation:", { fullPoolId: !!fullPoolId, stateViewAddr: !!stateViewAddr });
-      }
 
       setAllPositions(positions);
       const active = positions.find(p => p.isActive) || positions[0] || null;
