@@ -18,6 +18,8 @@ import json
 import math
 import sqlite3
 import time
+import urllib.request
+import urllib.parse
 from typing import Optional, List
 from strawberry.types import Info
 
@@ -206,9 +208,84 @@ class Snapshot:
     brokers: List[BrokerState] = strawberry.field(default_factory=list)
 
 
+@strawberry.type
+class RatePoint:
+    timestamp: int
+    apy: float
+    eth_price: Optional[float] = None
+
+
+@strawberry.type
+class EthPricePoint:
+    timestamp: int
+    price: float
+
+
+@strawberry.type
+class RatesSeries:
+    symbol: str
+    data: List[RatePoint]
+
+
 # ═══════════════════════════════════════════════════════════
 # Resolvers / Helpers
 # ═══════════════════════════════════════════════════════════
+
+RATES_API_BASE = os.getenv("RATES_API_URL", "http://rates-indexer:8080")
+
+def _fetch_rates(symbol: str, resolution: str = "1H", limit: int = 50000,
+                 start_date: str = None, end_date: str = None) -> List[RatePoint]:
+    """Fetch rates from the rates API (port 8081)."""
+    try:
+        params = {"symbol": symbol, "resolution": resolution, "limit": str(limit)}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        qs = urllib.parse.urlencode(params)
+        url = f"{RATES_API_BASE}/rates?{qs}"
+        req = urllib.request.Request(url, headers={"X-API-Key": os.getenv("API_KEY", "")})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return [
+            RatePoint(
+                timestamp=int(d.get("timestamp", 0)),
+                apy=float(d.get("apy", 0)),
+                eth_price=float(d["eth_price"]) if d.get("eth_price") else None,
+            )
+            for d in data
+        ]
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to fetch rates for {symbol}: {e}")
+        return []
+
+
+def _fetch_eth_prices(resolution: str = "1D", limit: int = 50000,
+                      start_date: str = None, end_date: str = None) -> List[EthPricePoint]:
+    """Fetch ETH prices from the rates API (port 8081)."""
+    try:
+        params = {"resolution": resolution, "limit": str(limit)}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        qs = urllib.parse.urlencode(params)
+        url = f"{RATES_API_BASE}/eth-prices?{qs}"
+        req = urllib.request.Request(url, headers={"X-API-Key": os.getenv("API_KEY", "")})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return [
+            EthPricePoint(
+                timestamp=int(d.get("timestamp", 0)),
+                price=float(d.get("price", 0)),
+            )
+            for d in data
+        ]
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to fetch ETH prices: {e}")
+        return []
 
 def _row_to_lp(row: dict) -> LPPosition:
     return LPPosition(
@@ -700,6 +777,31 @@ class Query:
             created_block=r.get("created_block"),
             created_tx=r.get("created_tx"),
         ) for r in rows]
+
+    @strawberry.field(description="Lending rates for one or more symbols. Proxies to rates API.")
+    def rates(
+        self,
+        symbols: List[str],
+        resolution: str = "1H",
+        limit: int = 50000,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[RatesSeries]:
+        results = []
+        for symbol in symbols:
+            data = _fetch_rates(symbol, resolution, limit, start_date, end_date)
+            results.append(RatesSeries(symbol=symbol.upper(), data=data))
+        return results
+
+    @strawberry.field(description="ETH price history. Proxies to rates API.")
+    def eth_prices(
+        self,
+        resolution: str = "1D",
+        limit: int = 50000,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[EthPricePoint]:
+        return _fetch_eth_prices(resolution, limit, start_date, end_date)
 
 
 schema = strawberry.Schema(query=Query)

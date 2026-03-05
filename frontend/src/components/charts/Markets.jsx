@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
-import { fetcher } from "../../utils/helpers";
+// utils/helpers no longer needed — all data via GraphQL
 import { useChartControls } from "../../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
@@ -286,7 +286,7 @@ export default function Markets() {
     }));
   }, [hiddenSeries]);
 
-  // --- Initial Data Fetch (Cards/Table) ---
+  // --- Initial Data Fetch (Cards/Table) via GraphQL ---
   useEffect(() => {
     const fetchAllData = async () => {
       try {
@@ -295,19 +295,27 @@ export default function Markets() {
         const provider = new JsonRpcProvider(rpcUrl);
         const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
-        const promises = ASSETS.map(async (asset) => {
-          let apy = 0;
-          try {
-            const apiRes = await fetch(
-              `/api/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
-            );
-            const apiData = await apiRes.json();
-            if (apiData && apiData.length > 0)
-              apy = apiData[apiData.length - 1].apy || 0;
-          } catch (e) {
-            console.error(`Failed to fetch APY for ${asset.symbol}`, e);
-          }
+        // Batch all APYs via single GraphQL query
+        const symbols = ASSETS.map((a) => a.symbol);
+        let apyMap = {};
+        try {
+          const gqlRes = await fetch("/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: `{ rates(symbols: ${JSON.stringify(symbols)}, limit: 1) { symbol data { apy } } }`,
+            }),
+          });
+          const gqlData = await gqlRes.json();
+          (gqlData?.data?.rates || []).forEach((s) => {
+            apyMap[s.symbol] = s.data?.[0]?.apy || 0;
+          });
+        } catch (e) {
+          console.error("GraphQL rates fetch failed:", e);
+        }
 
+        // Batch all debt totalSupply calls in parallel
+        const promises = ASSETS.map(async (asset) => {
           let debt = 0;
           try {
             const debtContract = new Contract(
@@ -320,8 +328,7 @@ export default function Markets() {
           } catch (e) {
             console.error(`Failed to fetch Debt for ${asset.symbol}`, e);
           }
-
-          return { ...asset, apy, debt };
+          return { ...asset, apy: apyMap[asset.symbol] || 0, debt };
         });
 
         const results = await Promise.all(promises);
@@ -337,23 +344,47 @@ export default function Markets() {
     fetchAllData();
   }, []);
 
-  // --- Chart Data Fetching ---
-  const getHistoryUrl = (symbol) => {
-    return `/api/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
-  };
+  // --- Chart Data Fetching via GraphQL ---
+  const chartGqlKey = useMemo(
+    () => (appliedStart && appliedEnd ? `chart:${resolution}:${appliedStart}:${appliedEnd}` : null),
+    [resolution, appliedStart, appliedEnd],
+  );
 
-  const { data: usdcHistory } = useSWR(getHistoryUrl("USDC"), fetcher);
-  const { data: daiHistory } = useSWR(getHistoryUrl("DAI"), fetcher);
-  const { data: usdtHistory } = useSWR(getHistoryUrl("USDT"), fetcher);
-  const { data: sofrHistory } = useSWR(getHistoryUrl("SOFR"), fetcher);
-
-  const { data: ethPrices } = useSWR(() => {
-    return `/api/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
-  }, fetcher);
+  const { data: chartGqlData } = useSWR(
+    chartGqlKey,
+    async () => {
+      const gqlRes = await fetch("/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `{
+            rates(symbols: ["USDC","DAI","USDT","SOFR"], resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") {
+              symbol
+              data { timestamp apy ethPrice }
+            }
+            ethPrices(resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") {
+              timestamp price
+            }
+          }`,
+        }),
+      });
+      const json = await gqlRes.json();
+      return json?.data || null;
+    },
+    { revalidateOnFocus: false },
+  );
 
   // Merge Chart Data
   const chartData = useMemo(() => {
-    if (!usdcHistory || usdcHistory.length === 0) return [];
+    if (!chartGqlData?.rates) return [];
+
+    const ratesMap = {};
+    (chartGqlData.rates || []).forEach((s) => {
+      ratesMap[s.symbol] = s.data || [];
+    });
+
+    const usdcHistory = ratesMap["USDC"] || [];
+    if (usdcHistory.length === 0) return [];
 
     const getBucket = (ts) => {
       let seconds = 3600;
@@ -371,18 +402,16 @@ export default function Markets() {
     };
 
     usdcHistory.forEach((r) => mergePoint(r.timestamp, "apy_usdc", r.apy));
-    if (daiHistory)
-      daiHistory.forEach((r) => mergePoint(r.timestamp, "apy_dai", r.apy));
-    if (usdtHistory)
-      usdtHistory.forEach((r) => mergePoint(r.timestamp, "apy_usdt", r.apy));
-    if (sofrHistory)
-      sofrHistory.forEach((r) => mergePoint(r.timestamp, "apy_sofr", r.apy));
+    (ratesMap["DAI"] || []).forEach((r) => mergePoint(r.timestamp, "apy_dai", r.apy));
+    (ratesMap["USDT"] || []).forEach((r) => mergePoint(r.timestamp, "apy_usdt", r.apy));
+    (ratesMap["SOFR"] || []).forEach((r) => mergePoint(r.timestamp, "apy_sofr", r.apy));
 
-    if (ethPrices) {
+    const ethPrices = chartGqlData.ethPrices || [];
+    if (ethPrices.length) {
       ethPrices.forEach((p) => mergePoint(p.timestamp, "ethPrice", p.price));
     } else {
       usdcHistory.forEach((r) => {
-        if (r.eth_price) mergePoint(r.timestamp, "ethPrice", r.eth_price);
+        if (r.ethPrice) mergePoint(r.timestamp, "ethPrice", r.ethPrice);
       });
     }
 
@@ -400,14 +429,7 @@ export default function Markets() {
       }
       return point;
     });
-  }, [
-    usdcHistory,
-    daiHistory,
-    usdtHistory,
-    sofrHistory,
-    ethPrices,
-    resolution,
-  ]);
+  }, [chartGqlData, resolution]);
 
   // --- Stats ---
   const stats = useMemo(() => {
