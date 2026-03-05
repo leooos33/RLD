@@ -68,7 +68,9 @@ function decodePositionInfo(infoBytes32) {
   // Sign-extend int24
   const tickLower = tickLowerRaw >= 0x800000 ? tickLowerRaw - 0x1000000 : tickLowerRaw;
   const tickUpper = tickUpperRaw >= 0x800000 ? tickUpperRaw - 0x1000000 : tickUpperRaw;
-  return { tickLower, tickUpper };
+  // poolId occupies bits [56..255] — the top 200 bits (25 bytes)
+  const poolId = val >> 56n;
+  return { tickLower, tickUpper, poolId };
 }
 
 /**
@@ -228,17 +230,20 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
       const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
       const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
 
-      // Build poolId for slot0 lookups
-      if (stateViewAddr && twammHook && positionToken && collateralToken) {
+      // Build expected poolId to filter positions belonging to this market
+      let expectedPoolId = null;
+      if (twammHook && positionToken && collateralToken) {
         const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
           ? [positionToken, collateralToken]
           : [collateralToken, positionToken];
-        const _poolId = ethers.keccak256(
+        const fullPoolId = ethers.keccak256(
           ethers.AbiCoder.defaultAbiCoder().encode(
             ["address", "address", "uint24", "int24", "address"],
             [c0, c1, 500, tickSpacing, twammHook],
           ),
         );
+        // positionInfo stores only the top 200 bits (25 bytes) of the poolId
+        expectedPoolId = BigInt(fullPoolId) >> 56n;
       }
 
       // Run initial calls in parallel
@@ -291,6 +296,10 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
               const decoded = decodePositionInfo(info);
               tickLower = decoded.tickLower;
               tickUpper = decoded.tickUpper;
+              // Filter out positions from other pools
+              if (expectedPoolId !== null && decoded.poolId !== expectedPoolId) {
+                return null;
+              }
             } catch { /* ignore decode errors */ }
 
             // Entry price from indexed pool state at mint block
