@@ -776,10 +776,10 @@ class ComprehensiveIndexer:
             Web3.keccak(text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)").hex(): "ModifyLiquidity",
             Web3.keccak(text="Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)").hex(): "Initialize",
             
-            # TWAMM Events
-            Web3.keccak(text="SubmitOrder(bytes32,address,uint256,uint256,bool,uint256)").hex(): "SubmitOrder",
-            Web3.keccak(text="ModifyOrder(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ModifyOrder",
-            Web3.keccak(text="ClaimEarnings(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ClaimEarnings",
+            # TWAMM Events (match IJTM.sol signatures)
+            Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256)").hex(): "SubmitOrder",
+            Web3.keccak(text="CancelOrder(bytes32,bytes32,address,uint256)").hex(): "CancelOrder",
+            Web3.keccak(text="AutoSettle(bytes32,uint256,uint256,bool)").hex(): "AutoSettle",
             
             # BondFactory Events
             Web3.keccak(text="BondMinted(address,address,uint256,uint256,uint256)").hex(): "BondMinted",
@@ -970,15 +970,42 @@ class ComprehensiveIndexer:
                     }
                 return {'market_id': market_id, 'raw': data}
             
-            elif event_name in ["SubmitOrder", "ModifyOrder", "ClaimEarnings"]:
-                # TWAMM order events
+            elif event_name == "SubmitOrder":
+                # SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId,
+                #   address owner, uint256 amountIn, uint160 expiration,
+                #   bool zeroForOne, uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
                 pool_id = topics[1].hex() if len(topics) > 1 else None
-                owner = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
-                return {
-                    'pool_id': pool_id,
-                    'owner': owner,
-                    'raw': data[:100] + '...' if len(data) > 100 else data
-                }
+                order_id = topics[2].hex() if len(topics) > 2 else None
+                result = {'pool_id': pool_id, 'order_id': order_id}
+                if len(data) >= 448:  # 7 * 64 hex chars
+                    result['owner'] = '0x' + data[24:64]  # address padded to 32 bytes
+                    result['amount_in'] = str(int(data[64:128], 16))
+                    result['expiration'] = int(data[128:192], 16)
+                    result['zero_for_one'] = int(data[192:256], 16) == 1
+                    result['sell_rate'] = str(int(data[256:320], 16))
+                    result['earnings_factor_last'] = str(int(data[320:384], 16))
+                    result['start_epoch'] = int(data[384:448], 16)
+                return result
+            
+            elif event_name == "CancelOrder":
+                # CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
+                pool_id = topics[1].hex() if len(topics) > 1 else None
+                order_id = topics[2].hex() if len(topics) > 2 else None
+                result = {'pool_id': pool_id, 'order_id': order_id}
+                if len(data) >= 128:
+                    result['owner'] = '0x' + data[24:64]
+                    result['sell_tokens_refund'] = str(int(data[64:128], 16))
+                return result
+            
+            elif event_name == "AutoSettle":
+                # AutoSettle(bytes32 indexed poolId, uint256 ghostAmount, uint256 proceeds, bool zeroForOne)
+                pool_id = topics[1].hex() if len(topics) > 1 else None
+                result = {'pool_id': pool_id}
+                if len(data) >= 192:
+                    result['ghost_amount'] = str(int(data[0:64], 16))
+                    result['proceeds'] = str(int(data[64:128], 16))
+                    result['zero_for_one'] = int(data[128:192], 16) == 1
+                return result
             
             elif event_name == "ModifyLiquidity":
                 pool_id = topics[1].hex() if len(topics) > 1 else None

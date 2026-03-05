@@ -1520,6 +1520,7 @@ export default function SimulationTerminal() {
                         addToast={addToast}
                         marketInfo={marketInfo}
                         onStateChange={refreshBrokerState}
+                        onTwammRefresh={refreshTwamm}
                       />
                     )}
                     </React.Fragment>

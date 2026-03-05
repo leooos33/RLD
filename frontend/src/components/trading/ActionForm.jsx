@@ -162,7 +162,7 @@ const DURATION_PRESETS = [
   { label: "7D", hours: 168 },
 ];
 
-function TwapForm({ brokerAddress, marketInfo, account, addToast }) {
+function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh }) {
   const [amount, setAmount] = useState("");
   const [durationHours, setDurationHours] = useState("");
   const [direction, setDirection] = useState("BUY");
@@ -215,6 +215,11 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast }) {
         message: `${direction} ${amount} over ${durationNum}h`,
         duration: 5000,
       });
+      // Refresh position panel after indexer catches up
+      if (onTwammRefresh) {
+        setTimeout(() => onTwammRefresh(), 3000);
+        setTimeout(() => onTwammRefresh(), 6000);
+      }
     });
   };
 
@@ -867,10 +872,10 @@ function BatchForm() {
 }
 
 /* ── ActionForm Router ────────────────────────────────────────── */
-export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo, onStateChange }) {
+export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo, onStateChange, onTwammRefresh }) {
   const forms = {
     mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} onStateChange={onStateChange} />,
-    twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} />,
+    twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} onTwammRefresh={onTwammRefresh} />,
     lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} onStateChange={onStateChange} />,
     loop: <LoopForm />,
     batch: <BatchForm />,

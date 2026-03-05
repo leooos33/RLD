@@ -460,7 +460,8 @@ def _get_twamm_orders(owner: Optional[str] = None) -> List[TwammOrder]:
 
         # Find all CancelOrder events
         c.execute("""
-            SELECT DISTINCT json_extract(data, '$.orderId') as order_id
+            SELECT DISTINCT
+                COALESCE(json_extract(data, '$.order_id'), json_extract(data, '$.orderId')) as order_id
             FROM events WHERE event_name = 'CancelOrder'
         """)
         cancelled_ids = {row[0] for row in c.fetchall() if row[0]}
@@ -474,15 +475,15 @@ def _get_twamm_orders(owner: Optional[str] = None) -> List[TwammOrder]:
             if owner and order_owner.lower() != owner.lower():
                 continue
 
-            order_id = d.get("orderId", "")
+            order_id = d.get("order_id", "") or d.get("orderId", "")
             orders.append(TwammOrder(
                 order_id=order_id,
                 owner=order_owner,
-                amount_in=str(d.get("amountIn", 0)),
-                sell_rate=str(d.get("sellRate", 0)),
+                amount_in=str(d.get("amount_in", 0) or d.get("amountIn", 0)),
+                sell_rate=str(d.get("sell_rate", 0) or d.get("sellRate", 0)),
                 expiration=int(d.get("expiration", 0)),
-                start_epoch=int(d.get("startEpoch", 0)),
-                zero_for_one=bool(d.get("zeroForOne", False)),
+                start_epoch=int(d.get("start_epoch", 0) or d.get("startEpoch", 0)),
+                zero_for_one=bool(d.get("zero_for_one", False) if "zero_for_one" in d else d.get("zeroForOne", False)),
                 block_number=row["block_number"],
                 tx_hash=row["tx_hash"],
                 is_cancelled=order_id in cancelled_ids,
