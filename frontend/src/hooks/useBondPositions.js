@@ -25,7 +25,7 @@ export function useBondPositions(account, entryRate, pollInterval = 15000) {
     ? `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`
     : null;
 
-  const { data, error, mutate, isLoading } = useSWR(apiUrl, fetcher, {
+  const { data, error: _error, mutate, isLoading } = useSWR(apiUrl, fetcher, {
     refreshInterval: pollInterval,
     revalidateOnFocus: false,
     dedupingInterval: 2000,

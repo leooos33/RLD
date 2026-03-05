@@ -365,7 +365,7 @@ export default function SimulationTerminal() {
         message: swapError,
         duration: 6000,
       });
-      setShowSwapConfirm(false); // eslint-disable-line react-hooks/set-state-in-effect
+      setShowSwapConfirm(false);
     }
     prevSwapError.current = swapError;
   }, [swapError, showSwapConfirm, addToast]);
@@ -469,7 +469,7 @@ export default function SimulationTerminal() {
     ) {
       const crDecimal = shortCR / 100;
       const newAmount = collateral / (crDecimal * currentRate);
-      setShortAmount(parseFloat(newAmount.toFixed(6))); // eslint-disable-line react-hooks/set-state-in-effect
+      setShortAmount(parseFloat(newAmount.toFixed(6)));
     }
   }, [tradeSide, collateral, shortCR, currentRate]);
 

@@ -199,7 +199,7 @@ export function useSimulation({
       total_events: s.totalEvents,
       last_indexed_block: s.lastIndexedBlock,
     };
-  }, [gqlData?.status]);
+  }, [gqlData]);
 
   // ── Derived: market state ───────────────────────────────────
   const market = useMemo(() => {
