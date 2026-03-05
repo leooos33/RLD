@@ -22,6 +22,8 @@ const POSM_ABI = [
 
 const STATE_VIEW_ABI = [
   "function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)",
+  "function getPositionInfo(bytes32 poolId, address owner, int24 tickLower, int24 tickUpper, bytes32 salt) view returns (uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128)",
+  "function getFeeGrowthInside(bytes32 poolId, int24 tickLower, int24 tickUpper) view returns (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128)",
 ];
 
 // ── Tick math helpers ─────────────────────────────────────────────
@@ -233,11 +235,12 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
 
       // Build expected poolId to filter positions belonging to this market
       let expectedPoolId = null;
+      let fullPoolId = null;
       if (twammHook && positionToken && collateralToken) {
         const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
           ? [positionToken, collateralToken]
           : [collateralToken, positionToken];
-        const fullPoolId = ethers.keccak256(
+        fullPoolId = ethers.keccak256(
           ethers.AbiCoder.defaultAbiCoder().encode(
             ["address", "address", "uint24", "int24", "address"],
             [c0, c1, 500, tickSpacing, twammHook],
@@ -318,6 +321,40 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         }),
       );
       const positions = positionResults.filter(Boolean);
+
+      // ── Compute unclaimed fees for each position ──────────────
+      if (fullPoolId && stateViewAddr && positions.length > 0) {
+        try {
+          const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
+          await Promise.all(
+            positions.map(async (pos) => {
+              try {
+                // salt = bytes32(tokenId)
+                const salt = ethers.zeroPadValue(ethers.toBeHex(pos.tokenId), 32);
+                const [posInfo, feeInside] = await Promise.all([
+                  stateView.getPositionInfo(fullPoolId, posmAddr, pos.tickLower, pos.tickUpper, salt),
+                  stateView.getFeeGrowthInside(fullPoolId, pos.tickLower, pos.tickUpper),
+                ]);
+                // unclaimed = liquidity × (feeGrowthInside - feeGrowthInsideLast) / 2^128
+                const Q128 = 1n << 128n;
+                const delta0 = feeInside.feeGrowthInside0X128 - posInfo.feeGrowthInside0LastX128;
+                const delta1 = feeInside.feeGrowthInside1X128 - posInfo.feeGrowthInside1LastX128;
+                const raw0 = pos.liquidity * delta0 / Q128;
+                const raw1 = pos.liquidity * delta1 / Q128;
+                // Convert from raw (6 decimals) to human-readable string
+                pos.feesEarned0 = ethers.formatUnits(raw0, 6);
+                pos.feesEarned1 = ethers.formatUnits(raw1, 6);
+              } catch (e) {
+                console.warn(`[LP] Fee calc failed for tokenId ${pos.tokenId}:`, e);
+                pos.feesEarned0 = "0";
+                pos.feesEarned1 = "0";
+              }
+            }),
+          );
+        } catch (e) {
+          console.warn("[LP] Fee computation batch failed:", e);
+        }
+      }
 
       setAllPositions(positions);
       const active = positions.find(p => p.isActive) || positions[0] || null;
