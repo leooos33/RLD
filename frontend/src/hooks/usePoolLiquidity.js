@@ -365,6 +365,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
       const positions = positionResults.filter(Boolean);
 
       // ── Compute unclaimed fees for each position ──────────────
+      console.log("[LP] Fee computation:", { fullPoolId, stateViewAddr, posCount: positions.length });
       if (fullPoolId && stateViewAddr && positions.length > 0) {
         try {
           const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
@@ -373,29 +374,45 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
               try {
                 // salt = bytes32(tokenId)
                 const salt = ethers.zeroPadValue(ethers.toBeHex(pos.tokenId), 32);
+                console.log("[LP] Fetching fees for tokenId", pos.tokenId.toString(), {
+                  poolId: fullPoolId,
+                  owner: posmAddr,
+                  tickLower: pos.tickLower,
+                  tickUpper: pos.tickUpper,
+                  salt,
+                });
                 const [posInfo, feeInside] = await Promise.all([
                   stateView.getPositionInfo(fullPoolId, posmAddr, pos.tickLower, pos.tickUpper, salt),
                   stateView.getFeeGrowthInside(fullPoolId, pos.tickLower, pos.tickUpper),
                 ]);
+                console.log("[LP] Fee data for tokenId", pos.tokenId.toString(), {
+                  liq: posInfo.liquidity?.toString(),
+                  fg0Last: posInfo.feeGrowthInside0LastX128?.toString(),
+                  fg1Last: posInfo.feeGrowthInside1LastX128?.toString(),
+                  fg0Inside: feeInside.feeGrowthInside0X128?.toString(),
+                  fg1Inside: feeInside.feeGrowthInside1X128?.toString(),
+                });
                 // unclaimed = liquidity × (feeGrowthInside - feeGrowthInsideLast) / 2^128
                 const Q128 = 1n << 128n;
                 const delta0 = feeInside.feeGrowthInside0X128 - posInfo.feeGrowthInside0LastX128;
                 const delta1 = feeInside.feeGrowthInside1X128 - posInfo.feeGrowthInside1LastX128;
                 const raw0 = pos.liquidity * delta0 / Q128;
                 const raw1 = pos.liquidity * delta1 / Q128;
-                // Convert from raw (6 decimals) to human-readable string
                 pos.feesEarned0 = ethers.formatUnits(raw0, 6);
                 pos.feesEarned1 = ethers.formatUnits(raw1, 6);
+                console.log("[LP] Fees computed:", pos.feesEarned0, pos.feesEarned1);
               } catch (e) {
-                console.warn(`[LP] Fee calc failed for tokenId ${pos.tokenId}:`, e);
+                console.error(`[LP] Fee calc failed for tokenId ${pos.tokenId}:`, e);
                 pos.feesEarned0 = "0";
                 pos.feesEarned1 = "0";
               }
             }),
           );
         } catch (e) {
-          console.warn("[LP] Fee computation batch failed:", e);
+          console.error("[LP] Fee computation batch failed:", e);
         }
+      } else {
+        console.warn("[LP] Skipping fee computation:", { fullPoolId: !!fullPoolId, stateViewAddr: !!stateViewAddr });
       }
 
       setAllPositions(positions);
