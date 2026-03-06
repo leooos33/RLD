@@ -590,7 +590,7 @@ def get_market_state(market_id: str):
         logging.error(f"Error fetching market state: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.post("/market/register")
+@app.post("/market/register", dependencies=[Depends(get_api_key)])
 async def register_market(market_id: str):
     """
     Manually register a market that was deployed before the indexer started.
