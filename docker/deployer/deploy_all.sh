@@ -117,7 +117,7 @@ APY="5.0"
 API_URL_RATE="${API_URL:-http://host.docker.internal:8080}"
 API_KEY_RATE="${API_KEY:-}"
 RATE_JSON=$(curl -s --max-time 5 "$API_URL_RATE/rates?limit=1&symbol=USDC" -H "X-API-Key: $API_KEY_RATE" 2>/dev/null) || true
-API_APY=$(echo "$RATE_JSON" | jq -r '.[0].apy' 2>/dev/null)
+API_APY=$(echo "$RATE_JSON" | jq -r '.[0].apy' 2>/dev/null) || true
 if [ -n "$API_APY" ] && [ "$API_APY" != "null" ]; then
     APY="$API_APY"
 else
