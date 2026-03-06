@@ -1,29 +1,48 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Protocol — .gitignore
+# ═══════════════════════════════════════════════════════════════
 
-# Backups & Data
-# Environment variables
-# Forge broadcast artifacts
-# Javascript
-# Python
-# Shared artifacts (optional, but addresses.json might technically be local state)
-# shared/addresses.json
+# ── Environment & Secrets ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+rate-dashboard.env
+
+# ── Python ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
 *$py.class
-**/*.db
-**/*.db-shm
-**/*.db-wal
+venv/
+
+# ── JavaScript / Node ──────────────────────────────────────────
+node_modules/
+dist/
+
+# ── Forge / Foundry ────────────────────────────────────────────
+contracts/broadcast/
+contracts/cache/
+contracts/out/
+*.sol.bak
+
+# ── Databases ──────────────────────────────────────────────────
 *.db
 *.db-shm
 *.db-wal
-*.py[cod]
+
+# ── Logs & Build Artifacts ─────────────────────────────────────
+*.log
 *_logs.txt
-.DS_Store
-.env
-anvil.log
-rate-dashboard.env
-*.sol.bak
-__pycache__/
+deploy_output.txt
+build_error.log
+
+# ── Backups & State ────────────────────────────────────────────
 backups/
-contracts/broadcast/
-dist/
 logs/
-node_modules/
-venv/
+
+# ── Internal Docs (not for public) ─────────────────────────────
+docs/internal/
+docs/internal_audit/
+
+# ── OS Files ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
