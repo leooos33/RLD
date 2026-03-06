@@ -114,7 +114,7 @@ async def security_headers_middleware(request: Request, call_next):
 # 1. Security & Compression
 app.add_middleware(
     TrustedHostMiddleware, 
-    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver", "rate-dashboard.onrender.com", "rld.fi", "www.rld.fi"]
+    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver", "rate-dashboard.onrender.com", "rld.fi", "www.rld.fi", "rates-indexer", "host.docker.internal"]
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
