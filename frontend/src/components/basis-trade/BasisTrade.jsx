@@ -92,9 +92,9 @@ const BasisTradeComparison = ({ currentYield, expectedYield, currentBorrow, leve
                 <td className={`py-3 text-right font-bold ${hNet >= 0 ? 'text-green-400' : 'text-red-400'}`}>{hNet < 0 ? '-' : ''}{fmt(hNet)}</td>
               </tr>
               <tr className="border-t border-white/20">
-                <td className="py-3 text-white font-bold whitespace-nowrap">ROI / {timeHorizon}d</td>
-                <td className={`py-3 text-right ${uRoi >= 0 ? 'text-white' : 'text-red-400'}`}>{uRoi.toFixed(2)}%</td>
-                <td className="py-3 text-right text-pink-400 font-bold text-base md:text-lg">{hRoi.toFixed(2)}%</td>
+                <td className="pt-3 pb-[4px] text-white font-bold whitespace-nowrap">ROI / {timeHorizon}d</td>
+                <td className={`pt-3 pb-[4px] text-right ${uRoi >= 0 ? 'text-white' : 'text-red-400'}`}>{uRoi.toFixed(2)}%</td>
+                <td className="pt-3 pb-[4px] text-right text-pink-400 font-bold text-base md:text-lg">{hRoi.toFixed(2)}%</td>
               </tr>
             </tbody>
           </table>
@@ -109,7 +109,7 @@ export default function BasisTradePage() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [selectedBond, setSelectedBond] = useState(null);
   const [actionDropdown, setActionDropdown] = useState(null);
-  const [selectedToken, setSelectedToken] = useState("sUSDe");
+  const [selectedToken, setSelectedToken] = useState("USDC");
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
   const [expectedYield, setExpectedYield] = useState("");
   const [leverage, setLeverage] = useState("3");
@@ -431,7 +431,7 @@ export default function BasisTradePage() {
                   suffix={selectedToken}
                 />
 
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
                     <span>Leverage</span>
                     <span className="text-pink-500 font-mono">{leverage}x</span>
@@ -468,7 +468,7 @@ export default function BasisTradePage() {
                   </div>
                 </div>
 
-                <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02] text-sm tracking-widest">
+                <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-sm tracking-widest">
                   <SummaryRow label="Net_APY" value={`${formatNum(basisApy)}%`} />
                   <SummaryRow label="Leverage" value={`${leverage}x`} />
                   <SummaryRow label="Hedge_Required" value={`${hedgeInfo.hedge.toFixed(2)} wRLP`} />

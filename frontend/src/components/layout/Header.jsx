@@ -316,6 +316,8 @@ export default function Header({ isCapped, ratesLoaded }) {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         account={account}
+        onFaucet={requestFaucet}
+        faucetLoading={faucetLoading}
         disconnect={() => {
           disconnect();
           setIsModalOpen(false);
