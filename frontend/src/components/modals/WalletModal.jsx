@@ -17,10 +17,6 @@ export default function WalletModal({ isOpen, onClose, onFaucet, faucetLoading }
     }
   };
 
-  const shortAddr = account
-    ? `${account.slice(0, 6)}…${account.slice(-10)}`
-    : "—";
-
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* Backdrop */}

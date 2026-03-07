@@ -12,8 +12,6 @@ export default function OpenTradeModal({
   capital,
   leverage,
   duration,
-  susdeYield,
-  usdcCost,
   spread,
   hedgeSize = 0,
   selectedToken = "sUSDe",

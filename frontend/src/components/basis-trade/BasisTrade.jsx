@@ -12,7 +12,7 @@ import { ToastContainer } from "../common/Toast";
 import { useMarketData } from "../../hooks/useMarketData";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
 import { useSim } from "../../context/SimulationContext";
-import { useWealthProjection } from "../../hooks/useWealthProjection";
+
 import { useBasisTradeExecution } from "../../hooks/useBasisTradeExecution";
 import { useBondPositions } from "../../hooks/useBondPositions";
 import { useSusdeYield } from "../../hooks/useSusdeYield";
@@ -124,12 +124,10 @@ export default function BasisTradePage() {
     rates,
     error,
     isLoading,
-    dailyChange,
     latest,
   } = useMarketData();
 
-  const { poolTVL, protocolStats, marketInfo } = useSim();
-  const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
+  const { marketInfo } = useSim();
 
   // Live sUSDe yield from Ethena
   const { stakingYield: susdeYield, lastUpdated: susdeUpdated } = useSusdeYield();
@@ -195,21 +193,14 @@ export default function BasisTradePage() {
   const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(account, basisApy);
 
   const {
-    activeProduct,
     activeTab,
     notional,
     maturityHours,
     maturityDays,
-    epochs,
   } = tradeLogic.state;
   const {
     setActiveTab,
-    setNotional,
-    handleHoursChange,
-    handleEndDateChange,
   } = tradeLogic.actions;
-
-  const projectionData = useWealthProjection(notional, basisApy, maturityDays);
 
   const hedgeInfo = useMemo(() => {
     const hedge = calcHedgeSize(notional, basisApy, maturityHours);
