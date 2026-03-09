@@ -374,7 +374,7 @@ export default function SimulationTerminal() {
   const controls = useChartControls({
     defaultRange: "ALL",
     defaultDays: 9999,
-    defaultResolution: "1D",
+    defaultResolution: "5M",
   });
   const { resolution } = controls;
 
@@ -661,18 +661,19 @@ export default function SimulationTerminal() {
               {/* 2. CONTROLS */}
               <ChartControlBar
                 controls={controls}
+                resolutions={["5M", "1H", "4H", "1D"]}
                 extraControls={
                   <ControlCell
                     label="PNL_CALCULATOR"
-                    className="pr-0 hidden md:flex"
+                    className="pr-0 hidden xl:flex"
                   >
-                    <div className="flex items-center justify-end h-[30px] w-full">
+                    <div className="flex items-center justify-end h-[30px] w-full min-w-0">
                       <button
                         onClick={() => setPnlModalOpen(true)}
-                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-sm font-mono tracking-widest uppercase w-full justify-center"
+                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-sm font-mono tracking-widest uppercase w-full justify-center min-w-0 overflow-hidden"
                       >
-                        <Calculator size={14} />
-                        Open
+                        <Calculator size={14} className="flex-shrink-0" />
+                        <span className="truncate">Open</span>
                       </button>
                     </div>
                   </ControlCell>

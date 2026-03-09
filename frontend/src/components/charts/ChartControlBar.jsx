@@ -2,6 +2,8 @@ import React from "react";
 import ControlCell from "../common/ControlCell";
 import SettingsButton from "../common/SettingsButton";
 import MobileDropdown from "../common/MobileDropdown";
+import { DEPLOYMENT_DATE } from "../../utils/helpers";
+
 
 /**
  * Shared chart control bar (timeframe + resolution + custom date range).
@@ -115,6 +117,7 @@ export default function ChartControlBar({
             <input
               type="date"
               value={tempStart}
+              min={DEPLOYMENT_DATE}
               onChange={(e) => setTempStart(e.target.value)}
               className="bg-transparent border-b border-white/20 text-sm text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
             />
@@ -122,6 +125,7 @@ export default function ChartControlBar({
             <input
               type="date"
               value={tempEnd}
+              min={DEPLOYMENT_DATE}
               onChange={(e) => setTempEnd(e.target.value)}
               className="bg-transparent border-b border-white/20 text-sm text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
             />

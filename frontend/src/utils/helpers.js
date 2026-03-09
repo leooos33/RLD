@@ -8,6 +8,9 @@ export const API_URL = API_BASE;
 // API auth is handled server-side by Nginx proxy — no client-side key needed
 export const authHeaders = {};
 
+// Earliest date the indexer has data for (protocol deployment date)
+export const DEPLOYMENT_DATE = "2026-03-03";
+
 export const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 export const getPastDate = (days) => {

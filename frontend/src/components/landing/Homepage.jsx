@@ -332,14 +332,10 @@ function SolvencyInsuranceSection() {
               RLD Credit Default Swaps let you hedge it — parametric trigger,
               trustless execution, and 100% notional payout.
             </p>
-            <Link
-              to="/bonds"
-              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
-                         font-mono text-[10px] tracking-[0.22em] uppercase text-white
-                         hover:bg-white hover:text-black transition-all duration-200"
-            >
-              Explore CDS <span className="text-[#666]">↗</span>
-            </Link>
+            <div className="inline-flex items-center gap-3 px-6 py-[11px] border border-[#1e1e1e] cursor-not-allowed">
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[#333]">Explore CDS</span>
+              <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-cyan-900 border border-cyan-900/40 px-1.5 py-px">Soon</span>
+            </div>
           </div>
 
           <div className="flex flex-col justify-center">
@@ -559,7 +555,7 @@ function CoreArchitectureSection() {
             Launch App ↗
           </Link>
           <a
-            href="https://docs.rld.fi"
+            href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
             className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#666]
                        hover:text-white transition-colors duration-200"
           >

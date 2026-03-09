@@ -69,11 +69,14 @@ function serveDocsPlugin() {
 
 // Copy VitePress docs build into dist/docs/ after production build
 function copyDocsPlugin() {
+  let isBuild = false;
   return {
     name: 'copy-docs',
+    configResolved(config) {
+      isBuild = config.command === 'build';
+    },
     closeBundle() {
-      // Only run during production build, not dev server
-      if (process.env.NODE_ENV !== 'production') return;
+      if (!isBuild) return;
       const src = path.resolve(__dirname, '../docs-site/.vitepress/dist');
       const dest = path.resolve(__dirname, 'dist/docs');
       if (fs.existsSync(src)) {

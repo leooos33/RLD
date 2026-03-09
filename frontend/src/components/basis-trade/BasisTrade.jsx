@@ -196,7 +196,6 @@ export default function BasisTradePage() {
     activeTab,
     notional,
     maturityHours,
-    maturityDays,
   } = tradeLogic.state;
   const {
     setActiveTab,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getPastDate, getToday } from "../utils/helpers";
+import { getPastDate, getToday, DEPLOYMENT_DATE } from "../utils/helpers";
 
 /**
  * Shared chart controls hook for date range, resolution, and quick range selection.
@@ -15,9 +15,13 @@ export function useChartControls({
   defaultDays = 9999,
   defaultResolution = "1D",
 } = {}) {
-  const [tempStart, setTempStart] = useState(getPastDate(defaultDays));
+  const clampedDefault = defaultDays >= 9999
+    ? DEPLOYMENT_DATE
+    : getPastDate(defaultDays);
+
+  const [tempStart, setTempStart] = useState(clampedDefault);
   const [tempEnd, setTempEnd] = useState(getToday());
-  const [appliedStart, setAppliedStart] = useState(getPastDate(defaultDays));
+  const [appliedStart, setAppliedStart] = useState(clampedDefault);
   const [appliedEnd, setAppliedEnd] = useState(getToday());
   const [activeRange, setActiveRange] = useState(defaultRange);
   const [resolution, setResolution] = useState(defaultResolution);
@@ -33,17 +37,19 @@ export function useChartControls({
     const start = new Date();
     start.setDate(end.getDate() - days);
 
-    if (days <= 3) setResolution("1H");
+    if (days <= 3) setResolution("5M");
     else if (days <= 14) setResolution("1H");
     else if (days <= 90) setResolution("4H");
     else setResolution("1D");
 
     const startStr = start.toISOString().split("T")[0];
     const endStr = end.toISOString().split("T")[0];
+    // Clamp start to deployment date so we never request before indexer data exists
+    const clampedStart = startStr < DEPLOYMENT_DATE ? DEPLOYMENT_DATE : startStr;
 
-    setTempStart(startStr);
+    setTempStart(clampedStart);
     setTempEnd(endStr);
-    setAppliedStart(startStr);
+    setAppliedStart(clampedStart);
     setAppliedEnd(endStr);
     setActiveRange(label);
   };

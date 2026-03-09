@@ -455,7 +455,7 @@ echo -e "${MAGENTA}╠═══════════════════�
 # Anvil
 ANVIL_BLOCK=$(cast block-number --rpc-url "$ANVIL_RPC" 2>/dev/null || echo "?")
 ANVIL_PID_NOW=$(pgrep -f "anvil.*--host" || echo "?")
-printf "${MAGENTA}║${NC}  %-12s  %-10s  %-28s ${MAGENTA}║${NC}\n" "Anvil" "✅ UP" "Block: $ANVIL_BLOCK (PID: $ANVIL_PID_NOW)"
+printf "${MAGENTA}║${NC}  %-1s  %-10s  %-28s ${MAGENTA}║${NC}\n" "Anvil" "✅ UP" "Block: $ANVIL_BLOCK (PID: $ANVIL_PID_NOW)"
 
 # Docker containers
 echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
@@ -471,8 +471,8 @@ done
 echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
 
 # Ports
-printf "${MAGENTA}║${NC}  %-12s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Rates=:${RATES_PORT:-8081}"
-printf "${MAGENTA}║${NC}  %-12s  %-42s ${MAGENTA}║${NC}\n" "" "Bot=:${BOT_PORT:-8082}"
+printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Rates=:${RATES_PORT:-8081}"
+printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "" "Bot=:${BOT_PORT:-8082}"
 
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""

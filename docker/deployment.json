@@ -22,9 +22,9 @@
     "token0": "0x6c8d360090263de9fFdBc17Bccc6969D8a7F2379",
     "token1": "0xC070A317F23E9A4e982e356485416251dd3Ed944",
     "zero_for_one_long": false,
-    "user_a_broker": "0xc0090fb1e85f47cb3be4c02d15b96f76429b2592",
-    "mm_broker": "0x25bc8d832a44f85ec0ccbfb0b50fb2e368c7f697",
-    "chaos_broker": "0xb3a3c52335d55ebb249e252cf2f2d7886d98da3d",
+    "user_a_broker": "0x83d07000e8b9a6608480b26306f2128e9547780e",
+    "mm_broker": "0xa1a9c8d8d3f6936633bea3899d4443cc586f97f4",
+    "chaos_broker": "0x2a156c76912e20cabd31038cbe7a392d8e4bcbd3",
     "deployer_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     "mm_key": "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
     "chaos_key": "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"

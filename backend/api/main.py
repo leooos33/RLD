@@ -1008,11 +1008,11 @@ def get_rates(
         
         # Aggregation Logic
         # Database is already 1H resolution (hourly_stats)
-        buckets = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
+        buckets = {"5M": 300, "1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
         seconds = buckets.get(resolution, 3600)
         
         # Select Clause
-        if resolution == "1H":
+        if resolution in ("1H", "5M"):  # hourly_stats is already 1H — 5M returns raw rows
              select_clause = f"timestamp, {target_col} as apy, eth_price"
              group_clause = ""
         else:
@@ -1122,10 +1122,10 @@ def get_eth_prices(
                 conn.close()
                 raise
         
-        buckets = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
+        buckets = {"5M": 300, "1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
         seconds = buckets.get(resolution, 3600)
         
-        if resolution == "1H":
+        if resolution in ("1H", "5M"):  # hourly_stats is already 1H — 5M returns raw rows
             select_clause = "timestamp, eth_price as price"
             group_clause = ""
         else:

@@ -651,26 +651,76 @@ async def get_bond_detail(broker_address: str):
 
 @app.get("/api/chart/price")
 async def get_price_chart(
-    resolution: str = Query("1H", description="Resolution: 1H, 4H, 1D, 1W"),
+    resolution: str = Query("1H", description="Resolution: 5M, 1H, 4H, 1D, 1W"),
     start_time: Optional[int] = Query(None, description="Start timestamp (unix)"),
     end_time: Optional[int] = Query(None, description="End timestamp (unix)"),
     limit: int = Query(500, le=1000, description="Max data points"),
 ):
     """
     Get price data formatted for charting, aggregated by resolution bucket.
-    Returns OHLC-style data points bucketed by the requested resolution.
+    5M resolution is served from the pre-aggregated price_candles_5m table.
+    Other resolutions use live aggregation from block_state + pool_state.
     """
     try:
-        # Resolution → bucket size in seconds
-        BUCKET_MAP = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
-        bucket_sec = BUCKET_MAP.get(resolution.upper(), 3600)
+        res = resolution.upper()
+        BUCKET_MAP = {"5M": 300, "1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
+        bucket_sec = BUCKET_MAP.get(res, 3600)
 
         db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
-        # ── Bucketed market state (NF, debt, index price) ──────────
+        # ── Fast path: 5M → read from pre-aggregated price_candles_5m ──
+        if res == "5M":
+            q = "SELECT * FROM price_candles_5m WHERE 1=1"
+            params = []
+            if start_time:
+                q += " AND ts >= ?"
+                params.append(start_time)
+            if end_time:
+                q += " AND ts <= ?"
+                params.append(end_time)
+            q += " ORDER BY ts DESC LIMIT ?"
+            params.append(limit)
+
+            try:
+                c.execute(q, params)
+                candle_rows = c.fetchall()
+            except sqlite3.OperationalError:
+                # Table not yet created — fall through to live aggregation
+                candle_rows = []
+
+            conn.close()
+
+            chart_data = []
+            for row in reversed(candle_rows):
+                chart_data.append({
+                    'timestamp':             row['ts'],
+                    'block_number':          None,
+                    'index_price':           row['index_close'] or 0,
+                    'index_open':            row['index_open']  or 0,
+                    'index_high':            row['index_high']  or 0,
+                    'index_low':             row['index_low']   or 0,
+                    'mark_price':            row['mark_close']  or 0,
+                    'mark_open':             row['mark_open']   or 0,
+                    'mark_high':             row['mark_high']   or 0,
+                    'mark_low':              row['mark_low']    or 0,
+                    'normalization_factor':  row['nf_close']    or 0,
+                    'total_debt':            row['debt_close']  or 0,
+                    'samples':               row['sample_count'] or 0,
+                })
+
+            return {
+                'data':           chart_data,
+                'count':          len(chart_data),
+                'resolution':     res,
+                'bucket_seconds': bucket_sec,
+                'from_block':     None,
+                'to_block':       None,
+            }
+
+        # ── Standard path: live aggregation from block_state + pool_state ──
         ms_query = '''
             SELECT
                 (block_timestamp / ?) * ? as bucket_ts,
@@ -719,7 +769,6 @@ async def get_price_chart(
             })
 
         # ── Bucketed pool state (mark price, tick, liquidity) ──────
-        # pool_state lacks block_timestamp, so join with block_state
         ps_query = '''
             SELECT
                 (bs.block_timestamp / ?) * ? as bucket_ts,
@@ -746,7 +795,6 @@ async def get_price_chart(
         c.execute(ps_query, ps_params)
         ps_rows = c.fetchall()
 
-        # Fetch open/close values for each bucket using the first/last block numbers
         pool_map = {}
         for row in ps_rows:
             bucket_ts = row['bucket_ts']
@@ -766,9 +814,8 @@ async def get_price_chart(
 
         conn.close()
 
-        # ── Merge into chart data ──────────────────────────────────
         chart_data = []
-        for row in reversed(ms_rows):  # Reverse to chronological order
+        for row in reversed(ms_rows):
             ts = row['bucket_ts']
             point = {
                 'timestamp': ts,
@@ -793,7 +840,7 @@ async def get_price_chart(
         return {
             'data': chart_data,
             'count': len(chart_data),
-            'resolution': resolution.upper(),
+            'resolution': res,
             'bucket_seconds': bucket_sec,
             'from_block': chart_data[0]['block_number'] if chart_data else None,
             'to_block': chart_data[-1]['block_number'] if chart_data else None,

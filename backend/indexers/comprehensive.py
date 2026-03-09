@@ -26,7 +26,8 @@ from db.comprehensive import (
     get_last_indexed_block,
     update_last_indexed_block,
     get_block_summary,
-    get_latest_summary
+    get_latest_summary,
+    build_5m_candles,
 )
 
 # Load environment
@@ -1381,6 +1382,7 @@ class ComprehensiveIndexer:
         logger.info(f"🚀 Starting continuous indexer from block {from_block}")
         
         last_block = from_block - 1
+        last_candle_ts = 0  # timestamp watermark for incremental candle builds
         
         while self.running:
             try:
@@ -1391,6 +1393,18 @@ class ComprehensiveIndexer:
                     for block in range(last_block + 1, current_block + 1):
                         self.snapshot_block(block)
                     last_block = current_block
+
+                    # Rebuild 5-minute candles incrementally after each poll
+                    try:
+                        written = build_5m_candles(since_ts=last_candle_ts)
+                        if written:
+                            logger.debug(f"🕯️  Built {written} 5M candles")
+                        # Advance watermark to 2 candle-widths before now so the
+                        # most recent (possibly incomplete) bucket is always refreshed
+                        import time as _t
+                        last_candle_ts = max(0, int(_t.time()) - 600)
+                    except Exception as ce:
+                        logger.warning(f"5M candle build error: {ce}")
                 
                 await asyncio.sleep(poll_interval)
                 

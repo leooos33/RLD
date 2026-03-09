@@ -178,13 +178,32 @@ def init_comprehensive_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_bonds_owner ON bonds(owner)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_bonds_status ON bonds(status)")
     
+    # 5-Minute OHLC candles (pre-aggregated from block_state + pool_state)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS price_candles_5m (
+            ts INTEGER PRIMARY KEY,      -- 5-minute bucket start (Unix)
+            index_open  REAL,
+            index_high  REAL,
+            index_low   REAL,
+            index_close REAL,
+            mark_open   REAL,
+            mark_high   REAL,
+            mark_low    REAL,
+            mark_close  REAL,
+            nf_close    REAL,
+            debt_close  REAL,
+            sample_count INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_candles_5m_ts ON price_candles_5m(ts)")
+
     # Migrations: add columns to existing tables (safe to re-run)
     for col in ["token0_balance TEXT", "token1_balance TEXT"]:
         try:
             cursor.execute(f"ALTER TABLE pool_state ADD COLUMN {col}")
         except Exception:
             pass  # column already exists
-    
+
     conn.commit()
     conn.close()
     logger.info(f"✅ Comprehensive DB initialized at {COMPREHENSIVE_DB_PATH}")
@@ -849,3 +868,114 @@ def get_broker_position_history(broker_address: str, market_id: str = None,
             d['debt_value'] = int(d.get('debt_value') or 0)
             results.append(d)
         return results
+
+
+# ============================================
+# 5-Minute Candle Builder
+# ============================================
+
+FIVE_MIN = 300  # seconds per bucket
+
+
+def build_5m_candles(since_ts: int = 0) -> int:
+    """Aggregate raw block_state + pool_state into price_candles_5m.
+
+    Reads all blocks with block_timestamp >= since_ts, groups them into
+    5-minute buckets, computes proper OHLC (open=first block, close=last,
+    high=max, low=min) for both index_price and mark_price, then upserts
+    the results into price_candles_5m.
+
+    Returns the number of candles written.
+    """
+    with get_db() as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # Enforce a small lookback so the most recent (possibly incomplete)
+        # candle always gets refreshed with new blocks.
+        lookback_ts = max(0, since_ts - FIVE_MIN * 2)
+
+        # Fetch all relevant block_state rows joined with pool_state.
+        # pool_state has no timestamp so we join on block_number.
+        c.execute("""
+            SELECT
+                bs.block_number,
+                bs.block_timestamp           AS ts,
+                (bs.block_timestamp / ?)  * ? AS bucket_ts,
+                CAST(bs.index_price AS REAL)  AS index_price,
+                CAST(bs.normalization_factor AS REAL) AS nf,
+                CAST(bs.total_debt AS REAL)   AS debt,
+                ps.mark_price
+            FROM block_state bs
+            LEFT JOIN pool_state ps ON ps.block_number = bs.block_number
+            WHERE bs.block_timestamp >= ?
+            ORDER BY bs.block_timestamp ASC
+        """, (FIVE_MIN, FIVE_MIN, lookback_ts))
+        rows = c.fetchall()
+
+        if not rows:
+            return 0
+
+        # Group into buckets
+        buckets: dict = {}
+        for row in rows:
+            bts = row["bucket_ts"]
+            if bts not in buckets:
+                buckets[bts] = []
+            buckets[bts].append(row)
+
+        upserted = 0
+        for bts, brows in buckets.items():
+            # index_price values (WAD = 1e18)
+            idx_vals = [r["index_price"] / 1e18 for r in brows
+                        if r["index_price"] and r["index_price"] > 0]
+            # mark_price values (already float)
+            mk_vals = [r["mark_price"] for r in brows
+                       if r["mark_price"] is not None and r["mark_price"] > 0]
+
+            # NF and debt from the last block in the bucket
+            last = brows[-1]
+            nf_close  = (last["nf"]   / 1e18) if last["nf"]   else None
+            debt_close = (last["debt"] / 1e6)  if last["debt"] else None
+
+            idx_open  = idx_vals[0]  if idx_vals else None
+            idx_close = idx_vals[-1] if idx_vals else None
+            idx_high  = max(idx_vals) if idx_vals else None
+            idx_low   = min(idx_vals) if idx_vals else None
+
+            mk_open  = mk_vals[0]  if mk_vals else None
+            mk_close = mk_vals[-1] if mk_vals else None
+            mk_high  = max(mk_vals) if mk_vals else None
+            mk_low   = min(mk_vals) if mk_vals else None
+
+            c.execute("""
+                INSERT INTO price_candles_5m (
+                    ts,
+                    index_open, index_high, index_low, index_close,
+                    mark_open,  mark_high,  mark_low,  mark_close,
+                    nf_close, debt_close,
+                    sample_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ts) DO UPDATE SET
+                    index_open   = excluded.index_open,
+                    index_high   = excluded.index_high,
+                    index_low    = excluded.index_low,
+                    index_close  = excluded.index_close,
+                    mark_open    = excluded.mark_open,
+                    mark_high    = excluded.mark_high,
+                    mark_low     = excluded.mark_low,
+                    mark_close   = excluded.mark_close,
+                    nf_close     = excluded.nf_close,
+                    debt_close   = excluded.debt_close,
+                    sample_count = excluded.sample_count
+            """, (
+                bts,
+                idx_open, idx_high, idx_low, idx_close,
+                mk_open,  mk_high,  mk_low,  mk_close,
+                nf_close, debt_close,
+                len(brows),
+            ))
+            upserted += 1
+
+        conn.commit()
+        return upserted
