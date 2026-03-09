@@ -67,9 +67,28 @@ function serveDocsPlugin() {
   };
 }
 
+// Copy VitePress docs build into dist/docs/ after production build
+function copyDocsPlugin() {
+  return {
+    name: 'copy-docs',
+    closeBundle() {
+      // Only run during production build, not dev server
+      if (process.env.NODE_ENV !== 'production') return;
+      const src = path.resolve(__dirname, '../docs-site/.vitepress/dist');
+      const dest = path.resolve(__dirname, 'dist/docs');
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, dest, { recursive: true });
+        console.log('✅ Docs copied to dist/docs/');
+      } else {
+        console.warn('⚠️  docs-site dist not found — run `npm run build` in docs-site first');
+      }
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), clearBotLogsPlugin(), serveDocsPlugin()],
+  plugins: [react(), clearBotLogsPlugin(), serveDocsPlugin(), copyDocsPlugin()],
   envDir: '../',
   server: {
     host: '0.0.0.0',
