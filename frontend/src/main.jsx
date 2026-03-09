@@ -65,15 +65,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <SimulationProvider>
         <BrowserRouter>
           <Routes>
+            <Route
+              path="/"
+              element={
+                <Suspense fallback={<Loading />}>
+                  <Homepage />
+                </Suspense>
+              }
+            />
             <Route element={<Layout />}>
-              <Route
-                path="/"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <Homepage />
-                  </Suspense>
-                }
-              />
               <Route
                 path="/app"
                 element={

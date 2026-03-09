@@ -5,6 +5,9 @@ export default {
   theme: {
     extend: {
       // ── Design Tokens ──
+      fontFamily: {
+        'Space_Grotesk': ['Space Grotesk', 'sans-serif'],
+      },
       fontSize: {
         micro: ["9px", { lineHeight: "12px" }],
         tiny: ["10px", { lineHeight: "14px" }],

@@ -8,7 +8,7 @@ import { SIM_API } from "../../config/simulationConfig";
 import WalletModal from "../modals/WalletModal";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
 
-export default function Header({ isCapped, ratesLoaded }) {
+export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   const { account, connectWallet, disconnect } = useWallet();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -57,7 +57,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
   return (
     <>
-      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-md z-50 w-full">
+      <div className={`sticky top-0 z-50 w-full ${transparent ? 'bg-transparent' : 'bg-[#050505]/95 backdrop-blur-md'}`}>
         <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-5 pl-1">
             {/* LOGO */}

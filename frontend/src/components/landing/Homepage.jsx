@@ -1,320 +1,616 @@
-import React from "react";
-import { ArrowRight, TrendingUp, Shield } from "lucide-react";
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import useInView from '../../hooks/useInView'
+import Header from '../layout/Header'
 
-/**
- * Homepage — Pitch Deck (concise, aligned to RLD Whitepaper)
- * Route: /
- */
+// ── Shared grain overlay ──────────────────────────────────────────
+const GRAIN_SVG = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E")`
+const Grain = () => (
+  <div
+    className="pointer-events-none absolute inset-0 opacity-25"
+    style={{ backgroundImage: GRAIN_SVG, backgroundSize: '192px 192px' }}
+  />
+)
 
-export default function Homepage() {
-  const [heroVisible, setHeroVisible] = React.useState(false);
-  React.useEffect(() => {
-    const t = setTimeout(() => setHeroVisible(true), 100);
-    return () => clearTimeout(t);
-  }, []);
-  const heroStep = (i) => ({
-    opacity: heroVisible ? 1 : 0,
-    transform: heroVisible ? "translateY(0)" : "translateY(18px)",
-    transition: `opacity 0.6s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms, transform 0.6s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms`,
-  });
+/* ════════════════════════════════════════════════════
+   HERO
+════════════════════════════════════════════════════ */
+
+function LiveTicker() {
+  const rand = () => Math.floor(Math.random() * 0xffffff).toString(16).toUpperCase().padStart(6, '0')
+  const [vals, setVals] = useState(() => Array.from({ length: 3 }, rand))
+  useEffect(() => {
+    const id = setInterval(() => setVals(p => {
+      const n = [...p]; n[Math.floor(Math.random() * 3)] = rand(); return n
+    }), 200)
+    return () => clearInterval(id)
+  }, [])
   return (
-    <div className="min-h-screen overflow-y-auto lg:h-screen lg:overflow-hidden bg-[#050505] text-[#e0e0e0] font-mono">
-      {/* HERO */}
-      <section className="h-[calc(100vh-48px)] flex flex-col relative noise-overlay">
-        <div className="absolute inset-0 pattern-grid opacity-10 pointer-events-none" />
-        {/* Ambient glow orbs */}
-        <div className="absolute top-1/4 left-1/4 w-[250px] h-[250px] md:w-[350px] md:h-[350px] lg:w-[500px] lg:h-[500px] bg-cyan-500/[0.04] rounded-full blur-[80px] md:blur-[100px] lg:blur-[120px] pointer-events-none" />
-        <div className="absolute top-1/3 right-1/4 w-[200px] h-[200px] md:w-[300px] md:h-[300px] lg:w-[400px] lg:h-[400px] bg-pink-500/[0.03] rounded-full blur-[80px] md:blur-[100px] lg:blur-[120px] pointer-events-none" />
-        <div className="absolute bottom-1/4 right-1/3 w-[180px] h-[180px] md:w-[250px] md:h-[250px] lg:w-[350px] lg:h-[350px] bg-green-500/[0.03] rounded-full blur-[60px] md:blur-[80px] lg:blur-[100px] pointer-events-none" />
-        {/* Spotlight behind headline */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[200px] md:w-[600px] md:h-[300px] lg:w-[800px] lg:h-[400px] bg-gradient-radial from-white/[0.03] to-transparent rounded-full blur-[40px] md:blur-[50px] lg:blur-[60px] pointer-events-none" style={{ background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.04) 0%, transparent 70%)' }} />
-        <div className="relative z-10 max-w-[1800px] mx-auto w-full px-4 md:px-6 lg:px-12 flex flex-col items-center my-auto py-10 lg:py-0 lg:pb-[96px]" style={{ zIndex: 2 }}>
-          {/* ── Row 1: Centered Text Block ── */}
-          <div className="text-center max-w-3xl space-y-3 lg:space-y-4 mb-6 lg:mb-10">
-            <div className="flex items-center justify-center gap-3 text-gray-600 text-[10px] font-bold tracking-[0.4em] uppercase">
-              <div className="w-2 h-2 bg-white" />
-              RLD Protocol
-            </div>
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-7xl font-bold tracking-tighter leading-[0.95] uppercase bg-gradient-to-b from-white via-white to-gray-500 bg-clip-text text-transparent">
-              The Interest Rate
-              <br />
-              Derivatives Layer
-            </h1>
-            <p className="text-sm md:text-base text-gray-500 font-bold tracking-wide max-w-lg mx-auto">
-              Fix Yields. Trade Rates. Insure Solvency.
-            </p>
-            <div className="flex gap-4 pt-2 justify-center">
-              <a
-                href="/bonds"
-                className="border border-white/80 text-white px-6 py-3 text-[11px] uppercase tracking-[0.2em] font-bold hover:bg-white hover:text-black transition-all flex items-center gap-2"
-              >
-                Launch App <ArrowRight size={14} />
-              </a>
-              <a
-                href="https://docs.rld.finance"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="border border-white/20 text-gray-400 px-6 py-3 text-[11px] uppercase tracking-[0.2em] font-bold hover:border-white/50 hover:text-white transition-all flex items-center gap-2"
-              >
-                Docs <ArrowRight size={14} />
-              </a>
-            </div>
-          </div>
+    <div className="flex items-center gap-4 mb-5 select-none" aria-hidden="true">
+      {vals.map((v, i) => (
+        <span key={i} className="font-mono text-[10px] text-[#2a2a2a] tracking-widest">{v}</span>
+      ))}
+      <span className="font-mono text-[10px] text-[#222] tracking-widest">— LIVE</span>
+    </div>
+  )
+}
 
-          {/* ── Row 2: Product Cards ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:gap-4 w-full max-w-[1100px]">
-            {/* Card 1 — Synthetic Bond */}
-            <a
-              href="/bonds"
-              className="group border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm hover:border-cyan-500/40 hover:shadow-[0_0_30px_rgba(34,211,238,0.08)] transition-all duration-500 lg:scale-[1.02] lg:hover:scale-[1.04]"
-              style={heroStep(0)}
-            >
-              <div className="p-5">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-cyan-400 bg-cyan-400/10 px-2 py-1">
-                    Synthetic Bond
-                  </span>
-                  <Shield size={18} className="text-cyan-400" />
-                </div>
-                <h3 className="text-base font-mono text-white mb-1.5 tracking-tight">
-                  FIXED_YIELD
-                </h3>
-                <p className="text-[11px] text-gray-500 font-mono mb-4 leading-relaxed">
-                  Fix your yield for any custom duration to protect against
-                  market volatility.
-                </p>
-                <div className="border border-white/10 bg-[#0a0a0a]">
-                  <div className="px-4 py-2 border-b border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-cyan-400" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white">
-                        Bond
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-gray-700 tracking-[0.15em]">
-                      #0042
-                    </span>
-                  </div>
-                  <div className="px-4 py-2.5 flex justify-between items-end">
-                    <div>
-                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                        Fixed APY
-                      </div>
-                      <div className="text-lg font-mono font-light text-cyan-400 tracking-tight">
-                        8.40%
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                        Principal
-                      </div>
-                      <div className="text-lg font-mono text-white">
-                        25,000 USDC
-                      </div>
-                    </div>
-                  </div>
-                  <div className="px-4 py-1.5 border-t border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 bg-cyan-400" />
-                      <span className="text-[9px] text-cyan-500 uppercase tracking-widest">
-                        Active
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
-                      453 Days
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-4 text-cyan-400 text-[11px] font-bold uppercase tracking-[0.2em] group-hover:gap-3 transition-all">
-                  Explore <ArrowRight size={14} />
-                </div>
-              </div>
-            </a>
+function HeroSection() {
+  const [vis, setVis] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setVis(true), 80); return () => clearTimeout(t) }, [])
 
-            {/* Card 2 — Rate Trading */}
-            <a
-              href="/markets/perps"
-              className="group border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm hover:border-green-500/40 hover:shadow-[0_0_30px_rgba(34,197,94,0.08)] transition-all duration-500"
-              style={heroStep(1)}
-            >
-              <div className="p-5">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-green-400 bg-green-400/10 px-2 py-1">
-                    Rate Trading
-                  </span>
-                  <TrendingUp size={18} className="text-green-400" />
-                </div>
-                <h3 className="text-base font-mono text-white mb-1.5 tracking-tight">
-                  PERPETUAL_MARKET
-                </h3>
-                <p className="text-[11px] text-gray-500 font-mono mb-4 leading-relaxed">
-                  Trade interest rates as a volatility instrument. Capitalize on rates & crypto cointegration.
-                </p>
-                <div className="border border-white/10 bg-[#0a0a0a]">
-                  {/* Pair + Order types */}
-                  <div className="px-4 py-2 border-b border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-green-500" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white">
-                        Perp
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {["Market", "Limit", "TWAP"].map((t, i) => (
-                        <span key={t} className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-green-400">
-                            {t}
-                          </span>
-                          {i < 2 && <span className="text-green-500/30 text-[8px]">·</span>}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Cross-margin collateral types */}
-                  <div className="px-4 py-2.5 flex items-start justify-between">
-                    <div>
-                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                        Collateral
-                      </div>
-                      <div className="text-lg font-mono font-light text-white tracking-tight">
-                        Cross-Margin
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-0.5">
-                      <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Assets</span>
-                      <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Orders</span>
-                      <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">LP Positions</span>
-                    </div>
-                  </div>
-                  {/* Status bar */}
-                  <div className="px-4 py-1.5 border-t border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 bg-green-500" />
-                      <span className="text-[9px] text-green-400 uppercase tracking-widest">
-                        Live
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
-                      Uniswap V4
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-4 text-green-400 text-[11px] font-bold uppercase tracking-[0.2em] group-hover:gap-3 transition-all">
-                  Explore <ArrowRight size={14} />
-                </div>
-              </div>
-            </a>
+  return (
+    <section className="relative bg-[#050505] overflow-hidden min-h-screen flex flex-col">
+      <Grain />
 
-            {/* Card 3 — Solvency Insurance (Coming Soon) */}
-            <div
-              className="relative group border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm hover:border-pink-500/40 hover:shadow-[0_0_30px_rgba(236,72,153,0.08)] transition-all duration-500 cursor-not-allowed"
-              style={heroStep(2)}
-            >
-              {/* Tooltip */}
-              <div className="absolute -top-10 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-20">
-                <div className="px-3 py-1.5 bg-[#0a0a0a] border border-pink-500/30 text-[9px] font-mono font-bold uppercase tracking-[0.25em] text-pink-400 whitespace-nowrap">
-                  Coming Soon
-                </div>
-              </div>
-              <div className="p-5">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-pink-400 bg-pink-400/10 px-2 py-1">
-                    Solvency Insurance
-                  </span>
-                  <Shield size={18} className="text-pink-400" />
-                </div>
-                <h3 className="text-base font-mono text-white mb-1.5 tracking-tight">
-                  CREDIT_DEFAULT_SWAP (SOON)
-                </h3>
-                <p className="text-[11px] text-gray-500 font-mono mb-4 leading-relaxed">
-                  100% payout on pool bankruptcy. Prediction market with parametric,
-                  trustless, instant settlement.
-                </p>
-                <div className="border border-white/10 bg-[#0a0a0a]">
-                  <div className="px-4 py-2 border-b border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-pink-500" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-white">
-                        CDS
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-gray-700 tracking-[0.15em]">
-                      #0108
-                    </span>
-                  </div>
-                  <div className="px-4 py-2.5 flex justify-between items-end">
-                    <div>
-                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                        Pool
-                      </div>
-                      <div className="text-lg font-mono font-light text-pink-400 tracking-tight">
-                        AAVE V3 USDT
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
-                        Insurance
-                      </div>
-                      <div className="text-lg font-mono text-white">
-                        100,000 USDC
-                      </div>
-                    </div>
-                  </div>
-                  <div className="px-4 py-1.5 border-t border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 bg-pink-500" />
-                      <span className="text-[9px] text-pink-400 uppercase tracking-widest">
-                        Protected
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-gray-600 uppercase tracking-widest">
-                      Collateral: ETH
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-4 text-gray-600 text-[11px] font-bold uppercase tracking-[0.2em]">
-                  Coming Soon
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* Header lives inside the hero for the homepage */}
+      <div className="relative z-20">
+        <Header isCapped={false} ratesLoaded={true} transparent />
+      </div>
 
-          {/* ── Row 3: Powered By ── */}
-          <div className="mt-6 lg:mt-10 flex flex-col items-center gap-3 lg:gap-5" style={heroStep(3)}>
-            <span className="text-[10px] text-gray-600 uppercase tracking-[0.3em]">
-              Powered by
+      {/* Hero body — flex-1 so it fills the remaining space and centers content */}
+      <div className="relative z-10 flex-1 flex items-center justify-center py-20 px-8 md:px-14 lg:ml-[120px] mb-[50px] ">
+
+        <div className={`w-full max-w-[800px] transition-all duration-700 ${vis ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'}`}>
+
+          <LiveTicker />
+
+          {/* HEADLINE */}
+          <h1 className="mb-5 leading-[1.08] lg:tracking-[-0.025em]">
+            <span className="block text-white font-['Space_Grotesk'] font-light"
+              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
+              Interest Rate Derivatives
             </span>
-            <div className="flex items-center gap-0 flex-wrap justify-center">
-              {[
-                { name: "Ethereum", logo: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png" },
-                { name: "Uniswap", logo: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984/logo.png" },
-                { name: "AAVE", logo: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9/logo.png" },
-                { name: "Morpho", logo: "https://cdn.morpho.org/assets/logos/morpho.svg" },
-                { name: "Fluid", logo: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb/logo.png" },
-                { name: "Euler", logo: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xd9Fcd98c322942075A5C3860693e9f4f03AAE07b/logo.png" },
-              ].map((p, i, arr) => (
-                <React.Fragment key={p.name}>
-                  <div
-                    className="flex items-center gap-2 lg:gap-2.5 text-gray-500 hover:text-white transition-colors duration-300 group px-3 lg:px-5 py-1"
-                  >
-                    <img
-                      src={p.logo}
-                      alt={p.name}
-                      className="w-5 h-5 object-contain opacity-40 group-hover:opacity-90 transition-all duration-300 grayscale group-hover:grayscale-0"
-                    />
-                    <span className="text-[11px] font-bold uppercase tracking-[0.2em]">
-                      {p.name}
-                    </span>
-                  </div>
-                  {i < arr.length - 1 && (
-                    <div className="hidden sm:block w-px h-4 bg-white/10" />
-                  )}
-                </React.Fragment>
-              ))}
+            <span className="block text-[#666] font-['Space_Grotesk'] font-light"
+              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
+              for On-Chain Finance
+            </span>
+          </h1>
+
+          {/* Tagline */}
+          <p className="text-[14px] text-[#999] tracking-[0.05em] mb-8">
+            Fix yields.&nbsp; Trade rates.&nbsp; Insure solvency.
+          </p>
+
+          {/* Body blurbs */}
+          <div className="space-y-4 mb-10 max-w-[600px]">
+            <p className="text-[13px] leading-[1.9] text-[#888]">
+              <span className="text-white tracking-[0.12em] uppercase text-[11px] mr-2">Synthetic Bonds</span>
+              Lock in today&apos;s rates — fix your yield or borrowing cost for leveraged
+              basis trading. One pool, any maturity, no liquidity fragmentation and rolls.
+            </p>
+            <p className="text-[13px] leading-[1.9] text-[#888]">
+              <span className="text-white tracking-[0.12em] uppercase text-[11px] mr-2">CDS</span>
+              Insure underlying pool solvency with 100% payout on bankruptcy.
+              Parametric, trustless, and instant settlement.
+            </p>
+            <p className="text-[13px] leading-[1.9] text-[#888]">
+              <span className="text-white tracking-[0.12em] uppercase text-[11px] mr-2">Perps</span>
+              Trade interest rates as a volatility instrument. Capitalize on rates &amp; crypto cointegration.
+            </p>
+          </div>
+
+          {/* CTAs */}
+          <div className="flex flex-wrap items-center gap-10 font-bold">
+            <Link
+              to="/bonds"
+              id="cta-launch-app-hero"
+              className="flex items-center gap-2 px-12 py-[12px] border border-[#555]
+                         text-[11px] tracking-[0.22em] uppercase text-white font-mono
+                         hover:border-white hover:bg-white hover:text-black
+                         transition-all duration-200"
+            >
+              Launch App ↗
+            </Link>
+            <a
+              href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
+              id="cta-docs"
+              className="text-[11px] tracking-[0.22em] uppercase text-[#666] font-mono
+                         hover:text-[#ccc] transition-colors duration-200 border-b border-transparent
+                         hover:border-[#555] pb-[1px]"
+            >
+              Docs ↗
+            </a>
+          </div>
+        </div>
+      </div>
+
+      {/* Status strip */}
+      <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-8 md:px-14 py-3 border-t border-[#111]">
+        <span className="font-mono text-[11px] tracking-[0.2em] uppercase text-[#666]">Testnet Live</span>
+        <span className="font-mono text-[11px] tracking-[0.2em] uppercase text-[#666]">V.01 / Experimental Beta</span>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   USE CASES — Synthetic Bonds
+════════════════════════════════════════════════════ */
+
+function Metric({ label, value }) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-[#141414] py-3">
+      <span className="font-mono text-[10px] tracking-[0.18em] uppercase text-[#555]">{label}</span>
+      <span className="font-mono text-[12px] text-[#999]">{value}</span>
+    </div>
+  )
+}
+
+function UseCase({ title, subtitle, description, metrics, cta, ctaTo, delay = 0 }) {
+  const [ref, inView] = useInView()
+  return (
+    <div
+      ref={ref}
+      className="relative border border-[#141414] bg-[#111] flex flex-col transition-all duration-700"
+      style={{
+        transitionDelay: `${delay}ms`,
+        opacity: inView ? 1 : 0,
+        transform: inView ? 'translateY(0)' : 'translateY(20px)',
+      }}
+    >
+      {/* Corner marks */}
+      <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+      <span className="absolute top-0 right-0 w-2 h-2 border-t border-r border-[#222]" />
+      <span className="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-[#222]" />
+      <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+
+      <div className="px-8 pt-8 pb-6 flex-1">
+        <h3
+          className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.02em] mb-2"
+          style={{ fontSize: 'clamp(22px, 2.8vw, 34px)' }}
+        >
+          {title}
+        </h3>
+        <p className="font-mono text-[11px] tracking-[0.08em] text-[#666] mb-8">{subtitle}</p>
+        <p className="font-mono text-[12px] leading-[1.9] text-[#666] mb-10 max-w-[480px]">{description}</p>
+        <div className="mb-10">
+          {metrics.map((m) => <Metric key={m.label} {...m} />)}
+        </div>
+      </div>
+
+      <div className="px-8 pb-8">
+        <Link
+          to={ctaTo}
+          className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                     font-mono text-[10px] tracking-[0.22em] uppercase text-white
+                     hover:bg-white hover:text-black transition-all duration-200"
+        >
+          {cta}
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+function UseCasesSection() {
+  const [labelRef, labelInView] = useInView(0.05)
+  return (
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]">
+      <Grain />
+      <div className="relative z-10 max-w-[1100px] mx-auto w-full">
+
+        <div
+          ref={labelRef}
+          className="flex items-center gap-3 mb-14 transition-all duration-500"
+          style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
+        >
+          <span className="font-mono text-[#333] text-[11px]">|—</span>
+          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Synthetic Bonds</span>
+          <span className="flex-1 h-px bg-[#141414]" />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <UseCase
+            title="Fixed Yield"
+            subtitle="Lock in your rate for any maturity"
+            description={
+              'Deposit into an RLD pool and take the fixed-rate side of an interest rate swap. ' +
+              'Your yield is locked at entry — regardless of how floating rates move. '
+            }
+            metrics={[
+              { label: 'Underlying Yield', value: 'Lending protocols & T-bills' },
+              { label: 'Maturity', value: 'Any — from 1 hour to 1 year' },
+              { label: 'Deposit token', value: 'USDC / USDT / SOFR rates' },
+              { label: 'Settlement', value: 'Instant, on-chain' },
+              { label: 'Exit', value: 'Permissionless, no lockup' },
+            ]}
+            cta="Explore Fixed Yields ↗"
+            ctaTo="/bonds"
+            delay={0}
+          />
+          <UseCase
+            title="Fixed-Rate Leverage"
+            subtitle="Trade the spread. Hedge the rate."
+            description={
+              "Running a delta-neutral basis trade? RLD lets you fix your borrow cost, " +
+              "so you can receive bull market funding while paying a predictable rate."
+            }
+            metrics={[
+              { label: 'Mechanism', value: 'Long interest rates perps' },
+              { label: 'Maturity', value: 'Any — from 1 hour to 1 year' },
+              { label: 'Collateral', value: 'USDC, USDT, stETH' },
+              { label: 'Risk Removed', value: 'Rate spike → P&L compression' },
+              { label: 'Capital', value: 'Collateral-funded, no upfront cost' },
+            ]}
+            cta="Explore Basis Trading ↗"
+            ctaTo="/strategies/basis-trade"
+            delay={80}
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   SOLVENCY INSURANCE
+════════════════════════════════════════════════════ */
+
+function Stat({ value, label }) {
+  return (
+    <div className="border-l border-[#1e1e1e] pl-5">
+      <div
+        className="font-['Space_Grotesk'] font-light text-white leading-none mb-1"
+        style={{ fontSize: 'clamp(24px, 2.8vw, 36px)' }}
+      >
+        {value}
+      </div>
+      <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-[#444]">{label}</div>
+    </div>
+  )
+}
+
+function RiskCard({ index, title, description, inView, delay }) {
+  return (
+    <div
+      className="relative border border-[#141414] bg-[#0d0d0d] p-7 flex flex-col gap-5 transition-all duration-[600ms]"
+      style={{
+        transitionDelay: `${delay}ms`,
+        opacity: inView ? 1 : 0,
+        transform: inView ? 'translateY(0)' : 'translateY(18px)',
+      }}
+    >
+      <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#1e1e1e]" />
+      <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#1e1e1e]" />
+
+      <div className="flex items-start justify-between">
+        <span className="font-mono text-[9px] tracking-[0.3em] text-[#252525]">0{index}</span>
+        <span className="font-mono text-[8px] tracking-[0.22em] uppercase text-[#1e1e1e] border border-[#181818] px-2 py-[2px]">
+          Covered
+        </span>
+      </div>
+
+      <h3
+        className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.01em]"
+        style={{ fontSize: 'clamp(18px, 2vw, 24px)' }}
+      >
+        {title}
+      </h3>
+
+      <p className="font-mono text-[11px] leading-[1.85] text-[#666] flex-1">{description}</p>
+      <div className="h-px w-8 bg-[#222]" />
+    </div>
+  )
+}
+
+function SolvencyInsuranceSection() {
+  const [labelRef, labelInView] = useInView(0.05)
+  const [bodyRef, bodyInView] = useInView(0.05)
+  const [cardsRef, cardsInView] = useInView(0.05)
+
+  return (
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]">
+      <Grain />
+      <div className="relative z-10 max-w-[1100px] mx-auto w-full">
+
+        <div
+          ref={labelRef}
+          className="flex items-center gap-3 mb-14 transition-all duration-500"
+          style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
+        >
+          <span className="font-mono text-[#333] text-[11px]">|—</span>
+          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Solvency Insurance</span>
+          <span className="flex-1 h-px bg-[#141414]" />
+        </div>
+
+        <div
+          ref={bodyRef}
+          className="grid grid-cols-1 lg:grid-cols-2 gap-12 mb-16 transition-all duration-[600ms]"
+          style={{ opacity: bodyInView ? 1 : 0, transform: bodyInView ? 'translateY(0)' : 'translateY(16px)' }}
+        >
+          <div>
+            <h2
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-6"
+              style={{ fontSize: 'clamp(28px, 3.5vw, 46px)' }}
+            >
+              Insure Protocol<br />
+              <span className="text-[#666]">Solvency On-Chain</span>
+            </h2>
+            <p className="font-mono text-[12px] leading-[1.9] text-[#666] max-w-[460px] mb-8">
+              Protocol insolvency is DeFi&apos;s largest unpriced tail risk.
+              RLD Credit Default Swaps let you hedge it — parametric trigger,
+              trustless execution, and 100% notional payout.
+            </p>
+            <Link
+              to="/bonds"
+              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                         font-mono text-[10px] tracking-[0.22em] uppercase text-white
+                         hover:bg-white hover:text-black transition-all duration-200"
+            >
+              Explore CDS <span className="text-[#666]">↗</span>
+            </Link>
+          </div>
+
+          <div className="flex flex-col justify-center">
+            <div className="grid grid-cols-2 gap-y-8 gap-x-6">
+              <Stat value="100%" label="Payout on trigger" />
+              <Stat value="Instant" label="Settlement" />
+              <Stat value="Parametric" label="Trigger mechanism" />
+              <Stat value="Trustless" label="No manual claim" />
             </div>
           </div>
         </div>
-      </section>
+
+        <div ref={cardsRef} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <RiskCard index={1} inView={cardsInView} delay={0}
+            title="Depeg Event"
+            description="Stablecoin or LST depegs from its target, collapsing the pool's collateral value faster than liquidations can fire."
+          />
+          <RiskCard index={2} inView={cardsInView} delay={80}
+            title="Oracle Failure"
+            description="A manipulated or stale price feed triggers mass liquidations at incorrect prices, leaving the protocol insolvent. Parametric trigger activates on confirmed health breach."
+          />
+          <RiskCard index={3} inView={cardsInView} delay={160}
+            title="Security Exploit"
+            description="Funds drained via a reentrancy attack, logic bug, or upgrade vulnerability. If the exploit collapses the health factor below threshold, CDS settlement fires automatically."
+          />
+          <RiskCard index={4} inView={cardsInView} delay={240}
+            title="Bad Debt"
+            description="Underwater positions accumulate past the protocol's reserves — common in high-leverage or illiquid markets. RLD tracks the health factor in real time and settles instantly."
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   RATE PERPETUALS
+════════════════════════════════════════════════════ */
+
+function RateChart({ inView }) {
+  return (
+    <div
+      className="relative border border-[#141414] bg-[#0b0b0b] p-6 transition-all duration-700"
+      style={{ opacity: inView ? 1 : 0, transform: inView ? 'translateY(0)' : 'translateY(20px)' }}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <span className="font-mono text-[9px] tracking-[0.28em] uppercase text-[#2a2a2a]">Borrow Rate / Time</span>
+        <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#666]">Illustrative</span>
+      </div>
+      <svg viewBox="0 0 320 140" className="w-full" preserveAspectRatio="none">
+        {[0, 35, 70, 105, 140].map((y) => (
+          <line key={y} x1="0" y1={y} x2="320" y2={y} stroke="#161616" strokeWidth="1" />
+        ))}
+        <line x1="0" y1="115" x2="320" y2="115" stroke="#222" strokeWidth="1" strokeDasharray="4 4" />
+        <text x="6" y="111" fill="#444444" fontSize="7" fontFamily="monospace">FED FLOOR</text>
+        <polyline
+          points="0,110 40,108 70,105 90,95 100,60 110,30 120,15 135,22 150,45 170,80 190,90 220,100 250,108 280,110 320,110"
+          fill="none" stroke="#333" strokeWidth="1.5" strokeLinejoin="round"
+        />
+        <polyline
+          points="90,95 100,60 110,30 120,15 135,22 150,45"
+          fill="none" stroke="#888" strokeWidth="1.5" strokeLinejoin="round"
+        />
+        <circle cx="120" cy="15" r="2.5" fill="#aaa" />
+        <text x="124" y="13" fill="#666" fontSize="7" fontFamily="monospace">5–10×</text>
+        <circle cx="0" cy="110" r="2" fill="#333" />
+      </svg>
+      <div className="flex items-center gap-6 mt-4">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-px bg-[#888]" />
+          <span className="font-mono text-[9px] text-[#444]">Demand spike range</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-px bg-[#333]" />
+          <span className="font-mono text-[9px] text-[#333]">Baseline range</span>
+        </div>
+      </div>
     </div>
-  );
+  )
+}
+
+function Feature({ index, label, title, body, inView, delay }) {
+  return (
+    <div
+      className="border-t border-[#141414] pt-6 transition-all duration-[600ms]"
+      style={{
+        transitionDelay: `${delay}ms`,
+        opacity: inView ? 1 : 0,
+        transform: inView ? 'translateY(0)' : 'translateY(14px)',
+      }}
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <span className="font-mono text-[9px] tracking-[0.28em] text-[#999]">0{index}</span>
+        <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[#999] border border-[#1a1a1a] px-2 py-[2px]">
+          {label}
+        </span>
+      </div>
+      <h3
+        className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.015em] mb-3"
+        style={{ fontSize: 'clamp(18px, 2vw, 24px)' }}
+      >
+        {title}
+      </h3>
+      <p className="font-mono text-[11px] leading-[1.9] text-[#666]">{body}</p>
+    </div>
+  )
+}
+
+function RatePerpsSection() {
+  const [labelRef, labelInView] = useInView(0.05)
+  const [topRef, topInView] = useInView(0.05)
+  const [featRef, featInView] = useInView(0.05)
+
+  return (
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]">
+      <Grain />
+      <div className="relative z-10 max-w-[1100px] mx-auto w-full">
+
+        <div
+          ref={labelRef}
+          className="flex items-center gap-3 mb-14 transition-all duration-500"
+          style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
+        >
+          <span className="font-mono text-[#555] text-[11px]">|—</span>
+          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Rate Perpetuals</span>
+          <span className="flex-1 h-px bg-[#141414]" />
+        </div>
+
+        <div ref={topRef} className="grid grid-cols-1 lg:grid-cols-2 gap-12 mb-16">
+          <div
+            className="transition-all duration-[600ms]"
+            style={{ opacity: topInView ? 1 : 0, transform: topInView ? 'translateY(0)' : 'translateY(16px)' }}
+          >
+            <h2
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-6"
+              style={{ fontSize: 'clamp(28px, 3.5vw, 46px)' }}
+            >
+              Trade Interest Rates
+              <br />
+              <span className="text-[#555]">as a Volatility Asset</span>
+            </h2>
+            <p className="font-mono text-[12px] leading-[1.9] text-[#666] max-w-[440px] mb-8">
+              DeFi borrow rates are not symmetric. They have a hard floor at the
+              risk-free rate but can surge 5–10× during periods of high leverage
+              demand — creating a structurally asymmetric payoff profile that
+              perpetual traders can exploit.
+            </p>
+            <Link
+              to="/markets/perps"
+              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                         font-mono text-[10px] tracking-[0.22em] uppercase text-white
+                         hover:bg-white hover:text-black transition-all duration-200"
+            >
+              Trade Rates <span className="text-[#555]">↗</span>
+            </Link>
+          </div>
+
+          <RateChart inView={topInView} />
+        </div>
+
+        <div ref={featRef} className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <Feature index={1} inView={featInView} delay={0}
+            label="Asymmetry"
+            title="Floored by policy, spiked by demand"
+            body="The FED rate sets a structural floor — rates almost never go below it. But during increased demand, borrow rates can spike 5–10× overnight. This asymmetry creates attractive asymmetric payoff."
+          />
+          <Feature index={2} inView={featInView} delay={100}
+            label="Cross-Margin"
+            title="Unified margin across your entire account"
+            body="Margin with ERC20 assets, open limit & TWAP orders, and Uniswap V4 LP positions — all inside a single PrimeBroker. One account, full cross-margin efficiency."
+          />
+          <Feature index={3} inView={featInView} delay={200}
+            label="Volatility"
+            title="Rates co-move with market sentiment"
+            body="High correlation between interest rates and market sentiment. Traders can go long rates ahead of bull markets or short when they believe the market is overheated and rates will revert."
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   CTA FOOTER + GLOBAL FOOTER
+════════════════════════════════════════════════════ */
+
+function CoreArchitectureSection() {
+  const [ctaRef, ctaInView] = useInView(0.1)
+
+  return (
+    <section className="relative bg-[#050505]/95 border-t border-[#111] px-8 md:px-14">
+      <Grain />
+
+      <div
+        ref={ctaRef}
+        className="relative z-10 max-w-[1100px] mx-auto py-24 lg:py-32 flex flex-col items-center text-center transition-all duration-700"
+        style={{ opacity: ctaInView ? 1 : 0, transform: ctaInView ? 'translateY(0)' : 'translateY(20px)' }}
+      >
+        <h2
+          className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-4"
+          style={{ fontSize: 'clamp(28px, 4vw, 52px)' }}
+        >
+          Start Trading Rates
+        </h2>
+        <p className="font-mono text-[12px] text-[#666] tracking-[0.06em] mb-10 max-w-[400px]">
+          Testnet is live. Fix yields, trade rate movements, and insure
+          solvency — entirely on-chain.
+        </p>
+
+        <div className="flex items-center gap-6 mb-20 lg:pl-[42px]">
+          <Link
+            to="/bonds"
+            className="flex items-center gap-2 px-10 py-[13px] border border-white
+                       font-mono text-[11px] tracking-[0.22em] uppercase text-white font-bold
+                       hover:bg-white hover:text-black transition-all duration-200"
+          >
+            Launch App ↗
+          </Link>
+          <a
+            href="https://docs.rld.fi"
+            className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#666]
+                       hover:text-white transition-colors duration-200"
+          >
+            Docs ↗
+          </a>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="relative z-10 border-t border-[#1e1e1e]">
+        <div className="max-w-[1100px] mx-auto lg:px-0 pt-6 pb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-6">
+            <span className="font-mono text-[11px] tracking-[0.3em] uppercase text-white font-bold">RLD</span>
+            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[#888]">Ethereum Testnet</span>
+            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[#888]">V.01</span>
+          </div>
+          <div className="flex items-center gap-6">
+            {[
+              { label: 'Twitter', href: 'https://x.com/lumisfi_' },
+              { label: 'GitHub', href: 'https://github.com/leooos33/RLD' },
+              { label: 'Docs', href: 'https://docs.rld.fi/introduction/rate-level-derivatives.html' },
+            ].map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[10px] tracking-[0.15em] uppercase text-[#888] hover:text-white transition-colors duration-200"
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   HOMEPAGE — assembles all sections
+════════════════════════════════════════════════════ */
+
+export default function Homepage() {
+  return (
+    <div className="bg-[#080808]">
+      <HeroSection />
+      <UseCasesSection />
+      <SolvencyInsuranceSection />
+      <RatePerpsSection />
+      <CoreArchitectureSection />
+    </div>
+  )
 }
