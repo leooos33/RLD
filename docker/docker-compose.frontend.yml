@@ -19,6 +19,10 @@ services:
       # Serve the pre-built dist from the host (updated by CI via SCP)
       # No image rebuild needed on deploy — just recreate the container
       - /home/ubuntu/RLD/frontend/dist:/usr/share/nginx/html:ro
+      # Overlay fonts.css and fonts/ directly from git (always current after git reset)
+      # This bypasses any SCP/permission issues with dist/fonts.css
+      - /home/ubuntu/RLD/frontend/public/fonts.css:/usr/share/nginx/html/fonts.css:ro
+      - /home/ubuntu/RLD/frontend/public/fonts:/usr/share/nginx/html/fonts:ro
       - /home/ubuntu/RLD/frontend/nginx.conf:/etc/nginx/conf.d/rld.conf:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
