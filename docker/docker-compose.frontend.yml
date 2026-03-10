@@ -23,7 +23,7 @@ services:
       # This bypasses any SCP/permission issues with dist/fonts.css
       - /home/ubuntu/RLD/frontend/public/fonts.css:/usr/share/nginx/html/fonts.css:ro
       - /home/ubuntu/RLD/frontend/public/fonts:/usr/share/nginx/html/fonts:ro
-      - /home/ubuntu/RLD/frontend/nginx.conf:/etc/nginx/conf.d/rld.conf:ro
+      - /home/ubuntu/RLD/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

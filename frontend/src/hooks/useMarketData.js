@@ -31,10 +31,16 @@ export function useMarketData(resolution = "4H") {
   const [realtimeLatest, setRealtimeLatest] = useState(null);
 
   useEffect(() => {
-    // Determine WS Protocol
-    const protocol = API_URL.startsWith("https") ? "wss" : "ws";
-    const host = API_URL.replace(/^https?:\/\//, "");
-    const wsUrl = `${protocol}://${host}/ws/rates`;
+    // Build WS URL — works for both absolute (http://...) and relative (/api) base URLs
+    let wsUrl;
+    if (API_URL.startsWith("http")) {
+      const protocol = API_URL.startsWith("https") ? "wss" : "ws";
+      const host = API_URL.replace(/^https?:\/\//, "");
+      wsUrl = `${protocol}://${host}/ws/rates`;
+    } else {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      wsUrl = `${protocol}://${window.location.host}${API_URL}/ws/rates`;
+    }
 
     const ws = new WebSocket(wsUrl);
 
@@ -69,17 +75,17 @@ export function useMarketData(resolution = "4H") {
 
   const dailyChange = useMemo(() => {
     if (!rates || rates.length < 2) return 0;
-    
+
     // Find ~24h ago from historical data
     const latestTs = latest.timestamp || rates[rates.length - 1].timestamp;
     const targetTs = latestTs - 86400;
-    
+
     const closest = rates.reduce((prev, curr) =>
       Math.abs(curr.timestamp - targetTs) < Math.abs(prev.timestamp - targetTs)
         ? curr
-        : prev
+        : prev,
     );
-    
+
     // Compare Live Latest vs Historical
     return latest.apy - closest.apy;
   }, [rates, latest]);

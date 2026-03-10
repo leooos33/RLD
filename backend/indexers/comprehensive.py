@@ -1460,9 +1460,11 @@ class ComprehensiveIndexer:
                 current_block = self.w3.eth.block_number
                 
                 if current_block > last_block:
-                    # Index new blocks
+                    # Index new blocks — run in thread pool to release GIL
+                    # so uvicorn can serve HTTP requests concurrently
                     for block in range(last_block + 1, current_block + 1):
-                        self.snapshot_block(block)
+                        await asyncio.to_thread(self.snapshot_block, block)
+                        await asyncio.sleep(0)  # yield to event loop
                     last_block = current_block
 
                     # Rebuild 5-minute candles incrementally after each poll
