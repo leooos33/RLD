@@ -42,27 +42,6 @@ const WAUSDC_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
 ];
 
-/**
- * Send a transaction from an impersonated account via raw JSON-RPC.
- * This bypasses MetaMask entirely — the tx is sent directly to Anvil.
- */
-async function sendImpersonatedTx(rpcUrl, from, to, data, label = "") {
-  console.log(`[faucet] TX ${label}: from=${from.slice(0,8)}… to=${to.slice(0,8)}…`);
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_sendTransaction",
-      params: [{ from, to, data, gas: "0x7A1200" }], // 8M gas limit
-      id: Date.now(),
-    }),
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(`TX ${label} failed: ${json.error.message}`);
-  console.log(`[faucet] TX ${label} hash: ${json.result}`);
-  return json.result; // tx hash
-}
 
 /**
  * Call an Anvil admin RPC method (e.g. anvil_setBalance).
@@ -83,28 +62,6 @@ async function anvilRpc(rpcUrl, method, params = []) {
 /**
  * Wait for a transaction to be mined.
  */
-async function waitForTx(rpcUrl, txHash, timeout = 30000) {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_getTransactionReceipt",
-        params: [txHash],
-        id: Date.now(),
-      }),
-    });
-    const json = await res.json();
-    if (json.result && json.result.status) {
-      if (json.result.status === "0x1") return json.result;
-      throw new Error(`TX reverted: ${txHash}`);
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(`TX timeout: ${txHash}`);
-}
 
 export function useFaucet(account, waUsdcAddress) {
   const [loading, setLoading] = useState(false);
@@ -145,13 +102,6 @@ export function useFaucet(account, waUsdcAddress) {
       setLoading(true);
       setError(null);
 
-      // Encode calldata helpers
-      const iface = {
-        erc20: new ethers.Interface(ERC20_ABI),
-        pool: new ethers.Interface(AAVE_POOL_ABI),
-        waUsdc: new ethers.Interface(WAUSDC_ABI),
-      };
-
       try {
         const user = userAddress.toLowerCase();
         console.log(`[faucet] Starting for ${user}, waUSDC=${waUsdcAddress}`);
@@ -164,88 +114,26 @@ export function useFaucet(account, waUsdcAddress) {
         ]);
         console.log("[faucet] ✓ ETH balance set");
 
-        // ── Step 2: Impersonate whale → transfer USDC to user ────────
-        setStep("Transferring USDC...");
-        await anvilRpc(RPC_URL, "anvil_impersonateAccount", [USDC_WHALE]);
-
-        // Give whale some ETH for gas too
-        await anvilRpc(RPC_URL, "anvil_setBalance", [
-          USDC_WHALE,
-          "0x56BC75E2D63100000",
+        // ── Step 2: Directly manipulate waUSDC storage slot ────────
+        setStep("Funding waUSDC...");
+        
+        // In solmate ERC20 (which WrappedAToken uses), balanceOf is mapping at slot 3.
+        // Storage key for mapping(address => uint256) is keccak256(abi.encode(address, slot))
+        const coder = new ethers.AbiCoder();
+        const encoded = coder.encode(["address", "uint256"], [user, 3]);
+        const slot = ethers.keccak256(encoded);
+        
+        // Target balance: exactly the FUND_AMOUNT we wanted originally (already in properly scaled BigInt)
+        // Convert the balance to a 32-byte hex string for anvil_setStorageAt
+        const hexBalance = "0x" + FUND_AMOUNT.toString(16).padStart(64, '0');
+        
+        await anvilRpc(RPC_URL, "anvil_setStorageAt", [
+          waUsdcAddress,
+          slot,
+          hexBalance
         ]);
-
-        const transferData = iface.erc20.encodeFunctionData("transfer", [
-          user,
-          FUND_AMOUNT,
-        ]);
-        const txTransfer = await sendImpersonatedTx(
-          RPC_URL, USDC_WHALE, USDC, transferData, "USDC transfer",
-        );
-        await waitForTx(RPC_URL, txTransfer);
-        await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [USDC_WHALE]);
-        console.log("[faucet] ✓ USDC transferred");
-
-        // ── Step 3: Impersonate user → deposit USDC to Aave ──────────
-        setStep("Supplying to Aave...");
-        await anvilRpc(RPC_URL, "anvil_impersonateAccount", [user]);
-
-        // Approve USDC → Aave Pool
-        const approveAaveData = iface.erc20.encodeFunctionData("approve", [
-          AAVE_POOL,
-          AAVE_AMOUNT,
-        ]);
-        const txApproveAave = await sendImpersonatedTx(
-          RPC_URL, user, USDC, approveAaveData, "USDC→Aave approve",
-        );
-        await waitForTx(RPC_URL, txApproveAave);
-
-        // Supply USDC to Aave → get aUSDC
-        const supplyData = iface.pool.encodeFunctionData("supply", [
-          USDC,
-          AAVE_AMOUNT,
-          user,
-          0,
-        ]);
-        const txSupply = await sendImpersonatedTx(
-          RPC_URL, user, AAVE_POOL, supplyData, "Aave supply",
-        );
-        await waitForTx(RPC_URL, txSupply);
-        console.log("[faucet] ✓ Aave supply done");
-
-        // ── Step 4: Wrap aUSDC → waUSDC ──────────────────────────────
-        setStep("Wrapping to waUSDC...");
-
-        // Read aUSDC balance
-        const aUsdcProvider = new ethers.JsonRpcProvider(RPC_URL);
-        const aUsdcContract = new ethers.Contract(
-          AUSDC,
-          ERC20_ABI,
-          aUsdcProvider,
-        );
-        const aUsdcBal = await aUsdcContract.balanceOf(user);
-        console.log(`[faucet] aUSDC balance: ${aUsdcBal.toString()}`);
-
-        if (aUsdcBal > 0n) {
-          // Approve aUSDC → waUSDC wrapper
-          const approveWrapData = iface.erc20.encodeFunctionData("approve", [
-            waUsdcAddress,
-            aUsdcBal,
-          ]);
-          const txApproveWrap = await sendImpersonatedTx(
-            RPC_URL, user, AUSDC, approveWrapData, "aUSDC→waUSDC approve",
-          );
-          await waitForTx(RPC_URL, txApproveWrap);
-
-          // Wrap
-          const wrapData = iface.waUsdc.encodeFunctionData("wrap", [aUsdcBal]);
-          const txWrap = await sendImpersonatedTx(
-            RPC_URL, user, waUsdcAddress, wrapData, "wrap aUSDC",
-          );
-          await waitForTx(RPC_URL, txWrap);
-          console.log("[faucet] ✓ Wrapped to waUSDC");
-        }
-
-        await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [user]);
+        
+        console.log("[faucet] ✓ waUSDC balance set directly in storage");
 
         // ── Read final balances ──────────────────────────────────────
         setStep("Done!");
