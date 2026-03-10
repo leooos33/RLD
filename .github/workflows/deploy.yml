@@ -85,6 +85,12 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
+            # Force fonts.css and font files from git into dist/ (SCP unreliable for root files)
+            mkdir -p /home/ubuntu/RLD/frontend/dist/fonts
+            cp /home/ubuntu/RLD/frontend/public/fonts.css /home/ubuntu/RLD/frontend/dist/fonts.css
+            cp /home/ubuntu/RLD/frontend/public/fonts/*.woff2 /home/ubuntu/RLD/frontend/dist/fonts/
+            echo "✅ fonts.css: $(wc -c < /home/ubuntu/RLD/frontend/dist/fonts.css) bytes, has JBM: $(grep -c 'JetBrains Mono' /home/ubuntu/RLD/frontend/dist/fonts.css || echo 0)"
+
             # Force-recreate the frontend container with the new dist/
             # docker-compose.frontend.yml now uses volume mounts — no image rebuild
             echo "🔄 Restarting frontend container..."
