@@ -42,6 +42,92 @@ if "DB_PATH" not in os.environ:
 # Load config from deployment.json (written by deployer in compose stack)
 config_file = os.environ.get("CONFIG_FILE", "/config/deployment.json")
 
+# ── Config mapping: deployment.json keys → env vars ────────────────
+CONFIG_MAP = {
+    "rld_core": "RLD_CORE",
+    "twamm_hook": "TWAMM_HOOK",
+    "market_id": "MARKET_ID",
+    "pool_manager": "POOL_MANAGER",
+    "wausdc": "WAUSDC",
+    "position_token": "POSITION_TOKEN",
+    "mock_oracle": "MOCK_ORACLE",
+    "swap_router": "SWAP_ROUTER",
+    "broker_factory": "BROKER_FACTORY",
+    "broker_router": "BROKER_ROUTER",
+    "broker_executor": "BROKER_EXECUTOR",
+    "bond_factory": "BOND_FACTORY",
+    "basis_trade_factory": "BASIS_TRADE_FACTORY",
+    "v4_quoter": "V4_QUOTER",
+    "v4_position_manager": "V4_POSITION_MANAGER",
+    "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",
+    "v4_state_view": "V4_STATE_VIEW",
+    "universal_router": "UNIVERSAL_ROUTER",
+    "permit2": "PERMIT2",
+    "mm_broker": "MM_BROKER",
+    "chaos_broker": "CHAOS_BROKER",
+}
+
+
+def load_deployment_config(path: str, update_env: bool = True) -> dict:
+    """Load deployment.json and optionally update env vars.
+    Returns the parsed config dict."""
+    import json
+    with open(path) as f:
+        deploy_config = json.load(f)
+    if update_env:
+        for json_key, env_key in CONFIG_MAP.items():
+            if json_key in deploy_config:
+                os.environ[env_key] = str(deploy_config[json_key])
+        # Set BROKERS from known broker addresses
+        broker_keys = ["user_a_broker", "mm_broker", "chaos_broker"]
+        brokers = [str(deploy_config[k]) for k in broker_keys if k in deploy_config and deploy_config[k]]
+        if brokers and "BROKERS" not in os.environ:
+            os.environ["BROKERS"] = ",".join(brokers)
+    return deploy_config
+
+
+def reload_config_into_app(app, path: str):
+    """Re-read deployment.json and hot-update app.state.market_config.
+    Called by the file-watcher thread and admin endpoint."""
+    deploy_config = load_deployment_config(path, update_env=True)
+    market_config = getattr(app.state, "market_config", None) or {}
+    # Overlay infrastructure keys from fresh deployment
+    infra_keys = (
+        "broker_router", "broker_executor", "bond_factory", "basis_trade_factory",
+        "v4_quoter", "broker_factory", "swap_router",
+        "v4_position_manager", "v4_position_descriptor", "v4_state_view",
+        "universal_router", "permit2",
+    )
+    for key in infra_keys:
+        env_key = key.upper()
+        if env_key in os.environ:
+            market_config[key] = os.environ[env_key]
+    app.state.market_config = market_config
+    logger.info(f"  🔄 Config reloaded from {path} — bond_factory={market_config.get('bond_factory', '?')}")
+    return market_config
+
+
+def config_file_watcher(app, path: str, check_interval: int = 10):
+    """Background thread that watches deployment.json for changes
+    and hot-reloads into app.state.market_config."""
+    last_mtime = 0
+    try:
+        last_mtime = os.path.getmtime(path)
+    except OSError:
+        pass
+
+    while True:
+        try:
+            time.sleep(check_interval)
+            current_mtime = os.path.getmtime(path)
+            if current_mtime != last_mtime:
+                logger.info(f"📁 deployment.json changed (mtime {last_mtime} → {current_mtime}), reloading...")
+                reload_config_into_app(app, path)
+                last_mtime = current_mtime
+        except Exception as e:
+            logger.warning(f"Config watcher error: {e}")
+
+
 # Wait for config file to appear (deployer may still be running)
 MAX_WAIT = 300  # 5 minutes
 waited = 0
@@ -52,42 +138,8 @@ while not os.path.exists(config_file) and waited < MAX_WAIT:
     waited += 5
 
 if os.path.exists(config_file):
-    import json
     logger.info(f"Loading config from {config_file}")
-    with open(config_file) as f:
-        deploy_config = json.load(f)
-    # Map JSON keys to env vars (only set if not already in env)
-    CONFIG_MAP = {
-        "rld_core": "RLD_CORE",
-        "twamm_hook": "TWAMM_HOOK",
-        "market_id": "MARKET_ID",
-        "pool_manager": "POOL_MANAGER",
-        "wausdc": "WAUSDC",
-        "position_token": "POSITION_TOKEN",
-        "mock_oracle": "MOCK_ORACLE",
-        "swap_router": "SWAP_ROUTER",
-        "broker_factory": "BROKER_FACTORY",
-        "broker_router": "BROKER_ROUTER",
-        "broker_executor": "BROKER_EXECUTOR",
-        "bond_factory": "BOND_FACTORY",
-        "basis_trade_factory": "BASIS_TRADE_FACTORY",
-        "v4_quoter": "V4_QUOTER",
-        "v4_position_manager": "V4_POSITION_MANAGER",
-        "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",
-        "v4_state_view": "V4_STATE_VIEW",
-        "universal_router": "UNIVERSAL_ROUTER",
-        "permit2": "PERMIT2",
-        "mm_broker": "MM_BROKER",
-        "chaos_broker": "CHAOS_BROKER",
-    }
-    for json_key, env_key in CONFIG_MAP.items():
-        if json_key in deploy_config:
-            os.environ[env_key] = str(deploy_config[json_key])
-    # Set BROKERS from known broker addresses
-    broker_keys = ["user_a_broker", "mm_broker", "chaos_broker"]
-    brokers = [str(deploy_config[k]) for k in broker_keys if k in deploy_config and deploy_config[k]]
-    if brokers and "BROKERS" not in os.environ:
-        os.environ["BROKERS"] = ",".join(brokers)
+    load_deployment_config(config_file)
     logger.info(f"  Loaded {len(CONFIG_MAP)} config values from deployment.json")
 
 # Now import our modules
@@ -226,6 +278,18 @@ def main():
         if env_key in os.environ and key not in config:
             config[key] = os.environ[env_key]
     app.state.market_config = config
+    # Store config_file path on app for admin reload endpoint
+    app.state.config_file = config_file
+
+    # Start deployment.json file watcher (auto-reloads on change)
+    watcher_thread = threading.Thread(
+        target=config_file_watcher,
+        args=(app, config_file),
+        daemon=True,
+        name="config-watcher"
+    )
+    watcher_thread.start()
+    logger.info(f"  📁 Config file watcher started (monitoring {config_file})")
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 

@@ -1289,6 +1289,32 @@ async def get_market_info(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/admin/reload-config")
+async def admin_reload_config(request: Request):
+    """Hot-reload deployment.json into the running indexer.
+    Updates market_config and env vars without restart."""
+    try:
+        config_file = getattr(request.app.state, "config_file", None)
+        if not config_file or not os.path.exists(config_file):
+            raise HTTPException(status_code=404, detail="Config file not found")
+
+        # Import reload helper from entrypoint
+        import importlib
+        entrypoint = importlib.import_module("entrypoint" if "entrypoint" in sys.modules else "entrypoint")
+        new_config = entrypoint.reload_config_into_app(request.app, config_file)
+
+        return {
+            "status": "ok",
+            "message": f"Config reloaded from {config_file}",
+            "bond_factory": new_config.get("bond_factory", ""),
+            "broker_factory": new_config.get("broker_factory", ""),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

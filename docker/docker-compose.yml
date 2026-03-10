@@ -23,6 +23,7 @@ services:
       dockerfile: docker/deployer/Dockerfile
     volumes:
       - ./deployment.json:/config/deployment.json
+      - ../contracts/src:/workspace/contracts/src
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - ETH_RPC_URL=${ETH_RPC_URL}
