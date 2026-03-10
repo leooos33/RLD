@@ -3,8 +3,15 @@ import { X, Copy, LogOut, Power, Check, Droplets, Loader2, ArrowRightLeft } from
 import { useWallet } from '../../context/WalletContext';
 import { formatNum } from '../../utils/helpers';
 
-export default function WalletModal({ isOpen, onClose, onFaucet, faucetLoading }) {
-  const { account, disconnect, chainId, switchNetwork, usdcBalance, balance } = useWallet();
+export default function WalletModal({ 
+  isOpen, 
+  onClose, 
+  onFaucet, 
+  faucetLoading,
+  usdcBalance,
+  waUsdcBalance
+}) {
+  const { account, disconnect, chainId, switchNetwork, balance } = useWallet();
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -62,16 +69,22 @@ export default function WalletModal({ isOpen, onClose, onFaucet, faucetLoading }
           </div>
 
           {/* Balances — compact row */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="px-3.5 py-3 border border-white/10 bg-white/[0.02]">
-              <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">USDC</div>
-              <div className="text-lg text-white font-mono font-light tracking-tight">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="px-2.5 py-3 border border-white/10 bg-white/[0.02]">
+              <div className="text-[9px] text-gray-600 uppercase tracking-widest mb-1">USDC</div>
+              <div className="text-sm text-white font-mono font-light tracking-tight truncate">
                 {formatNum(parseFloat(usdcBalance))}
               </div>
             </div>
-            <div className="px-3.5 py-3 border border-white/10 bg-white/[0.02]">
-              <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">ETH</div>
-              <div className="text-lg text-white font-mono font-light tracking-tight">
+            <div className="px-2.5 py-3 border border-white/10 bg-white/[0.02]">
+              <div className="text-[9px] text-cyan-700 uppercase tracking-widest mb-1">waUSDC</div>
+              <div className="text-sm text-cyan-400 font-mono font-light tracking-tight truncate">
+                {formatNum(parseFloat(waUsdcBalance))}
+              </div>
+            </div>
+            <div className="px-2.5 py-3 border border-white/10 bg-white/[0.02]">
+              <div className="text-[9px] text-gray-600 uppercase tracking-widest mb-1">ETH</div>
+              <div className="text-sm text-white font-mono font-light tracking-tight truncate">
                 {formatNum(parseFloat(balance), 4)}
               </div>
             </div>

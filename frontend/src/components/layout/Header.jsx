@@ -17,7 +17,12 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   // Faucet integration
   const { marketInfo } = useSim();
   const waUsdcAddr = marketInfo?.collateral?.address;
-  const { requestFaucet, loading: faucetLoading } = useFaucet(
+  const { 
+    requestFaucet, 
+    loading: faucetLoading,
+    usdcBalance,
+    waUsdcBalance
+  } = useFaucet(
     account,
     waUsdcAddr,
   );
@@ -320,6 +325,8 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         account={account}
+        usdcBalance={usdcBalance}
+        waUsdcBalance={waUsdcBalance}
         onFaucet={requestFaucet}
         faucetLoading={faucetLoading}
         disconnect={() => {

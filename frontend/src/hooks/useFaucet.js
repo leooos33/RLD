@@ -68,22 +68,35 @@ export function useFaucet(account, waUsdcAddress) {
   const [error, setError] = useState(null);
   const [step, setStep] = useState(""); // Current step description
   const [waUsdcBalance, setWaUsdcBalance] = useState(null);
+  const [usdcBalance, setUsdcBalance] = useState(null);
 
-  // ── Fetch waUSDC balance for any address ───────────────────────
+  // ── Fetch balances for any address ───────────────────────
   const fetchBalance = useCallback(
     async (addr) => {
       if (!addr || !waUsdcAddress) return;
       try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const contract = new ethers.Contract(
+        
+        // Fetch waUSDC
+        const waUsdcContract = new ethers.Contract(
           waUsdcAddress,
           WAUSDC_ABI,
           provider,
         );
-        const bal = await contract.balanceOf(addr);
-        setWaUsdcBalance(ethers.formatUnits(bal, 6));
+        const waBal = await waUsdcContract.balanceOf(addr);
+        setWaUsdcBalance(ethers.formatUnits(waBal, 6));
+
+        // Fetch USDC
+        const usdcContract = new ethers.Contract(
+          USDC,
+          ERC20_ABI,
+          provider,
+        );
+        const uBal = await usdcContract.balanceOf(addr);
+        setUsdcBalance(ethers.formatUnits(uBal, 6));
+
       } catch (e) {
-        console.warn("Failed to fetch waUSDC balance:", e);
+        console.warn("Failed to fetch balances:", e);
       }
     },
     [waUsdcAddress],
@@ -114,26 +127,33 @@ export function useFaucet(account, waUsdcAddress) {
         ]);
         console.log("[faucet] ✓ ETH balance set");
 
-        // ── Step 2: Directly manipulate waUSDC storage slot ────────
-        setStep("Funding waUSDC...");
+        // ── Step 2: Directly manipulate USDC & waUSDC storage slots ────────
+        setStep("Funding wallets...");
         
-        // In solmate ERC20 (which WrappedAToken uses), balanceOf is mapping at slot 3.
-        // Storage key for mapping(address => uint256) is keccak256(abi.encode(address, slot))
         const coder = new ethers.AbiCoder();
-        const encoded = coder.encode(["address", "uint256"], [user, 3]);
-        const slot = ethers.keccak256(encoded);
         
-        // Target balance: exactly the FUND_AMOUNT we wanted originally (already in properly scaled BigInt)
-        // Convert the balance to a 32-byte hex string for anvil_setStorageAt
-        const hexBalance = "0x" + FUND_AMOUNT.toString(16).padStart(64, '0');
-        
+        // The user asked for a 50:50 split.
+        // We will fund 50,000 USDC and 50,000 waUSDC (each token has 6 decimals)
+        const amountPerToken = BigInt("50000000000"); // 50,000 * 10^6
+        const hexBalance = "0x" + amountPerToken.toString(16).padStart(64, '0');
+
+        // FUND USDC (Mainnet proxy contract uses slot 9 for balances)
+        const usdcSlot = ethers.keccak256(coder.encode(["address", "uint256"], [user, 9]));
         await anvilRpc(RPC_URL, "anvil_setStorageAt", [
-          waUsdcAddress,
-          slot,
+          USDC,
+          usdcSlot,
           hexBalance
         ]);
         
-        console.log("[faucet] ✓ waUSDC balance set directly in storage");
+        // FUND waUSDC (WrappedAToken uses solmate standard slot 3 for balances)
+        const waUsdcSlot = ethers.keccak256(coder.encode(["address", "uint256"], [user, 3]));
+        await anvilRpc(RPC_URL, "anvil_setStorageAt", [
+          waUsdcAddress,
+          waUsdcSlot,
+          hexBalance
+        ]);
+        
+        console.log("[faucet] ✓ USDC and waUSDC balances set directly in storage");
 
         // ── Read final balances ──────────────────────────────────────
         setStep("Done!");
@@ -165,6 +185,7 @@ export function useFaucet(account, waUsdcAddress) {
     error,
     step,
     waUsdcBalance,
+    usdcBalance,
     refreshBalance: () => fetchBalance(account),
   };
 }
