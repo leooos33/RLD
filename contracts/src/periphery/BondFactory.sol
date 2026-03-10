@@ -225,9 +225,13 @@ contract BondFactory is ReentrancyGuard {
 
         // ── 4. Submit TWAMM buy-back order ──────────────────────────────
         PrimeBroker pb = PrimeBroker(payable(broker));
+        // Determine direction: selling COLLATERAL (waUSDC) → buying position token (wRLP)
+        // zeroForOne = true when COLLATERAL is currency0 (lower address)
+        bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
+
         IJTM.SubmitOrderParams memory params = IJTM.SubmitOrderParams({
             key: poolKey,
-            zeroForOne: false, // sell currency1 (waUSDC) → buy currency0 (wRLP)
+            zeroForOne: sellCollateral,
             duration: duration,
             amountIn: hedgeAmount
         });
