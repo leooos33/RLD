@@ -1289,6 +1289,52 @@ async def get_market_info(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════
+# sUSDe Yield Proxy (cached, avoids CSP issues)
+# ═══════════════════════════════════════════════════════════
+
+_susde_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
+_SUSDE_CACHE_TTL = 60  # seconds
+
+ETHENA_YIELD_URL = "https://ethena.fi/api/yields/protocol-and-staking-yield"
+
+
+@app.get("/api/yields/susde")
+async def get_susde_yield():
+    """Cached proxy for Ethena sUSDe staking yield.
+    Fetches from Ethena API server-side and caches for 60s."""
+    now = _time.time()
+
+    with _susde_cache["lock"]:
+        if _susde_cache["data"] is not None and (now - _susde_cache["ts"]) < _SUSDE_CACHE_TTL:
+            return {**_susde_cache["data"], "cached": True, "cacheAge": round(now - _susde_cache["ts"], 1)}
+
+    try:
+        import urllib.request as urlreq
+        req = urlreq.Request(ETHENA_YIELD_URL, headers={"User-Agent": "RLD-Indexer/1.0"})
+        with urlreq.urlopen(req, timeout=10) as resp:
+            raw = json.loads(resp.read())
+
+        result = {
+            "stakingYield": raw.get("stakingYield", {}).get("value"),
+            "protocolYield": raw.get("protocolYield", {}).get("value"),
+            "avg30d": raw.get("avg30dSusdeYield", {}).get("value"),
+            "avg90d": raw.get("avg90dSusdeYield", {}).get("value"),
+            "lastUpdated": raw.get("stakingYield", {}).get("lastUpdated"),
+        }
+
+        with _susde_cache["lock"]:
+            _susde_cache["data"] = result
+            _susde_cache["ts"] = now
+
+        return {**result, "cached": False, "cacheAge": 0}
+    except Exception as e:
+        # Return stale cache if available
+        with _susde_cache["lock"]:
+            if _susde_cache["data"] is not None:
+                return {**_susde_cache["data"], "cached": True, "stale": True, "cacheAge": round(now - _susde_cache["ts"], 1)}
+        raise HTTPException(status_code=502, detail=f"Ethena API unavailable: {e}")
+
 @app.post("/api/admin/reload-config")
 async def admin_reload_config(request: Request):
     """Hot-reload deployment.json into the running indexer.
