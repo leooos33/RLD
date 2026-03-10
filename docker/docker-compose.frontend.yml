@@ -12,14 +12,14 @@
 
 services:
   frontend:
-    build:
-      context: ..
-      dockerfile: frontend/Dockerfile
-      args:
-        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-https://rld.fi/api}
-        - VITE_MAINNET_RPC_URL=${VITE_MAINNET_RPC_URL:-https://eth.llamarpc.com}
+    image: nginx:alpine
     ports:
       - "${FRONTEND_PORT:-3000}:80"
+    volumes:
+      # Serve the pre-built dist from the host (updated by CI via SCP)
+      # No image rebuild needed on deploy — just recreate the container
+      - /home/ubuntu/RLD/frontend/dist:/usr/share/nginx/html:ro
+      - /home/ubuntu/RLD/frontend/nginx.conf:/etc/nginx/conf.d/rld.conf:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

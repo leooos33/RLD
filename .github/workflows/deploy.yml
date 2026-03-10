@@ -80,14 +80,16 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /home/ubuntu/RLD
-            git pull --ff-only
 
-            # Always rebuild + restart the frontend container with the new dist
-            echo "🔄 Rebuilding frontend container..."
-            docker compose -f docker/docker-compose.frontend.yml build frontend \
-              --build-arg VITE_API_BASE_URL=https://rld.fi/api
+            # Force-recreate the frontend container so it picks up the new dist/
+            # (Nginx now serves via volume mount — no image rebuild needed)
+            echo "🔄 Restarting frontend container..."
             docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
-            echo "✅ Frontend restarted"
+            echo "✅ Frontend live"
+
+            # Sync source for backend deploys
+            git fetch origin main
+            git reset --hard origin/main
 
             # Rebuild backend containers if backend changed
             if git diff HEAD~1 --name-only | grep -q "^backend/"; then
