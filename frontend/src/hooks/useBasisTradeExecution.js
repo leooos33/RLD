@@ -28,8 +28,7 @@ const SUSDE_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
-// Mainnet sUSDe address
-const SUSDE_ADDRESS = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+// NOTE: sUSDe and USDC addresses are now passed via externalContracts param
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
 
@@ -88,7 +87,11 @@ export function useBasisTradeExecution(
   infrastructure,
   collateralAddr,
   positionAddr,
+  externalContracts,
 ) {
+  const SUSDE_ADDRESS = externalContracts?.susde || "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+  const USDC_ADDRESS = externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+  const SUSDE_TOKEN_ADDRESS = externalContracts?.susde || "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
@@ -169,11 +172,11 @@ export function useBasisTradeExecution(
 
         if (useUnderlying) {
           // USDC directly
-          approveTokenAddr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+          approveTokenAddr = USDC_ADDRESS;
           approveLabel = "USDC";
         } else {
           // sUSDe
-          approveTokenAddr = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+          approveTokenAddr = SUSDE_TOKEN_ADDRESS;
           approveLabel = "sUSDe";
         }
 
@@ -324,7 +327,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr],
+    [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS],
   );
 
   /**
@@ -461,7 +464,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr],
+    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS],
   );
 
   return {

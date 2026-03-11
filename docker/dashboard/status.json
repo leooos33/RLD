@@ -1,27 +1,27 @@
 {
-  "timestamp": "2026-03-11T08:00:01Z",
+  "timestamp": "2026-03-11T08:18:01Z",
   "system": {
-    "uptime_secs": 5036,
-    "load": [0.27, 0.49, 0.39],
+    "uptime_secs": 6116,
+    "load": [1.51, 0.97, 0.66],
     "cpu_cores": 8,
-    "disk": {"total_gb":193,"used_gb":90,"free_gb":103,"percent":47},
-    "memory": {"total_mb":23463,"used_mb":5068,"available_mb":18395},
+    "disk": {"total_gb":193,"used_gb":91,"free_gb":103,"percent":47},
+    "memory": {"total_mb":23463,"used_mb":7470,"available_mb":15993},
     "swap": {"total_mb":20479,"used_mb":0},
-    "connections": {"established":52,"listening":26},
+    "connections": {"established":84,"listening":32},
     "errors_today": 0
   },
-  "containers": [{"name":"docker-indexer-1","status":"healthy","uptime":"Up 2 minutes","cpu":12.30,"memory":"71.01MiB / 22.91GiB","network":"658kB / 682kB","restarts":0,"started":"2026-03-11T07:57:57","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"docker-mm-daemon-1","status":"healthy","uptime":"Up 6 minutes","cpu":5.14,"memory":"46.32MiB / 22.91GiB","network":"1.19MB / 1.25MB","restarts":0,"started":"2026-03-11T07:53:57","ports":""},{"name":"docker-chaos-trader-1","status":"healthy","uptime":"Up 6 minutes","cpu":6.28,"memory":"44.1MiB / 22.91GiB","network":"488kB / 598kB","restarts":0,"started":"2026-03-11T07:53:57","ports":""},{"name":"docker-postgres-1","status":"healthy","uptime":"Up 8 minutes","cpu":0.10,"memory":"30.64MiB / 22.91GiB","network":"302kB / 224kB","restarts":0,"started":"2026-03-11T07:51:54","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-frontend-1","status":"healthy","uptime":"Up About an hour","cpu":0.00,"memory":"18.05MiB / 22.91GiB","network":"38.9kB / 14.4kB","restarts":0,"started":"2026-03-11T06:36:13","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up About an hour","cpu":0.22,"memory":"184MiB / 22.91GiB","network":"9.92MB / 3.03MB","restarts":0,"started":"2026-03-11T06:36:13","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (0) 2 minutes ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""}],
+  "containers": [{"name":"docker-indexer-1","status":"healthy","uptime":"Up 37 seconds","cpu":81.89,"memory":"72.22MiB / 22.91GiB","network":"10.7MB / 9.33MB","restarts":0,"started":"2026-03-11T08:17:26","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"docker-deployer-1","status":"running","uptime":"Up 55 seconds","cpu":48.46,"memory":"37.14MiB / 22.91GiB","network":"1.82MB / 932kB","restarts":0,"started":"2026-03-11T08:17:09","ports":""},{"name":"docker-mm-daemon-1","status":"healthy","uptime":"Up 24 minutes","cpu":0.00,"memory":"46.58MiB / 22.91GiB","network":"4.56MB / 4.97MB","restarts":0,"started":"2026-03-11T07:53:57","ports":""},{"name":"docker-chaos-trader-1","status":"healthy","uptime":"Up 24 minutes","cpu":0.00,"memory":"44.29MiB / 22.91GiB","network":"1.99MB / 2.48MB","restarts":0,"started":"2026-03-11T07:53:57","ports":""},{"name":"docker-postgres-1","status":"healthy","uptime":"Up 26 minutes","cpu":1.83,"memory":"31.41MiB / 22.91GiB","network":"2.59MB / 1.54MB","restarts":0,"started":"2026-03-11T07:51:54","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-frontend-1","status":"healthy","uptime":"Up 2 hours","cpu":0.00,"memory":"18.07MiB / 22.91GiB","network":"45.7kB / 23.9kB","restarts":0,"started":"2026-03-11T06:36:13","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 2 hours","cpu":0.25,"memory":"183.2MiB / 22.91GiB","network":"12.1MB / 3.92MB","restarts":0,"started":"2026-03-11T06:36:13","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"}],
   "services": {
-    "nginx": {"healthy":true,"response_ms":61},
-    "rates_indexer": {"healthy":true,"response_ms":5,"last_block":"24632894"},
+    "nginx": {"healthy":true,"response_ms":59},
+    "rates_indexer": {"healthy":true,"response_ms":4,"last_block":"24632984"},
     "sim_indexer": {"healthy":true,"response_ms":2},
     "monitor_bot": {"healthy":true,"response_ms":-1},
-    "anvil": {"healthy":true,"block":"24627238"}
+    "anvil": {"healthy":true,"block":"24627571"}
   },
   "ssl": {"expiry":"2026-05-10","days_remaining":60},
-  "git": {"commit":"407f85c4","message":"fix: show locked borrow rate (wRLP price) instead of spread in OpenTradeModal","time":"2026-03-10T20:57:06+00:00","author":"Yevhen VPS"},
-  "docker": {"dangling_images":2,"images_size":"2.734GB","active":16,"total":18},
-  "databases": {"aave_rates": {"size_mb": 111.4, "tables": {"rates": {"rows": 1875841, "latest_age_secs": 30}, "eth_prices": {"rows": 420601, "latest_age_secs": 30}, "rates_dai": {"rows": 465009, "latest_age_secs": 30}, "rates_usdt": {"rows": 463170, "latest_age_secs": 30}}, "corrupt_rows": 0}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 3605, "rows_24h": 23, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 1, "sync_age_secs": 22}, "sim_indexer_pg": {"healthy": true, "schemas": ["sim_default"], "last_indexed_block": 24627238, "block_state_rows": 11, "events_rows": 8}},
+  "git": {"commit":"?","message":"?","time":"","author":"?"},
+  "docker": {"dangling_images":4,"images_size":"2.734GB","active":16,"total":20},
+  "databases": {"aave_rates": {"size_mb": 111.4, "tables": {"rates": {"rows": 1875931, "latest_age_secs": 19}, "eth_prices": {"rows": 420691, "latest_age_secs": 19}, "rates_dai": {"rows": 465099, "latest_age_secs": 19}, "rates_usdt": {"rows": 463260, "latest_age_secs": 19}}, "corrupt_rows": 0}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 1086, "rows_24h": 24, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 0, "sync_age_secs": 21}, "sim_indexer_pg": {"healthy": true, "schemas": ["sim_default"], "last_indexed_block": 24627531, "block_state_rows": 305, "events_rows": 151}},
   "backups": {
   "timestamp": "2026-03-11T03:00:11Z",
   "date": "2026-03-11",
@@ -33,5 +33,5 @@
   "retained": 9,
   "deleted": 1
 },
-  "history": {"load": [0.35, 0.3, 0.3, 0.33, 0.22, 0.22, 0.27, 0.27, 0.38, 0.38, 0.2, 0.2, 0.27, 0.27, 0.54, 0.54, 0.26, 0.26, 0.22, 0.14, 0.12, 0.33, 0.33, 0.26, 0.26, 0.14, 0.18, 0.19, 0.07, 0.07, 0.32, 0.32, 0.19, 0.19, 0.11, 0.14, 0.14, 0.19, 0.19, 0.21, 0.21, 0.15, 0.2, 0.25, 0.25, 0.15, 0.39, 0.39, 0.78, 0.83, 0.83, 0.48, 0.48, 0.61, 0.61, 1.21, 0.69, 0.34, 0.34, 0.27], "mem": [14.5, 14.8, 14.8, 15.1, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.1, 15.1, 14.6, 14.6, 14.9, 14.9, 15.1, 15.2, 15.2, 15.2, 15.2, 15.0, 15.0, 14.9, 14.9, 15.1, 15.1, 15.1, 15.3, 15.3, 15.2, 15.2, 15.3, 15.3, 15.3, 15.2, 15.2, 15.3, 15.3, 15.4, 15.4, 15.9, 15.9, 15.7, 17.1, 17.1, 17.7, 18.1, 18.1, 17.9, 17.9, 20.8, 20.8, 21.0, 21.8, 21.4, 21.4, 21.6], "disk": [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 47, 47, 47, 47, 47, 47, 47, 47, 47, 47, 47, 47, 47, 47], "block": [24632706, 24632712, 24632712, 24632716, 24632721, 24632721, 24632725, 24632725, 24632731, 24632731, 24632735, 24632735, 24632740, 24632740, 24632745, 24632745, 24632750, 24632750, 24632756, 24632760, 24632765, 24632770, 24632770, 24632776, 24632776, 24632780, 24632785, 24632790, 24632796, 24632796, 24632800, 24632800, 24632805, 24632805, 24632810, 24632815, 24632815, 24632821, 24632821, 24632830, 24632830, 24632835, 24632841, 24632845, 24632845, 24632850, 24632855, 24632855, 24632861, 24632865, 24632865, 24632870, 24632870, 24632875, 24632875, 24632880, 24632886, 24632890, 24632890, 24632894]}
+  "history": {"load": [0.83, 0.46, 0.46, 0.76, 0.76, 1.51], "mem": [25.4, 26.3, 26.3, 31.2, 31.2, 31.8], "disk": [47, 47, 47, 47, 47, 47], "block": [24632970, 24632975, 24632975, 24632979, 24632979, 24632984]}
 }

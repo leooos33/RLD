@@ -10,15 +10,11 @@ import { ethers } from "ethers";
  *   3. Impersonate user → approve + supply to Aave → aUSDC
  *   4. Impersonate user → approve + wrap aUSDC → waUSDC
  *
- * @param {string} account        Connected wallet address
- * @param {string} waUsdcAddress   Live waUSDC contract address (from indexer)
+ * @param {string} account            Connected wallet address
+ * @param {string} waUsdcAddress       Live waUSDC contract address (from indexer)
+ * @param {object} externalContracts   { usdc, ausdc, aave_pool, susde, usdc_whale } from marketInfo
  */
 
-// ── Mainnet addresses (Anvil fork of mainnet) ─────────────────────
-const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const AUSDC = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c";
-const AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
-const USDC_WHALE = "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341";
 const RPC_URL = `${window.location.origin}/rpc`;
 
 // Amount to fund: 100k USDC (6 decimals)
@@ -63,7 +59,8 @@ async function anvilRpc(rpcUrl, method, params = []) {
  * Wait for a transaction to be mined.
  */
 
-export function useFaucet(account, waUsdcAddress) {
+export function useFaucet(account, waUsdcAddress, externalContracts) {
+  const USDC = externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState(""); // Current step description
@@ -99,7 +96,7 @@ export function useFaucet(account, waUsdcAddress) {
         console.warn("Failed to fetch balances:", e);
       }
     },
-    [waUsdcAddress],
+    [waUsdcAddress, USDC],
   );
 
   // Auto-fetch balance when account connects or waUSDC address changes
@@ -168,15 +165,12 @@ export function useFaucet(account, waUsdcAddress) {
         try {
           await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [userAddress.toLowerCase()]);
         } catch { /* ignore cleanup errors */ }
-        try {
-          await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [USDC_WHALE]);
-        } catch { /* ignore cleanup errors */ }
         return { success: false, error: err.message };
       } finally {
         setLoading(false);
       }
     },
-    [fetchBalance, waUsdcAddress],
+    [fetchBalance, waUsdcAddress, USDC],
   );
 
   return {

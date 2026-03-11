@@ -1239,6 +1239,9 @@ async def get_market_info(request: Request):
         universal_router = market_config.get("universal_router", "0x66a9893cc07d91d95644aedd05d03f95e1dba8af")
         permit2 = market_config.get("permit2", "0x000000000022D473030F116dDEE9F6B43aC78BA3")
 
+        # Canonical mainnet contracts (from deployment.json or hardcoded defaults)
+        ext = market_config.get("external_contracts", {})
+
         return {
             "collateral": {"name": col_name, "symbol": col_symbol, "address": col_token},
             "position_token": {"name": pos_name, "symbol": pos_symbol, "address": pos_token},
@@ -1259,6 +1262,13 @@ async def get_market_info(request: Request):
                 "v4_state_view": v4_state_view,
                 "universal_router": universal_router,
                 "permit2": permit2,
+            },
+            "external_contracts": {
+                "usdc": ext.get("usdc", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+                "ausdc": ext.get("ausdc", "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"),
+                "aave_pool": ext.get("aave_pool", "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"),
+                "susde": ext.get("susde", "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"),
+                "usdc_whale": ext.get("usdc_whale", "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"),
             },
             "risk_params": {
                 "min_col_ratio": min_col_ratio / 1e18,

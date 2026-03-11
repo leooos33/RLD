@@ -661,7 +661,14 @@ cat > /config/deployment.json << EOF
     "zero_for_one_long": $ZERO_FOR_ONE_LONG,
     "user_a_broker": "$USER_A_BROKER",
     "mm_broker": "$MM_BROKER",
-    "chaos_broker": "$CHAOS_BROKER"
+    "chaos_broker": "$CHAOS_BROKER",
+    "external_contracts": {
+        "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "ausdc": "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        "aave_pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "susde": "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
+        "usdc_whale": "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
+    }
 }
 EOF
 

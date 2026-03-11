@@ -1751,6 +1751,7 @@ export default function PoolLP() {
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+        externalContracts={marketInfo?.external_contracts}
       />
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />

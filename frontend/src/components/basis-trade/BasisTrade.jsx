@@ -135,9 +135,9 @@ export default function BasisTradePage() {
   const usdcCost = latest?.apy ?? 0;
   const spread = susdeRate - usdcCost;
 
-  // Real sUSDe + USDC wallet balance
-  const SUSDE_ADDRESS = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
-  const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+  // Real sUSDe + USDC wallet balance — addresses from indexer
+  const SUSDE_ADDRESS = marketInfo?.external_contracts?.susde || "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+  const USDC_ADDRESS = marketInfo?.external_contracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const [susdeBalance, setSusdeBalance] = useState(null);
   const [usdcBalance, setUsdcBalance] = useState(null);
   const [susdeAllowance, setSusdeAllowance] = useState(0);
@@ -231,6 +231,7 @@ export default function BasisTradePage() {
     marketInfo?.infrastructure ? { ...marketInfo.infrastructure, broker_factory: marketInfo.broker_factory } : undefined,
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,
+    marketInfo?.external_contracts,
   );
   
   // Use a boosted APY for the basis trade simulation (Latest APY + 4% for carry)

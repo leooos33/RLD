@@ -1686,6 +1686,7 @@ export default function SimulationTerminal() {
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+        externalContracts={marketInfo?.external_contracts}
       />
       {/* Swap Confirmation Modal */}
       {/* PnL Calculator Modal */}

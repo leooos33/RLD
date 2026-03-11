@@ -26,6 +26,7 @@ export default function AccountModal({
   onComplete,
   brokerFactoryAddr,
   waUsdcAddr,
+  externalContracts,
 }) {
   const { account, connectWallet } = useWallet();
   const {
@@ -44,7 +45,7 @@ export default function AccountModal({
     loading: faucetLoading,
     error: faucetError,
     waUsdcBalance,
-  } = useFaucet(account, waUsdcAddr);
+  } = useFaucet(account, waUsdcAddr, externalContracts);
 
   const [depositAmount, setDepositAmount] = useState("10000");
   const [faucetDone, setFaucetDone] = useState(false);

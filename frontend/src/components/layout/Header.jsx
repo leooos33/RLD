@@ -28,6 +28,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   } = useFaucet(
     account,
     waUsdcAddr,
+    marketInfo?.external_contracts,
   );
 
   const handleFaucetClick = async () => {

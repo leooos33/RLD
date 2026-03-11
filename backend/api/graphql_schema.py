@@ -153,6 +153,15 @@ class Infrastructure:
 
 
 @strawberry.type
+class ExternalContracts:
+    usdc: str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    ausdc: str = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+    aave_pool: str = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+    susde: str = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+    usdc_whale: str = "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
+
+
+@strawberry.type
 class RiskParams:
     min_col_ratio: float = 0
     maintenance_margin: float = 0
@@ -167,6 +176,7 @@ class MarketInfo:
     position_token: Optional[TokenInfo] = None
     broker_factory: str = ""
     infrastructure: Optional[Infrastructure] = None
+    external_contracts: Optional[ExternalContracts] = None
     risk_params: Optional[RiskParams] = None
 
 
@@ -465,6 +475,9 @@ def _get_market_info() -> Optional[MarketInfo]:
                 for _k in _infra_keys:
                     if _k in _deploy:
                         market_config[_k] = _deploy[_k]
+                # Also load external_contracts if present
+                if "external_contracts" in _deploy:
+                    market_config["external_contracts"] = _deploy["external_contracts"]
             except Exception:
                 pass  # Fall through to cached values
 
@@ -505,6 +518,16 @@ def _get_market_info() -> Optional[MarketInfo]:
         padded_id = market_id.replace("0x", "").zfill(64)
         config_data = eth_call(rld_core, selector + padded_id)
 
+        # Build external_contracts from deployment.json (with sane defaults)
+        ext = market_config.get("external_contracts", {})
+        external = ExternalContracts(
+            usdc=ext.get("usdc", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            ausdc=ext.get("ausdc", "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"),
+            aave_pool=ext.get("aave_pool", "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"),
+            susde=ext.get("susde", "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"),
+            usdc_whale=ext.get("usdc_whale", "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"),
+        )
+
         result = MarketInfo(
             collateral=TokenInfo(name=col_name, symbol=col_symbol, address=col_token),
             position_token=TokenInfo(name=pos_name, symbol=pos_symbol, address=pos_token),
@@ -523,6 +546,7 @@ def _get_market_info() -> Optional[MarketInfo]:
                 universal_router=market_config.get("universal_router", "0x66a9893cc07d91d95644aedd05d03f95e1dba8af"),
                 permit2=market_config.get("permit2", "0x000000000022D473030F116dDEE9F6B43aC78BA3"),
             ),
+            external_contracts=external,
             risk_params=RiskParams(
                 min_col_ratio=decode_uint(config_data, 0) / 1e18,
                 maintenance_margin=decode_uint(config_data, 1) / 1e18,

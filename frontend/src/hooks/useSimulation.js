@@ -82,6 +82,9 @@ const SIM_QUERY = `
         minColRatio maintenanceMargin liqCloseFactor
         fundingPeriodSec debtCap
       }
+      externalContracts {
+        usdc ausdc aavePool susde usdcWhale
+      }
     }
     status { totalBlockStates totalEvents lastIndexedBlock }
   }
@@ -187,6 +190,15 @@ export function useSimulation({
             liq_close_factor: mi.riskParams.liqCloseFactor,
             funding_period_sec: mi.riskParams.fundingPeriodSec,
             debt_cap: mi.riskParams.debtCap,
+          }
+        : null,
+      external_contracts: mi.externalContracts
+        ? {
+            usdc: mi.externalContracts.usdc,
+            ausdc: mi.externalContracts.ausdc,
+            aave_pool: mi.externalContracts.aavePool,
+            susde: mi.externalContracts.susde,
+            usdc_whale: mi.externalContracts.usdcWhale,
           }
         : null,
     };
