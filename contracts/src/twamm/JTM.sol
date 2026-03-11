@@ -484,10 +484,17 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             revert ExpirationNotOnInterval(orderKey.expiration);
         }
 
-        uint256 sellRate = params.amountIn / params.duration;
-        if (sellRate == 0) revert SellRateCannotBeZero();
+        // Explicit minimum order size: at least 1 epoch-interval of wei.
+        // This makes the floor self-documenting and prevents sub-dust orders.
+        if (params.amountIn < expirationInterval) revert SellRateCannotBeZero();
 
-        uint256 scaledSellRate = sellRate * RATE_SCALER;
+        // Scale-before-divide: multiply by RATE_SCALER BEFORE dividing by duration
+        // to preserve 18 extra digits of precision. Reduces truncation loss from
+        // up to (duration-1) tokens to at most (duration-1) wei.
+        uint256 scaledSellRate = (params.amountIn * RATE_SCALER) / params.duration;
+        if (scaledSellRate == 0) revert SellRateCannotBeZero();
+        uint256 actualDeposit = (scaledSellRate * params.duration) / RATE_SCALER;
+
         orderId = _orderId(orderKey);
 
         JITState storage state = poolStates[poolId];
@@ -513,7 +520,9 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             earningsFactorLast: earningsFactorLast
         });
 
-        // Transfer tokens from user
+        // Transfer FULL amountIn from user. The dust (amountIn - actualDeposit)
+        // stays as contract surplus, guaranteeing solvency when aggregated
+        // ghost accrual benefits from floor(SUM/RS) >= sum(floor(x_i/RS)).
         IERC20Minimal(
             params.zeroForOne
                 ? Currency.unwrap(params.key.currency0)
@@ -521,18 +530,17 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         ).safeTransferFrom(
                 msg.sender,
                 address(this),
-                sellRate * params.duration
+                params.amountIn
             );
 
         emit SubmitOrder(
             poolId,
             orderId,
             msg.sender,
-            // H2: Emit actual transfer amount (sellRate * duration <= params.amountIn)
-            sellRate * params.duration,
+            params.amountIn,
             orderKey.expiration,
             params.zeroForOne,
-            sellRate,
+            scaledSellRate / RATE_SCALER,
             earningsFactorLast,
             nextEpoch
         );
