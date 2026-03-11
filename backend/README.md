@@ -13,19 +13,29 @@ Python services powering the RLD Protocol simulation and rate indexing infrastru
 ```
 backend/
 ├── api/
+│   ├── main.py                 # Rates API entrypoint (middleware, router imports)
+│   ├── deps.py                 # Shared: DB connections, auth, cache
+│   ├── routes/
+│   │   ├── rates.py            # /rates, /eth-prices, /ws/rates, /download/db
+│   │   └── sim.py              # Simulation endpoints (RATE_ONLY=false only)
 │   ├── indexer_api.py          # Simulation REST API (FastAPI)
 │   ├── graphql_schema.py       # Simulation GraphQL schema (Strawberry)
-│   ├── main.py                 # Rates REST API (FastAPI)
 │   └── GRAPHQL_API.md          # GraphQL API reference for integrators
 ├── db/
 │   └── comprehensive.py        # PostgreSQL data access layer (simulation)
 ├── indexers/
 │   └── comprehensive.py        # On-chain event indexer (simulation)
 ├── rates/
-│   ├── daemon.py               # Rate indexing daemon (Aave V3 + Uniswap V3)
-│   ├── sync_clean_db.py        # Hourly aggregation sync
+│   ├── daemon.py               # Rate indexing daemon (protocol-agnostic loop)
+│   ├── sync_clean_db.py        # Hourly aggregation sync (raw → clean DB)
+│   ├── init_clean_db.py        # Clean DB initialization
 │   ├── fill_gaps.py            # Gap repair utility
-│   └── init_clean_db.py        # Clean DB initialization
+│   └── adapters/               # Protocol-specific rate adapters
+│       ├── base.py             # ProtocolAdapter ABC
+│       ├── aave_v3.py          # Aave V3 [ACTIVE]
+│       ├── morpho.py           # Morpho [STUB]
+│       ├── fluid.py            # Fluid [STUB]
+│       └── euler.py            # Euler [STUB]
 ├── services/
 │   ├── combined_daemon.py      # MM daemon (rate sync + arb + clear auctions)
 │   ├── monitor_bot.py          # Telegram monitoring bot
@@ -37,7 +47,7 @@ backend/
 ├── entrypoint.py               # Simulation indexer container entrypoint
 ├── start_prod.sh               # Simulation indexer startup script
 ├── start_rates.sh              # Rates indexer startup script
-├── config.py                   # Shared configuration (DB paths, assets)
+├── config.py                   # Protocol registry, data sources, DB paths
 └── requirements.txt            # Python dependencies
 ```
 
@@ -72,26 +82,41 @@ The simulation indexer runs inside the Docker simulation stack. It auto-discover
 
 ## Rates Indexer
 
-A persistent service that indexes Aave V3 lending rates and ETH prices from mainnet (not the fork). Runs independently of the simulation.
+A persistent service that indexes lending rates and asset yields from mainnet. Uses a **protocol adapter pattern** for multi-protocol extensibility.
+
+### Protocol Registry (`config.py`)
+
+| Protocol | Status | Adapter | Assets |
+|----------|--------|---------|--------|
+| **Aave V3** | ✅ Active | `aave_v3.py` | USDC, DAI, USDT |
+| **Morpho** | ⏸️ Stub | `morpho.py` | — |
+| **Fluid** | ⏸️ Stub | `fluid.py` | — |
+| **Euler** | ⏸️ Stub | `euler.py` | — |
 
 ### Data Sources
 
 | Source | Method | Frequency | Storage |
 |--------|--------|-----------|---------|
-| Aave V3 rates (USDC, DAI, USDT) | `eth_call` getReserveData | Every block (~12s) | `aave_rates.db` |
+| Protocol rates (via adapters) | `eth_call` per adapter | Every block (~12s) | `aave_rates.db` |
 | ETH/USD price | Uniswap V3 `slot0()` | Every block (~12s) | `aave_rates.db` |
+| sUSDe yield | ERC-4626 `convertToAssets(1e18)` | Every block (~12s) | `aave_rates.db` |
 | ETH/USD backfill | The Graph `poolHourDatas` | Startup only | `aave_rates.db` |
 | SOFR rate | NY Fed API | Daily | `aave_rates.db` |
-| sUSDe yield | Ethena API | Hourly | `aave_rates.db` |
 
 ### Data Pipeline
 
 ```
-Aave V3 getReserveData  ─┐
-Uniswap V3 slot0()       ├──► aave_rates.db (block-level) ──► sync_clean_db.py ──► clean_rates.db (hourly)
-NY Fed SOFR API          ─┤                                       (AVG per hour)
-Ethena sUSDe API         ─┘
+Protocol Adapters         ─┐
+Uniswap V3 slot0()         ├──► aave_rates.db (block-level) ──► sync_clean_db.py ──► clean_rates.db (hourly)
+sUSDe convertToAssets()    ├                                       (AVG per hour)
+NY Fed SOFR API            ─┘                                       (sUSDe: 24h Δ → APY)
 ```
+
+### Adding a New Protocol
+
+1. Set `enabled: True` in `PROTOCOLS` dict in `config.py`
+2. Create `rates/adapters/{protocol}.py` implementing `ProtocolAdapter` (see `base.py`)
+3. Restart container — daemon auto-discovers it, tables auto-create, API auto-serves
 
 ### API Endpoints (port 8081)
 
@@ -99,9 +124,10 @@ Ethena sUSDe API         ─┘
 |----------|-------------|
 | `GET /` | Service status + last indexed block |
 | `GET /rates?symbol=USDC&limit=N` | Historical lending rates |
-| `GET /eth-prices?limit=N&resolution=1H` | ETH price history |
+| `GET /rates?symbol=sUSDe` | sUSDe staking yields (on-chain) |
 | `GET /rates?symbol=SOFR` | SOFR daily rates |
-| `GET /rates?symbol=SUSDE` | sUSDe staking yields |
+| `GET /eth-prices?limit=N&resolution=1H` | ETH price history |
+| `WS /ws/rates` | Real-time rate broadcast |
 
 ### Environment Variables
 
@@ -155,9 +181,9 @@ web3                      # Ethereum RPC
 psycopg2-binary           # PostgreSQL (simulation indexer)
 python-dotenv             # .env loading
 requests, httpx           # HTTP clients
-pandas                    # Data analysis (rates)
 cachetools                # API response caching
 websockets                # WebSocket support
+pandas                    # Data analysis (simulation indexer only)
 ```
 
 ## Local Development

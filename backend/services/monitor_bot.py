@@ -131,74 +131,86 @@ def get_latest_block():
         logger.error(f"RPC Error: {e}")
         return None
 
-def get_asset_stats(symbol, endpoint="/rates"):
+def fetch_all_rates_graphql():
+    """Fetch all rate data in a single GraphQL request instead of 5+ REST calls."""
+    query = """
+    {
+      usdc: rates(symbol: "USDC", limit: 96, resolution: "1H") {
+        timestamp
+        apy
+      }
+      dai: rates(symbol: "DAI", limit: 96, resolution: "1H") {
+        timestamp
+        apy
+      }
+      usdt: rates(symbol: "USDT", limit: 96, resolution: "1H") {
+        timestamp
+        apy
+      }
+      ethPrices(limit: 96, resolution: "1H") {
+        timestamp
+        price
+      }
+      latestRates {
+        timestamp
+        usdc
+        dai
+        usdt
+        ethPrice
+      }
+    }
+    """
     try:
-        # Use RATES_API_URL for rates/prices
-        base_url = RATES_API_URL
-        
-        url = f"{base_url}{endpoint}?symbol={symbol}&limit=96&resolution=1H"
-        if endpoint == "/eth-prices":
-            url = f"{base_url}{endpoint}?limit=96&resolution=1H"
-            
-        res = requests.get(url, headers=get_headers(), timeout=10)
+        res = requests.post(
+            f"{RATES_API_URL}/graphql",
+            json={"query": query},
+            headers=get_headers(),
+            timeout=10,
+        )
         if res.status_code != 200:
-            return None, None
-            
-        data = res.json()
-        if not data:
-            return None, None
-
-        # Sort DESC (Newest First) to ensure data[0] is current
-        data.sort(key=lambda x: x['timestamp'], reverse=True)
-
-        # Filter out entries with null values (incomplete hourly buckets)
-        value_key = 'price' if endpoint == "/eth-prices" else 'apy'
-        data = [d for d in data if d.get(value_key) is not None]
-        if not data:
-            return None, None
-
-        current = data[0]
-        target_ts = current['timestamp'] - 86400
-        past = None
-        min_diff = 3600 * 6  # 6h tolerance to bridge data gaps
-        
-        for item in data[1:]:  # Skip current entry
-            diff = abs(item['timestamp'] - target_ts)
-            if diff < min_diff:
-                min_diff = diff
-                past = item
-                
-        return current, past
+            logger.error(f"GraphQL HTTP {res.status_code}")
+            return None
+        body = res.json()
+        return body.get("data")
     except Exception as e:
-        logger.error(f"Failed to fetch stats for {symbol}: {e}")
+        logger.error(f"GraphQL fetch error: {e}")
+        return None
+
+
+def _extract_current_and_past(data_list, value_key="apy"):
+    """From a list of {timestamp, value} dicts, return (current, past_24h)."""
+    if not data_list:
         return None, None
 
-def get_live_eth_price():
-    """Fetch the latest block-level ETH price from the RAW resolution endpoint."""
-    try:
-        url = f"{RATES_API_URL}/eth-prices?limit=1&resolution=RAW"
-        res = requests.get(url, headers=get_headers(), timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            if data and data[0].get('price'):
-                return data[0]['price']
-    except Exception as e:
-        logger.error(f"Failed to fetch live ETH price: {e}")
-    return None
+    # Sort DESC
+    data_list.sort(key=lambda x: x["timestamp"], reverse=True)
+    # Filter nulls
+    data_list = [d for d in data_list if d.get(value_key) is not None]
+    if not data_list:
+        return None, None
+
+    current = data_list[0]
+    target_ts = current["timestamp"] - 86400
+    past = None
+    min_diff = 3600 * 6  # 6h tolerance
+
+    for item in data_list[1:]:
+        diff = abs(item["timestamp"] - target_ts)
+        if diff < min_diff:
+            min_diff = diff
+            past = item
+
+    return current, past
 
 
 def generate_report():
     from concurrent.futures import ThreadPoolExecutor
 
-    # Fire ALL requests in parallel (was sequential: 6 x ~1-2s = 6-10s)
-    with ThreadPoolExecutor(max_workers=7) as pool:
+    # Only 2 REST calls remain: health check + RPC block number
+    with ThreadPoolExecutor(max_workers=3) as pool:
         f_health = pool.submit(check_api_health)
         f_block = pool.submit(get_latest_block)
-        f_usdc = pool.submit(get_asset_stats, "USDC")
-        f_dai = pool.submit(get_asset_stats, "DAI")
-        f_usdt = pool.submit(get_asset_stats, "USDT")
-        f_eth = pool.submit(get_asset_stats, "ETH", "/eth-prices")
-        f_eth_live = pool.submit(get_live_eth_price)
+        f_gql = pool.submit(fetch_all_rates_graphql)
 
     is_healthy, latency, last_indexed = f_health.result()
     now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
@@ -220,48 +232,59 @@ def generate_report():
              report += f"**📦 Block Lag**: N/A\n\n"
 
         report += "**📉 Market Rates (24h Trend)**\n"
-        for symbol, future in [("USDC", f_usdc), ("DAI", f_dai), ("USDT", f_usdt)]:
-            curr, past = future.result()
-            if curr:
-                rate = curr.get('apy')
-                if rate is None:
-                    rate = 0.0
-                change_str = " (➖ 0.00%)"
-                if past:
-                    old_rate = past.get('apy')
-                    if old_rate is None:
-                        old_rate = 0.0
-                    if old_rate > 0:
-                        delta_pct = ((rate - old_rate) / old_rate) * 100
+
+        gql_data = f_gql.result()
+
+        if gql_data:
+            # Extract rates from GraphQL response
+            for symbol, gql_key in [("USDC", "usdc"), ("DAI", "dai"), ("USDT", "usdt")]:
+                curr, past = _extract_current_and_past(gql_data.get(gql_key, []), "apy")
+                if curr:
+                    rate = curr.get('apy')
+                    if rate is None:
+                        rate = 0.0
+                    change_str = " (➖ 0.00%)"
+                    if past:
+                        old_rate = past.get('apy')
+                        if old_rate is None:
+                            old_rate = 0.0
+                        if old_rate > 0:
+                            delta_pct = ((rate - old_rate) / old_rate) * 100
+                            sign = "+" if delta_pct >= 0 else ""
+                            arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
+                            change_str = f" ({arrow} {sign}{delta_pct:.2f}%)"
+                        else:
+                             change_str = " (➖ 0.00%)"
+                    report += f"• **{symbol}**: `{rate:.2f}%`{change_str}\n"
+                else:
+                    report += f"• **{symbol}**: `N/A`\n"
+
+            report += "\n"
+
+            # ETH price: prefer latestRates (block-level), fall back to hourly
+            latest = gql_data.get("latestRates")
+            live_price = latest.get("ethPrice") if latest else None
+
+            curr_eth, past_eth = _extract_current_and_past(gql_data.get("ethPrices", []), "price")
+
+            price = live_price
+            if price is None and curr_eth:
+                price = curr_eth.get('price', 0.0)
+
+            if price and price > 0:
+                change_str = " (➖ 0.0%)"
+                if past_eth:
+                    old_price = past_eth.get('price')
+                    if old_price and old_price > 0:
+                        delta_pct = ((price - old_price) / old_price) * 100
                         sign = "+" if delta_pct >= 0 else ""
                         arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
-                        change_str = f" ({arrow} {sign}{delta_pct:.2f}%)"
-                    else:
-                         change_str = " (➖ 0.00%)"
-                report += f"• **{symbol}**: `{rate:.2f}%`{change_str}\n"
-            else:
+                        change_str = f" ({arrow} {sign}{delta_pct:.1f}%)"
+                report += f"**💎 ETH Price**: `${price:,.2f}`{change_str}\n"
+        else:
+            # GraphQL failed — show N/A for all
+            for symbol in ["USDC", "DAI", "USDT"]:
                 report += f"• **{symbol}**: `N/A`\n"
-
-        report += "\n"
-        # Use live block-level price for display, hourly data for 24h trend
-        live_price = f_eth_live.result()
-        curr_eth, past_eth = f_eth.result()
-
-        # Prefer live price, fall back to hourly
-        price = live_price
-        if price is None and curr_eth:
-            price = curr_eth.get('price', 0.0)
-
-        if price and price > 0:
-            change_str = " (➖ 0.0%)"
-            if past_eth:
-                old_price = past_eth.get('price')
-                if old_price and old_price > 0:
-                    delta_pct = ((price - old_price) / old_price) * 100
-                    sign = "+" if delta_pct >= 0 else ""
-                    arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
-                    change_str = f" ({arrow} {sign}{delta_pct:.1f}%)"
-            report += f"**💎 ETH Price**: `${price:,.2f}`{change_str}\n"
         
         report += "\n**✅ Check**: Stable"
     else:

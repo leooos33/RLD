@@ -1,21 +1,33 @@
+"""
+Sync raw block-level rate data → hourly aggregated clean_rates.db.
+
+Reads from aave_rates.db (per-block), aggregates into hourly buckets,
+and writes to clean_rates.db (hourly_stats table) for API serving.
+
+Handles:
+  - Protocol rates (USDC, DAI, USDT via legacy tables)
+  - ETH prices
+  - sUSDe exchange rate → APY conversion
+  - SOFR rates
+"""
+
 import sqlite3
 import os
 import sys
 import time
 
-# Add backend to path to import config
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import ASSETS, DB_PATH, CLEAN_DB_PATH
 
 RAW_DB_PATH = DB_PATH
 
-# Column mapping for assets
+# Column mapping for assets → hourly_stats columns
 SYMBOL_MAP = {
     "USDC": "usdc_rate",
     "DAI": "dai_rate",
     "USDT": "usdt_rate",
     "SOFR": "sofr_rate",
-    "sUSDe": "susde_yield"
+    "sUSDe": "susde_yield",
 }
 
 
@@ -32,15 +44,14 @@ def _ensure_tables(cursor):
             susde_yield REAL
         )
     """)
-    # Migrate existing tables: add susde_yield column if missing
+    # Migrate: add susde_yield column if missing
     try:
         cursor.execute("ALTER TABLE hourly_stats ADD COLUMN susde_yield REAL")
     except Exception:
         pass  # Column already exists
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sync_state (
-            key TEXT PRIMARY KEY,
-            value TEXT
+            key TEXT PRIMARY KEY, value TEXT
         )
     """)
 
@@ -61,13 +72,7 @@ def _set_sync_state(cursor, key, value):
 
 
 def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
-    """Sync ETH prices newer than since_ts, with a 48h safety lookback.
-    
-    The GraphQL source can deliver historical data late (e.g. API outage recovery).
-    Using a lookback window ensures late-arriving rows are picked up even if the
-    wall-clock watermark has already advanced past them.
-    """
-    # Safety lookback: re-check the last 48 hours to catch late backfills
+    """Sync ETH prices newer than since_ts, with a 48h safety lookback."""
     lookback = since_ts - (48 * 3600)
     hour_floor = (lookback // 3600) * 3600
 
@@ -78,7 +83,6 @@ def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
             (hour_floor,)
         )
     except Exception:
-        # eth_prices table doesn't exist yet on first run
         return 0
     rows = cursor_raw.fetchall()
 
@@ -86,7 +90,7 @@ def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
         return 0
 
     # Group by hour and average
-    hourly = {}
+    hourly: dict[int, list[float]] = {}
     for ts, price in rows:
         hour_ts = (ts // 3600) * 3600
         if hour_ts not in hourly:
@@ -106,7 +110,7 @@ def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
 
 
 def _sync_asset_incremental(conn_raw, cursor_clean, table, col_name, since_ts):
-    """Sync only asset rates newer than since_ts."""
+    """Sync asset rates newer than since_ts."""
     hour_floor = (since_ts // 3600) * 3600
 
     cursor_raw = conn_raw.cursor()
@@ -116,7 +120,6 @@ def _sync_asset_incremental(conn_raw, cursor_clean, table, col_name, since_ts):
             (hour_floor,)
         )
     except Exception:
-        # Table doesn't exist yet (e.g. susde_yields before daemon creates it)
         return 0
     rows = cursor_raw.fetchall()
 
@@ -124,7 +127,7 @@ def _sync_asset_incremental(conn_raw, cursor_clean, table, col_name, since_ts):
         return 0
 
     # Group by hour and average
-    hourly = {}
+    hourly: dict[int, list[float]] = {}
     for ts, apy in rows:
         hour_ts = (ts // 3600) * 3600
         if hour_ts not in hourly:
@@ -143,10 +146,78 @@ def _sync_asset_incremental(conn_raw, cursor_clean, table, col_name, since_ts):
     return count
 
 
-def sync_clean_db(force_full=False):
+def _sync_susde_yield(conn_raw, cursor_clean, since_ts):
+    """Convert sUSDe exchange rate deltas into annualized APY.
+
+    sUSDe is an ERC-4626 vault. The exchange rate (USDe per sUSDe) increases
+    as yield accrues. APY = ((rate_now / rate_past) - 1) * (365 / days_elapsed) * 100
+
+    The on-chain rate updates every ~8 hours (Ethena keeper), so we use
+    a 24h lookback window for stable APY calculation.
     """
-    Sync raw rate data to hourly aggregated clean DB.
-    
+    hour_floor = (since_ts // 3600) * 3600
+
+    cursor_raw = conn_raw.cursor()
+    try:
+        # Get recent exchange rates
+        cursor_raw.execute(
+            "SELECT timestamp, exchange_rate FROM susde_rates WHERE timestamp >= ? ORDER BY timestamp ASC",
+            (hour_floor - 86400,)  # Extra 24h lookback for delta calculation
+        )
+    except Exception:
+        return 0
+    rows = cursor_raw.fetchall()
+
+    if not rows:
+        return 0
+
+    # Group by hour — take the last exchange rate per hour
+    hourly_rates: dict[int, float] = {}
+    for ts, rate in rows:
+        hour_ts = (ts // 3600) * 3600
+        hourly_rates[hour_ts] = rate  # Last value wins (most recent in hour)
+
+    if not hourly_rates:
+        return 0
+
+    sorted_hours = sorted(hourly_rates.keys())
+
+    count = 0
+    for hour_ts in sorted_hours:
+        if hour_ts < hour_floor:
+            continue  # Only for lookback reference, don't write
+
+        current_rate = hourly_rates[hour_ts]
+
+        # Find rate from ~24h ago
+        target_ts = hour_ts - 86400
+        best_ref = None
+        best_diff = 6 * 3600  # 6h tolerance
+
+        for ref_ts in sorted_hours:
+            diff = abs(ref_ts - target_ts)
+            if diff < best_diff:
+                best_diff = diff
+                best_ref = hourly_rates[ref_ts]
+
+        if best_ref and best_ref > 0:
+            # Annualize the 24h change
+            daily_return = (current_rate / best_ref) - 1
+            apy = daily_return * 365 * 100
+            # Sanity: sUSDe yield is typically 5-30% APY
+            if -5 < apy < 200:
+                cursor_clean.execute("""
+                    INSERT INTO hourly_stats (timestamp, susde_yield) VALUES (?, ?)
+                    ON CONFLICT(timestamp) DO UPDATE SET susde_yield=excluded.susde_yield
+                """, (hour_ts, apy))
+                count += 1
+
+    return count
+
+
+def sync_clean_db(force_full=False):
+    """Sync raw rate data to hourly aggregated clean DB.
+
     Incremental by default: only processes data since last sync.
     Set force_full=True for initial bootstrap or recovery.
     """
@@ -178,20 +249,25 @@ def sync_clean_db(force_full=False):
     if eth_count:
         print(f"   ETH prices: {eth_count} hourly records")
 
-    # 2. Sync Assets
+    # 2. Sync protocol asset rates
     for symbol, config in ASSETS.items():
         col_name = SYMBOL_MAP.get(symbol)
-        if not col_name:
-            continue
+        if not col_name or symbol == "sUSDe":
+            continue  # sUSDe handled separately
         count = _sync_asset_incremental(conn_raw, cursor_clean, config['table'], col_name, last_synced_ts)
         if count:
             print(f"   {symbol}: {count} hourly records")
 
-    # 3. Update sync timestamps
+    # 3. Sync sUSDe yield (exchange rate → APY)
+    susde_count = _sync_susde_yield(conn_raw, cursor_clean, last_synced_ts)
+    if susde_count:
+        print(f"   sUSDe: {susde_count} hourly records")
+
+    # 4. Update sync timestamps
     now_ts = int(time.time())
     _set_sync_state(cursor_clean, 'last_synced_timestamp', now_ts)
 
-    # 4. Update last_block_number from raw DB
+    # 5. Update last_block_number from raw DB
     try:
         cursor_raw = conn_raw.cursor()
         cursor_raw.execute("SELECT MAX(block_number) FROM rates")
@@ -210,6 +286,5 @@ def sync_clean_db(force_full=False):
 
 
 if __name__ == "__main__":
-    # CLI: pass --full to force full resync
     force = "--full" in sys.argv
     sync_clean_db(force_full=force)

@@ -101,7 +101,7 @@ docker compose -f docker/docker-compose.frontend.yml up -d --build
 | `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python urllib` | deployer, postgres    | Indexes simulation blocks, serves REST + GraphQL API. Auto-resets tables on restart  |
 | `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | `pgrep`         | deployer              | Market maker: arb trades + oracle updates from live rates                            |
 | `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | `pgrep`         | deployer              | Random trades for market activity                                                    |
-| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl            | —                     | Indexes Aave V3 rates + ETH price (Uniswap V3 slot0) per block (~12s)                |
+| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl            | —                     | Multi-protocol rate indexer (Aave V3 active) + ETH price + sUSDe yield (on-chain)    |
 | `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl            | —                     | Telegram bot: `/status` dashboard, hourly rate+price digests                         |
 | `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget            | —                     | Multi-stage build: Node 20 → Nginx Alpine (68MB)                                     |
 
@@ -189,6 +189,20 @@ The simulation indexer uses PostgreSQL (`postgres:15-alpine`) with a persistent 
 
 The rates indexer uses SQLite (`aave_rates.db` + `clean_rates.db`), managed separately from the simulation stack.
 
+| Table (aave_rates.db) | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `rates`               | Aave V3 USDC borrow rate per block             |
+| `rates_dai`           | Aave V3 DAI borrow rate per block              |
+| `rates_usdt`          | Aave V3 USDT borrow rate per block             |
+| `eth_prices`          | ETH/USD price from Uniswap V3 per block        |
+| `susde_rates`         | sUSDe exchange rate (ERC-4626) per block        |
+| `sofr_rates`          | Daily SOFR from NY Fed API                     |
+
+| Table (clean_rates.db) | Description                                   |
+| ---------------------- | --------------------------------------------- |
+| `hourly_stats`         | Hourly aggregated: ETH price, all rates       |
+| `sync_state`           | Last synced block/timestamp                   |
+
 ---
 
 ## API Endpoints
@@ -224,12 +238,17 @@ The indexer also serves a Strawberry GraphQL API. Key queries:
 
 ### Rates Indexer (port 8081, proxied at `/api/`)
 
-| Endpoint                                 | Description                                  |
-| ---------------------------------------- | -------------------------------------------- |
-| `GET /`                                  | Service status                               |
-| `GET /rates?symbol=USDC&limit=N`         | Historical spot rates (hourly from clean DB) |
-| `GET /eth-prices?limit=N`                | ETH price history (hourly, default)          |
-| `GET /eth-prices?limit=N&resolution=RAW` | ETH price (block-level, ~12s, from raw DB)   |
+| Endpoint                                     | Description                                      |
+| -------------------------------------------- | ------------------------------------------------ |
+| `GET /`                                      | Service status + last indexed block              |
+| `GET /rates?symbol=USDC&limit=N`             | Historical lending rates (hourly from clean DB)  |
+| `GET /rates?symbol=sUSDe&limit=N`            | sUSDe yield (computed from on-chain exchange rate)|
+| `GET /rates?symbol=SOFR`                     | SOFR daily rates (NY Fed)                        |
+| `GET /rates?symbol=DAI&resolution=1D`        | Resolutions: `5M`, `1H`, `4H`, `1D`, `1W`       |
+| `GET /eth-prices?limit=N`                    | ETH price history (hourly, default)              |
+| `GET /eth-prices?limit=N&resolution=RAW`     | ETH price (block-level, ~12s, from raw DB)       |
+| `WS /ws/rates`                               | Real-time rate broadcast (5s poll)               |
+| `GET /download/db/{filename}?secret=...`     | DB file download (migration, secret-protected)   |
 
 ---
 
@@ -526,17 +545,60 @@ Logs are rotated automatically after 7 days.
 
 ## Data Pipeline
 
+### Rates Indexer Architecture
+
+The rates-indexer uses a **protocol adapter pattern** for extensible multi-protocol indexing. Currently Aave V3 is active; Morpho, Fluid, and Euler adapters are stubbed and ready for activation.
+
+```
+┌─ Protocol Adapters (rates/adapters/) ─────────────────────────────────────┐
+│                                                                           │
+│  aave_v3.py [ACTIVE]     morpho.py [STUB]     fluid.py [STUB]            │
+│  getReserveData()        (not yet impl.)      (not yet impl.)            │
+│  USDC, DAI, USDT                                                         │
+│                           euler.py [STUB]                                 │
+│                          (not yet impl.)                                  │
+└───────────────┬───────────────────────────────────────────────────────────┘
+                │
+                ▼
+    daemon.py (generic protocol loop)
+    ├── Protocol rates      → aave_rates.db (rates, rates_dai, rates_usdt)
+    ├── Uniswap V3 slot0()  → aave_rates.db (eth_prices)
+    ├── sUSDe ERC-4626      → aave_rates.db (susde_rates)     [ON-CHAIN]
+    ├── SOFR NY Fed API     → aave_rates.db (sofr_rates)      [DAILY]
+    │
+    └── sync_clean_db.py (every 60s)
+         └── aave_rates.db → clean_rates.db (hourly_stats)
+                             sUSDe APY = ((rate_now/rate_24h_ago) - 1) × 365 × 100
+```
+
+### Adding a New Protocol
+
+1. Add entry to `PROTOCOLS` in `config.py` with `enabled: True`
+2. Create `rates/adapters/{protocol}.py` implementing `ProtocolAdapter`
+3. Restart container — daemon auto-discovers, tables auto-create, API auto-serves
+
+### API Module Structure
+
+```
+api/
+├── main.py              # App entrypoint, middleware (~130 lines)
+├── deps.py              # DB connections, auth, cache
+└── routes/
+    ├── rates.py         # /rates, /eth-prices, /ws/rates, /download/db
+    └── sim.py           # /simulations, /market, /deploy (RATE_ONLY=false only)
+```
+
 ### ETH Price Sync
-
-The rates-indexer daemon fetches ETH/USDC prices **on-chain** via the Uniswap V3 `slot0()` function at every block (~12s), alongside Aave V3 rate calls.
-
-```
-Uniswap V3 slot0() ──► aave_rates.db (eth_prices) ──► sync_clean_db.py ──► clean_rates.db (hourly_stats)
-     (per block, ~12s)          (block-level)              (AVG per hour)         (hourly aggregated)
-```
 
 - **Primary source:** Uniswap V3 USDC/ETH 0.05% pool `slot0()` — real-time `sqrtPriceX96` at each block
 - **Conversion:** `ETH_USD = 10¹² / (sqrtPriceX96² / 2¹⁹²)` (adjusts for USDC 6 / WETH 18 decimals)
 - **Gap repair:** The Graph `poolHourDatas` query backfills missing data after crashes (startup only)
 - **API resolutions:** `RAW` = block-level from `aave_rates.db`, `1H/4H/1D` = aggregated from `clean_rates.db`
 - **Bot display:** Uses `RAW` resolution for live price, `1H` for 24h trend calculation
+
+### sUSDe Yield (On-Chain)
+
+- **Source:** sUSDe ERC-4626 vault (`0x9D39...3497`) `convertToAssets(1e18)` — reads exchange rate at each block
+- **APY computation:** 24h delta annualized: `((rate_now / rate_24h_ago) - 1) × 365 × 100`
+- **Update frequency:** Exchange rate updates ~every 8 hours on-chain (Ethena keeper), so APY appears "steppy"
+- **Replaces:** former Ethena API dependency (removed)

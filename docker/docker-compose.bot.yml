@@ -30,9 +30,15 @@ services:
     volumes:
       - ./bot-data:/data
     restart: unless-stopped
+    networks:
+      - docker_default
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 30s
       retries: 3
+
+networks:
+  docker_default:
+    external: true
