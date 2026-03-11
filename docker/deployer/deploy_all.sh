@@ -116,12 +116,17 @@ echo "  BrokerRouter:  $BROKER_ROUTER"
 
 # ─── Deploy MockOracle ─────────────────────────────────────────
 log_step "1.2" "Deploying MockRLDAaveOracle..."
-MOCK_ORACLE=$(forge create test/mocks/MockRLDAaveOracle.sol:MockRLDAaveOracle \
-    --private-key $DEPLOYER_KEY \
-    --rpc-url $RPC_URL \
-    --broadcast 2>&1 | grep "Deployed to:" | awk '{print $3}')
-
-[ -z "$MOCK_ORACLE" ] && log_err "Failed to deploy MockOracle"
+MOCK_ORACLE=""
+for _attempt in 1 2 3; do
+    MOCK_ORACLE=$(forge create test/mocks/MockRLDAaveOracle.sol:MockRLDAaveOracle \
+        --private-key $DEPLOYER_KEY \
+        --rpc-url $RPC_URL \
+        --broadcast 2>&1 | grep "Deployed to:" | awk '{print $3}')
+    [ -n "$MOCK_ORACLE" ] && break
+    log_info "MockOracle deploy attempt $_attempt failed, retrying in 3s..."
+    sleep 3
+done
+[ -z "$MOCK_ORACLE" ] && log_err "Failed to deploy MockOracle after 3 attempts"
 log_ok "MockOracle: $MOCK_ORACLE"
 
 # ─── Set initial rate ──────────────────────────────────────────
