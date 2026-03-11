@@ -1,15 +1,18 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# RLD Simulation — Full Stack Restart
+# RLD Simulation - Full Stack Restart
 # ═══════════════════════════════════════════════════════════════
-# Cleanly tears down EVERYTHING (Anvil + all containers),
-# restarts from a clean fork, and waits for full health.
+# Cleanly tears down the simulation stack (Anvil + Postgres +
+# Indexer + Daemons), restarts from a clean fork, and waits
+# for full health.
+#
+# NOTE: rates-indexer and telegram bot are independent
+# infrastructure services managed separately via their own
+# compose files (docker-compose.rates.yml, docker-compose.bot.yml).
 #
 # Usage:
 #   ./docker/restart.sh              # Full restart (default)
-#   ./docker/restart.sh --sim-only   # Only restart simulation stack (keep rates + bot)
 #   ./docker/restart.sh --no-build   # Skip Docker image rebuilds
-#   ./docker/restart.sh --keep-data  # Keep indexer data volume
 #
 # Requirements:
 #   - docker, docker compose, anvil, cast must be in PATH
@@ -24,8 +27,6 @@ RLD_ROOT="$(dirname "$SCRIPT_DIR")"
 DOCKER_DIR="$SCRIPT_DIR"
 
 COMPOSE_MAIN="$DOCKER_DIR/docker-compose.yml"
-COMPOSE_RATES="$DOCKER_DIR/docker-compose.rates.yml"
-COMPOSE_BOT="$DOCKER_DIR/docker-compose.bot.yml"
 ENV_FILE="$DOCKER_DIR/.env"
 
 ANVIL_LOG="/tmp/anvil.log"
@@ -39,21 +40,15 @@ DEPLOYER_TIMEOUT=600     # 10 minutes — deployment takes ~5-8 min
 HEALTH_TIMEOUT=120       # 2 minutes for containers to become healthy
 
 # ─── Parse args ───────────────────────────────────────────────
-SIM_ONLY=false
 NO_BUILD=false
-KEEP_DATA=false
 
 for arg in "$@"; do
     case "$arg" in
-        --sim-only)  SIM_ONLY=true ;;
         --no-build)  NO_BUILD=true ;;
-        --keep-data) KEEP_DATA=true ;;
         --help|-h)
-            echo "Usage: $0 [--sim-only] [--no-build] [--keep-data]"
+            echo "Usage: $0 [--no-build]"
             echo ""
-            echo "  --sim-only   Only restart sim stack (keep rates-indexer + telegram bot)"
             echo "  --no-build   Skip Docker image rebuilds (faster if no code changes)"
-            echo "  --keep-data  Preserve indexer data volume across restart"
             exit 0
             ;;
         *) echo "Unknown option: $arg"; exit 1 ;;
@@ -104,7 +99,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Load config from env files
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|RATES_PORT|BOT_PORT|INDEXER_PORT|API_KEY)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|INDEXER_PORT|RATES_PORT|DB_PORT|SIM_ID|API_KEY)=' "$ENV_FILE" | sed 's/^/export /')
 
 # Also load FORK_BLOCK from root .env if not in docker/.env
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
@@ -129,23 +124,20 @@ fi
 # ═════════════════════════════════════════════════════════════
 header "STEP 1: TEAR DOWN"
 
-# 1a. Stop main simulation stack
+# 1a. Stop main simulation stack (including Postgres volume for clean state)
 step "1a" "Stopping simulation stack..."
-DOWN_FLAGS=""
-if [ "$KEEP_DATA" = false ]; then
-    DOWN_FLAGS="-v"
-fi
-docker compose -f "$COMPOSE_MAIN" --env-file "$ENV_FILE" down $DOWN_FLAGS 2>/dev/null || true
-ok "Simulation stack stopped"
+docker compose -f "$COMPOSE_MAIN" --env-file "$ENV_FILE" down -v 2>/dev/null || true
+ok "Simulation stack stopped (volumes removed)"
 
-# 1b. Stop rates + bot if full restart
-if [ "$SIM_ONLY" = false ]; then
-    step "1b" "Stopping rates-indexer and bot..."
-    docker compose -f "$COMPOSE_RATES" --env-file "$ENV_FILE" down 2>/dev/null || true
-    docker compose -f "$COMPOSE_BOT" --env-file "$ENV_FILE" down 2>/dev/null || true
-    ok "Rates-indexer and bot stopped"
+# 1b. Clear stale deployment config (forces wait-for-config.sh to block until fresh deploy)
+step "1b" "Clearing previous deployment.json..."
+DEPLOY_JSON="$DOCKER_DIR/deployment.json"
+if [ -f "$DEPLOY_JSON" ]; then
+    OLD_LINES=$(wc -l < "$DEPLOY_JSON")
+    echo '{}' > "$DEPLOY_JSON"
+    ok "deployment.json cleared (had $OLD_LINES lines)"
 else
-    info "Skipping rates/bot (--sim-only mode)"
+    ok "No deployment.json to clear"
 fi
 
 # 1c. Kill any orphaned standalone containers that may hold ports
@@ -187,10 +179,7 @@ fi
 step "1f" "Checking port availability..."
 PORTS_TO_CHECK=("$ANVIL_PORT:Anvil")
 PORTS_TO_CHECK+=("${INDEXER_PORT:-8080}:Indexer")
-if [ "$SIM_ONLY" = false ]; then
-    PORTS_TO_CHECK+=("${RATES_PORT:-8081}:Rates")
-    PORTS_TO_CHECK+=("${BOT_PORT:-8082}:Bot")
-fi
+PORTS_TO_CHECK+=("${DB_PORT:-5432}:Postgres")
 
 ALL_PORTS_FREE=true
 for port_entry in "${PORTS_TO_CHECK[@]}"; do
@@ -277,38 +266,16 @@ cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
 ok "Chain ID set to 31337"
 
 # ═════════════════════════════════════════════════════════════
-# STEP 3: Start support services (if full restart)
+# STEP 3: Verify rates-indexer is reachable (managed separately)
 # ═════════════════════════════════════════════════════════════
-if [ "$SIM_ONLY" = false ]; then
-    header "STEP 3: START SUPPORT SERVICES"
+header "STEP 3: PRE-DEPLOY CHECKS"
 
-    step "3a" "Starting rates-indexer..."
-    docker compose -f "$COMPOSE_RATES" --env-file "$ENV_FILE" up -d --build 2>&1 | tail -3
-    ok "Rates-indexer started"
-
-    step "3b" "Starting Telegram bot..."
-    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-        docker compose -f "$COMPOSE_BOT" --env-file "$ENV_FILE" up -d --build 2>&1 | tail -3
-        ok "Telegram bot started"
-    else
-        warn "TELEGRAM_BOT_TOKEN not set — skipping bot"
-    fi
-
-    # Wait for rates-indexer to be healthy (deployer depends on it)
-    step "3c" "Waiting for rates-indexer health..."
-    for i in $(seq 1 60); do
-        if curl -sf http://localhost:${RATES_PORT:-8081}/ > /dev/null 2>&1; then
-            ok "Rates-indexer healthy (took ${i}s)"
-            break
-        fi
-        sleep 2
-    done
-    if ! curl -sf http://localhost:${RATES_PORT:-8081}/ > /dev/null 2>&1; then
-        warn "Rates-indexer not responding — deployer will use fallback rate"
-    fi
+step "3a" "Checking rates-indexer availability..."
+if curl -sf http://localhost:${RATES_PORT:-8081}/ > /dev/null 2>&1; then
+    ok "Rates-indexer reachable (deployer will use live rate)"
 else
-    header "STEP 3: SUPPORT SERVICES (SKIPPED)"
-    info "Rates-indexer and bot kept running (--sim-only mode)"
+    warn "Rates-indexer not reachable - deployer will use fallback rate (5%)"
+    info "Start it separately: docker compose -f docker-compose.rates.yml up -d"
 fi
 
 # ═════════════════════════════════════════════════════════════
@@ -386,35 +353,44 @@ done
 header "STEP 5: VERIFY ALL CONTAINERS"
 
 step "5a" "Checking container statuses..."
-EXPECTED_RUNNING=("docker-indexer-1" "docker-mm-daemon-1" "docker-chaos-trader-1")
+EXPECTED_RUNNING=("docker-postgres-1" "docker-indexer-1" "docker-mm-daemon-1" "docker-chaos-trader-1")
 ALL_RUNNING=true
 
 for container in "${EXPECTED_RUNNING[@]}"; do
     STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
     if [ "$STATUS" = "running" ]; then
-        ok "$container → running"
+        ok "$container -> running"
     elif [ "$STATUS" = "created" ]; then
-        warn "$container stuck in 'created' — forcing start..."
+        warn "$container stuck in 'created' - forcing start..."
         docker start "$container" 2>/dev/null || true
         sleep 2
         STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
         if [ "$STATUS" = "running" ]; then
-            ok "$container → started successfully"
+            ok "$container -> started successfully"
         else
-            fail "$container → failed to start ($STATUS)"
+            fail "$container -> failed to start ($STATUS)"
             docker logs "$container" --tail 5 2>&1
             ALL_RUNNING=false
         fi
     else
-        fail "$container → $STATUS"
+        fail "$container -> $STATUS"
         ALL_RUNNING=false
     fi
 done
 
+# Verify Postgres is accepting connections
+step "5b" "Checking Postgres connectivity..."
+if docker exec docker-postgres-1 pg_isready -U rld -d rld_indexer > /dev/null 2>&1; then
+    ok "Postgres accepting connections"
+else
+    fail "Postgres not accepting connections"
+    ALL_RUNNING=false
+fi
+
 # Wait for indexer to become healthy
-step "5b" "Waiting for indexer health check..."
+step "5c" "Waiting for indexer health check..."
 for i in $(seq 1 "$HEALTH_TIMEOUT"); do
-    if curl -sf http://localhost:${INDEXER_PORT:-8080}/ > /dev/null 2>&1; then
+    if curl -sf http://localhost:${INDEXER_PORT:-8080}/health > /dev/null 2>&1; then
         ok "Indexer API healthy (took ${i}s)"
         break
     fi
@@ -423,8 +399,8 @@ for i in $(seq 1 "$HEALTH_TIMEOUT"); do
     fi
     sleep 1
 done
-if ! curl -sf http://localhost:${INDEXER_PORT:-8080}/ > /dev/null 2>&1; then
-    warn "Indexer not responding yet — may still be initializing"
+if ! curl -sf http://localhost:${INDEXER_PORT:-8080}/health > /dev/null 2>&1; then
+    warn "Indexer not responding yet - may still be initializing"
 fi
 
 # Quick daemon sanity check — look for errors in last few log lines
@@ -470,9 +446,14 @@ done
 
 echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
 
+# Postgres
+PG_STATUS=$(docker inspect --format '{{.State.Health.Status}}' docker-postgres-1 2>/dev/null || echo "unknown")
+printf "${MAGENTA}║${NC}  %-28s %s %-22s ${MAGENTA}║${NC}\n" "docker-postgres-1" "$([ \"$PG_STATUS\" = \"healthy\" ] && echo \"✅\" || echo \"⚠️\")" "Port: ${DB_PORT:-5432} Schema: sim_${SIM_ID:-default}"
+
+echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
+
 # Ports
-printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Rates=:${RATES_PORT:-8081}"
-printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "" "Bot=:${BOT_PORT:-8082}"
+printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Postgres=:${DB_PORT:-5432}"
 
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -481,6 +462,8 @@ echo "  Logs:    docker compose -f $COMPOSE_MAIN logs -f"
 echo "  Status:  docker compose -f $COMPOSE_MAIN ps -a"
 echo "  Stop:    docker compose -f $COMPOSE_MAIN down -v"
 echo "  Anvil:   tail -f $ANVIL_LOG"
+echo "  Rates:   docker compose -f docker-compose.rates.yml up -d"
+echo "  Bot:     docker compose -f docker-compose.bot.yml up -d"
 echo ""
 
 # ═════════════════════════════════════════════════════════════

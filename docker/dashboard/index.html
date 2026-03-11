@@ -609,6 +609,15 @@
                       cls: "ok",
                     }
                   : null,
+                j.databases?.sim_indexer_pg?.last_indexed_block > 0
+                  ? {
+                      ts,
+                      msg: `sim-indexer pg block: ${fmtN(j.databases.sim_indexer_pg.last_indexed_block)} (${fmtN(j.databases.sim_indexer_pg.block_state_rows)} rows)`,
+                      cls: "ok",
+                    }
+                  : j.databases?.sim_indexer_pg?.healthy === false
+                    ? { ts, msg: "sim-indexer postgres: unreachable", cls: "err" }
+                    : null,
                 j.system.errors_today > 0
                   ? {
                       ts,
@@ -723,6 +732,18 @@
             ok: svc.sim_indexer.healthy,
             ms: svc.sim_indexer.response_ms,
             port: "8080",
+            extra: d.databases?.sim_indexer_pg?.last_indexed_block > 0
+              ? `blk ${fmtN(d.databases.sim_indexer_pg.last_indexed_block)}`
+              : "",
+          },
+          {
+            n: "Postgres",
+            ok: d.databases?.sim_indexer_pg?.healthy || false,
+            ms: null,
+            port: "5432",
+            extra: d.databases?.sim_indexer_pg?.schemas
+              ? `${d.databases.sim_indexer_pg.schemas.length} schema(s)`
+              : "",
           },
           {
             n: "Monitor Bot",
@@ -1469,6 +1490,101 @@
                               {cr?.rows_24h} / 24
                             </span>
                           </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Card>
+
+                <Card
+                  title="SIM-INDEXER (POSTGRES)"
+                  badge={(() => {
+                    const pg = d.databases?.sim_indexer_pg;
+                    if (!pg || pg.error || !pg.healthy)
+                      return <Badge text="DOWN" type="r" />;
+                    if (pg.last_indexed_block <= 0)
+                      return <Badge text="EMPTY" type="a" />;
+                    return <Badge text="ACTIVE" type="g" />;
+                  })()}
+                  delay={10}
+                >
+                  {(() => {
+                    const pg = d.databases?.sim_indexer_pg;
+                    if (!pg || !pg.healthy)
+                      return (
+                        <div style={{ color: "var(--r)", fontSize: 11 }}>
+                          ⚠ Postgres not reachable
+                        </div>
+                      );
+
+                    return (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 10,
+                            padding: "4px 6px",
+                            borderBottom: "1px solid rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <span>last indexed block</span>
+                          <span
+                            style={{
+                              color: pg.last_indexed_block > 0 ? "var(--g)" : "var(--td)",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {pg.last_indexed_block > 0 ? fmtN(pg.last_indexed_block) : "—"}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 10,
+                            padding: "4px 6px",
+                            borderBottom: "1px solid rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <span>block_state rows</span>
+                          <span style={{ fontWeight: 600 }}>
+                            {fmtN(pg.block_state_rows)}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 10,
+                            padding: "4px 6px",
+                            borderBottom: "1px solid rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <span>events rows</span>
+                          <span style={{ fontWeight: 600 }}>
+                            {fmtN(pg.events_rows)}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 10,
+                            padding: "4px 6px",
+                            borderBottom: "1px solid rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <span>schemas</span>
+                          <span style={{ fontWeight: 600, color: "var(--c)" }}>
+                            {pg.schemas ? pg.schemas.join(", ") : "none"}
+                          </span>
                         </div>
                       </div>
                     );

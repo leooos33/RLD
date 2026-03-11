@@ -661,10 +661,7 @@ cat > /config/deployment.json << EOF
     "zero_for_one_long": $ZERO_FOR_ONE_LONG,
     "user_a_broker": "$USER_A_BROKER",
     "mm_broker": "$MM_BROKER",
-    "chaos_broker": "$CHAOS_BROKER",
-    "deployer_key": "$DEPLOYER_KEY",
-    "mm_key": "$MM_KEY",
-    "chaos_key": "$CHAOS_KEY"
+    "chaos_broker": "$CHAOS_BROKER"
 }
 EOF
 

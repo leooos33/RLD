@@ -16,7 +16,7 @@ import strawberry
 import os
 import json
 import math
-import sqlite3
+import psycopg2.extras
 import time
 import urllib.request
 import urllib.parse
@@ -32,6 +32,7 @@ from db.comprehensive import (
     get_events,
     get_bonds_by_owner,
     get_all_bonds,
+    get_conn,
 )
 
 
@@ -367,29 +368,27 @@ def _build_snapshot(summary: dict) -> Snapshot:
 def _compute_volume(hours: int = 24) -> Volume:
     """Compute trade volume from Swap events in DB."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
-        max_ts = c.fetchone()[0]
-        if not max_ts:
-            conn.close()
-            return Volume(volume_usd=0, swap_count=0, hours=hours)
+        with get_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+            max_ts = c.fetchone()[0]
+            if not max_ts:
+                return Volume(volume_usd=0, swap_count=0, hours=hours)
 
-        cutoff = max_ts - (hours * 3600)
-        c.execute('''
-            SELECT COUNT(*),
-                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
-            FROM events
-            WHERE event_name='Swap' AND timestamp >= ?
-        ''', (cutoff,))
-        count, vol_raw = c.fetchone()
-        conn.close()
+            cutoff = max_ts - (hours * 3600)
+            c.execute("""
+                SELECT COUNT(*),
+                       SUM(ABS(CAST(data->>'amount1' AS BIGINT)))
+                FROM events
+                WHERE event_name='Swap' AND timestamp >= %s
+            """, (cutoff,))
+            count, vol_raw = c.fetchone()
 
-        return Volume(
-            volume_usd=(vol_raw or 0) / 1e6,
-            swap_count=count or 0,
-            hours=hours,
-        )
+            return Volume(
+                volume_usd=(vol_raw or 0) / 1e6,
+                swap_count=count or 0,
+                hours=hours,
+            )
     except Exception:
         return Volume(volume_usd=0, swap_count=0, hours=hours)
 
@@ -397,33 +396,31 @@ def _compute_volume(hours: int = 24) -> Volume:
 def _compute_volume_history(hours: int = 168, bucket_hours: int = 1) -> List[VolumeBar]:
     """Compute volume history bars."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
-        max_ts = c.fetchone()[0]
-        if not max_ts:
-            conn.close()
-            return []
+        with get_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+            max_ts = c.fetchone()[0]
+            if not max_ts:
+                return []
 
-        cutoff = max_ts - (hours * 3600)
-        bucket_sec = bucket_hours * 3600
-        c.execute('''
-            SELECT (timestamp / ?) * ? as bucket_ts,
-                   COUNT(*),
-                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
-            FROM events
-            WHERE event_name='Swap' AND timestamp >= ?
-            GROUP BY bucket_ts
-            ORDER BY bucket_ts
-        ''', (bucket_sec, bucket_sec, cutoff))
-        rows = c.fetchall()
-        conn.close()
+            cutoff = max_ts - (hours * 3600)
+            bucket_sec = bucket_hours * 3600
+            c.execute("""
+                SELECT (timestamp / %s) * %s as bucket_ts,
+                       COUNT(*),
+                       SUM(ABS(CAST(data->>'amount1' AS BIGINT)))
+                FROM events
+                WHERE event_name='Swap' AND timestamp >= %s
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts
+            """, (bucket_sec, bucket_sec, cutoff))
+            rows = c.fetchall()
 
-        return [VolumeBar(
-            timestamp=row[0],
-            swap_count=row[1],
-            volume_usd=(row[2] or 0) / 1e6,
-        ) for row in rows]
+            return [VolumeBar(
+                timestamp=row[0],
+                swap_count=row[1],
+                volume_usd=(row[2] or 0) / 1e6,
+            ) for row in rows]
     except Exception:
         return []
 
@@ -546,31 +543,28 @@ def _get_market_info() -> Optional[MarketInfo]:
 def _get_twamm_orders(owner: Optional[str] = None) -> List[TwammOrder]:
     """Get TWAMM orders from SubmitOrder/CancelOrder events in DB."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        with get_conn() as conn:
+            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Find all SubmitOrder events
-        c.execute("""
-            SELECT * FROM events
-            WHERE event_name = 'SubmitOrder'
-            ORDER BY block_number DESC
-        """)
-        submit_rows = c.fetchall()
+            # Find all SubmitOrder events
+            c.execute("""
+                SELECT * FROM events
+                WHERE event_name = 'SubmitOrder'
+                ORDER BY block_number DESC
+            """)
+            submit_rows = c.fetchall()
 
-        # Find all CancelOrder events
-        c.execute("""
-            SELECT DISTINCT
-                COALESCE(json_extract(data, '$.order_id'), json_extract(data, '$.orderId')) as order_id
-            FROM events WHERE event_name = 'CancelOrder'
-        """)
-        cancelled_ids = {row[0] for row in c.fetchall() if row[0]}
-
-        conn.close()
+            # Find all CancelOrder events
+            c.execute("""
+                SELECT DISTINCT
+                    COALESCE(data->>'order_id', data->>'orderId') as order_id
+                FROM events WHERE event_name = 'CancelOrder'
+            """)
+            cancelled_ids = {row['order_id'] for row in c.fetchall() if row.get('order_id')}
 
         orders = []
         for row in submit_rows:
-            d = json.loads(row["data"]) if isinstance(row["data"], str) else row["data"]
+            d = json.loads(row["data"]) if isinstance(row["data"], str) else (row["data"] or {})
             order_owner = d.get("owner", "")
             if owner and order_owner.lower() != owner.lower():
                 continue
@@ -599,13 +593,12 @@ def _get_twamm_orders(owner: Optional[str] = None) -> List[TwammOrder]:
 
 def _get_status() -> IndexerStatus:
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM block_state")
-        total_blocks = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM events")
-        total_events = c.fetchone()[0]
-        conn.close()
+        with get_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM block_state")
+            total_blocks = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM events")
+            total_events = c.fetchone()[0]
         return IndexerStatus(
             total_block_states=total_blocks,
             total_events=total_events,

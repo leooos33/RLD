@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RLD Market Indexer — Container Entrypoint.
+RLD Market Indexer - Container Entrypoint.
 
 Single Python process:
   1. Auto-discover market config from RLD_CORE + MARKET_ID
@@ -16,7 +16,8 @@ Required env vars:
 
 Optional env vars:
   POOL_MANAGER - V4 PoolManager (default: mainnet)
-  DB_PATH      - SQLite path (default: /data/market.db)
+  DB_URL       - PostgreSQL connection string (default: postgresql://rld:rld@postgres:5432/rld_indexer)
+  SIM_ID       - Simulation ID for schema isolation (default: default)
   API_PORT     - API port (default: 8080)
   POLL_INTERVAL - Block poll interval in seconds (default: 2)
   BROKERS      - Comma-separated broker addresses to track
@@ -35,9 +36,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("entrypoint")
 
-# Set DB_PATH default for container
-if "DB_PATH" not in os.environ:
-    os.environ["DB_PATH"] = "/data/market.db"
+# Set DB_URL default for container
+if "DB_URL" not in os.environ:
+    os.environ["DB_URL"] = "postgresql://rld:rld_dev_password@postgres:5432/rld_indexer"
+if "SIM_ID" not in os.environ:
+    os.environ["SIM_ID"] = "default"
 
 # Load config from deployment.json (written by deployer in compose stack)
 config_file = os.environ.get("CONFIG_FILE", "/config/deployment.json")
@@ -145,7 +148,7 @@ if os.path.exists(config_file):
 # Now import our modules
 from indexers.discover import discover_from_env
 from indexers.comprehensive import ComprehensiveIndexer
-from db.comprehensive import init_comprehensive_db
+from db.comprehensive import init_db
 
 
 def create_indexer_from_config(config: dict) -> ComprehensiveIndexer:
@@ -200,41 +203,33 @@ def main():
     os.environ["_DISCOVERED_ORACLE"] = config["rate_oracle"]
     os.environ.setdefault("TWAMM_HOOK", config["twamm_hook"])
 
-    # 2. Initialize DB
+    # 2. Initialize DB (PostgreSQL with schema-per-simulation)
     logger.info("[2/4] Initializing database...")
-    db_path = os.environ.get("DB_PATH", "/data/market.db")
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    init_comprehensive_db()
-    logger.info(f"  DB: {db_path}")
+    db_url = os.environ.get("DB_URL")
+    sim_id = os.environ.get("SIM_ID", "default")
+    init_db(db_url, sim_id)
+    logger.info(f"  DB: {db_url} (schema: sim_{sim_id})")
 
-    # 3. Stale DB detection — auto-reset on simulation restart
+    # 3. Stale DB detection - auto-reset on simulation restart
     logger.info("[3/4] Checking for stale data (simulation restart)...")
     try:
         from web3 import Web3
         w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
         chain_head = w3.eth.block_number
 
-        from db.comprehensive import get_last_indexed_block
+        from db.comprehensive import get_last_indexed_block, clear_sim_data
         last_indexed = get_last_indexed_block()
 
         lag = last_indexed - chain_head
         if last_indexed > 0 and lag > 1:
-            logger.warning(f"  ⚠️  STALE DB DETECTED: indexed block {last_indexed:,} > chain head {chain_head:,} (lag: {lag:,})")
-            logger.warning(f"  🔄 Simulation was restarted — clearing indexer tables (preserving bonds)")
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            c = conn.cursor()
-            # Drop indexer tables but preserve bonds (user positions)
-            for table in ("block_state", "pool_state", "events", "broker_positions",
-                          "lp_positions", "transactions", "indexer_state", "price_candles_5m"):
-                c.execute(f"DELETE FROM {table}")
-            conn.commit()
-            conn.close()
-            logger.info(f"  ✅ Indexer tables cleared. Bonds preserved. Will re-index from chain head.")
+            logger.warning(f"  \u26a0\ufe0f  STALE DB DETECTED: indexed block {last_indexed:,} > chain head {chain_head:,} (lag: {lag:,})")
+            logger.warning(f"  \U0001f504 Simulation was restarted - clearing indexer tables (preserving bonds)")
+            clear_sim_data()
+            logger.info(f"  \u2705 Indexer tables cleared. Bonds preserved. Will re-index from chain head.")
         else:
             logger.info(f"  Chain head: {chain_head:,} | Last indexed: {last_indexed:,} | OK")
     except Exception as e:
-        logger.warning(f"  ⚠️  Could not check chain head (non-fatal): {e}")
+        logger.warning(f"  \u26a0\ufe0f  Could not check chain head (non-fatal): {e}")
 
     # 4. Create and start indexer
     logger.info("[4/4] Starting indexer + API...")

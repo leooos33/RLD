@@ -14,7 +14,7 @@ from typing import Optional, List
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import sqlite3
+import psycopg2.extras
 import json
 import math
 from fastapi.responses import JSONResponse
@@ -30,7 +30,7 @@ from db.comprehensive import (
     get_events,
     get_broker_history,
     get_last_indexed_block,
-    DB_PATH
+    get_conn,
 )
 
 
@@ -181,13 +181,12 @@ async def health(request: Request):
     try:
         last_block = get_last_indexed_block()
 
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM block_state")
-        total_blocks = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM events")
-        total_events = c.fetchone()[0]
-        conn.close()
+        with get_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM block_state")
+            total_blocks = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM events")
+            total_events = c.fetchone()[0]
 
         # Get chain head if web3 is available
         chain_head = None
@@ -239,16 +238,14 @@ async def config(request: Request):
 async def get_status():
     """Get indexer status and stats."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        with get_conn() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM block_state")
-        total_blocks = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM block_state")
+            total_blocks = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM events")
-        total_events = cursor.fetchone()[0]
-
-        conn.close()
+            cursor.execute("SELECT COUNT(*) FROM events")
+            total_events = cursor.fetchone()[0]
 
         return {
             "last_indexed_block": get_last_indexed_block(),
@@ -666,153 +663,147 @@ async def get_price_chart(
         BUCKET_MAP = {"5M": 300, "1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
         bucket_sec = BUCKET_MAP.get(res, 3600)
 
-        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        with get_conn() as conn:
+            c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # ── Fast path: 5M → read from pre-aggregated price_candles_5m ──
-        if res == "5M":
-            q = "SELECT * FROM price_candles_5m WHERE 1=1"
-            params = []
+            # ── Fast path: 5M → read from pre-aggregated price_candles_5m ──
+            if res == "5M":
+                q = "SELECT * FROM price_candles_5m WHERE 1=1"
+                params = []
+                if start_time:
+                    q += " AND ts >= %s"
+                    params.append(start_time)
+                if end_time:
+                    q += " AND ts <= %s"
+                    params.append(end_time)
+                q += " ORDER BY ts DESC LIMIT %s"
+                params.append(limit)
+
+                try:
+                    c.execute(q, params)
+                    candle_rows = c.fetchall()
+                except Exception:
+                    # Table not yet created — fall through to live aggregation
+                    candle_rows = []
+
+                chart_data = []
+                for row in reversed(candle_rows):
+                    chart_data.append({
+                        'timestamp':             row['ts'],
+                        'block_number':          None,
+                        'index_price':           row['index_close'] or 0,
+                        'index_open':            row['index_open']  or 0,
+                        'index_high':            row['index_high']  or 0,
+                        'index_low':             row['index_low']   or 0,
+                        'mark_price':            row['mark_close']  or 0,
+                        'mark_open':             row['mark_open']   or 0,
+                        'mark_high':             row['mark_high']   or 0,
+                        'mark_low':              row['mark_low']    or 0,
+                        'normalization_factor':  row['nf_close']    or 0,
+                        'total_debt':            row['debt_close']  or 0,
+                        'samples':               row['sample_count'] or 0,
+                    })
+
+                return {
+                    'data':           chart_data,
+                    'count':          len(chart_data),
+                    'resolution':     res,
+                    'bucket_seconds': bucket_sec,
+                    'from_block':     None,
+                    'to_block':       None,
+                }
+
+            # ── Standard path: live aggregation from block_state + pool_state ──
+            ms_query = '''
+                SELECT
+                    (block_timestamp / %s) * %s as bucket_ts,
+                    MIN(block_number) as first_block,
+                    MAX(block_number) as last_block,
+                    MAX(CAST(index_price AS BIGINT)) as index_high,
+                    MIN(CAST(index_price AS BIGINT)) as index_low,
+                    COUNT(*) as sample_count
+                FROM block_state
+                WHERE 1=1
+            '''
+            params = [bucket_sec, bucket_sec]
+
             if start_time:
-                q += " AND ts >= ?"
+                ms_query += ' AND block_timestamp >= %s'
                 params.append(start_time)
             if end_time:
-                q += " AND ts <= ?"
+                ms_query += ' AND block_timestamp <= %s'
                 params.append(end_time)
-            q += " ORDER BY ts DESC LIMIT ?"
+
+            ms_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT %s'
             params.append(limit)
 
-            try:
-                c.execute(q, params)
-                candle_rows = c.fetchall()
-            except sqlite3.OperationalError:
-                # Table not yet created — fall through to live aggregation
-                candle_rows = []
+            c.execute(ms_query, params)
+            ms_bucket_rows = c.fetchall()
 
-            conn.close()
-
-            chart_data = []
-            for row in reversed(candle_rows):
-                chart_data.append({
-                    'timestamp':             row['ts'],
-                    'block_number':          None,
-                    'index_price':           row['index_close'] or 0,
-                    'index_open':            row['index_open']  or 0,
-                    'index_high':            row['index_high']  or 0,
-                    'index_low':             row['index_low']   or 0,
-                    'mark_price':            row['mark_close']  or 0,
-                    'mark_open':             row['mark_open']   or 0,
-                    'mark_high':             row['mark_high']   or 0,
-                    'mark_low':              row['mark_low']    or 0,
-                    'normalization_factor':  row['nf_close']    or 0,
-                    'total_debt':            row['debt_close']  or 0,
-                    'samples':               row['sample_count'] or 0,
+            # Fetch open/close values per bucket
+            ms_rows = []
+            for row in ms_bucket_rows:
+                fb, lb = row['first_block'], row['last_block']
+                c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = %s', (fb,))
+                open_r = c.fetchone()
+                c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = %s', (lb,))
+                close_r = c.fetchone()
+                ms_rows.append({
+                    'bucket_ts': row['bucket_ts'],
+                    'first_block': fb,
+                    'last_block': lb,
+                    'index_high': row['index_high'],
+                    'index_low': row['index_low'],
+                    'sample_count': row['sample_count'],
+                    'index_open': int(open_r['index_price'] or 0) if open_r else 0,
+                    'index_close': int(close_r['index_price'] or 0) if close_r else 0,
+                    'nf_close': int(close_r['normalization_factor'] or 0) if close_r else 0,
+                    'debt_close': int(close_r['total_debt'] or 0) if close_r else 0,
                 })
 
-            return {
-                'data':           chart_data,
-                'count':          len(chart_data),
-                'resolution':     res,
-                'bucket_seconds': bucket_sec,
-                'from_block':     None,
-                'to_block':       None,
-            }
+            # ── Bucketed pool state (mark price, tick, liquidity) ──────
+            ps_query = '''
+                SELECT
+                    (bs.block_timestamp / %s) * %s as bucket_ts,
+                    MIN(ps.block_number) as first_block,
+                    MAX(ps.block_number) as last_block,
+                    MAX(ps.mark_price) as mark_high,
+                    MIN(ps.mark_price) as mark_low
+                FROM pool_state ps
+                JOIN block_state bs ON bs.block_number = ps.block_number
+                WHERE 1=1
+            '''
+            ps_params = [bucket_sec, bucket_sec]
 
-        # ── Standard path: live aggregation from block_state + pool_state ──
-        ms_query = '''
-            SELECT
-                (block_timestamp / ?) * ? as bucket_ts,
-                MIN(block_number) as first_block,
-                MAX(block_number) as last_block,
-                MAX(CAST(index_price AS INTEGER)) as index_high,
-                MIN(CAST(index_price AS INTEGER)) as index_low,
-                COUNT(*) as sample_count
-            FROM block_state
-            WHERE 1=1
-        '''
-        params = [bucket_sec, bucket_sec]
+            if start_time:
+                ps_query += ' AND bs.block_timestamp >= %s'
+                ps_params.append(start_time)
+            if end_time:
+                ps_query += ' AND bs.block_timestamp <= %s'
+                ps_params.append(end_time)
 
-        if start_time:
-            ms_query += ' AND block_timestamp >= ?'
-            params.append(start_time)
-        if end_time:
-            ms_query += ' AND block_timestamp <= ?'
-            params.append(end_time)
+            ps_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT %s'
+            ps_params.append(limit)
 
-        ms_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT ?'
-        params.append(limit)
+            c.execute(ps_query, ps_params)
+            ps_rows = c.fetchall()
 
-        c.execute(ms_query, params)
-        ms_bucket_rows = c.fetchall()
-
-        # Fetch open/close values per bucket
-        ms_rows = []
-        for row in ms_bucket_rows:
-            fb, lb = row['first_block'], row['last_block']
-            c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = ?', (fb,))
-            open_r = c.fetchone()
-            c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = ?', (lb,))
-            close_r = c.fetchone()
-            ms_rows.append({
-                'bucket_ts': row['bucket_ts'],
-                'first_block': fb,
-                'last_block': lb,
-                'index_high': row['index_high'],
-                'index_low': row['index_low'],
-                'sample_count': row['sample_count'],
-                'index_open': int(open_r['index_price'] or 0) if open_r else 0,
-                'index_close': int(close_r['index_price'] or 0) if close_r else 0,
-                'nf_close': int(close_r['normalization_factor'] or 0) if close_r else 0,
-                'debt_close': int(close_r['total_debt'] or 0) if close_r else 0,
-            })
-
-        # ── Bucketed pool state (mark price, tick, liquidity) ──────
-        ps_query = '''
-            SELECT
-                (bs.block_timestamp / ?) * ? as bucket_ts,
-                MIN(ps.block_number) as first_block,
-                MAX(ps.block_number) as last_block,
-                MAX(ps.mark_price) as mark_high,
-                MIN(ps.mark_price) as mark_low
-            FROM pool_state ps
-            JOIN block_state bs ON bs.block_number = ps.block_number
-            WHERE 1=1
-        '''
-        ps_params = [bucket_sec, bucket_sec]
-
-        if start_time:
-            ps_query += ' AND bs.block_timestamp >= ?'
-            ps_params.append(start_time)
-        if end_time:
-            ps_query += ' AND bs.block_timestamp <= ?'
-            ps_params.append(end_time)
-
-        ps_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT ?'
-        ps_params.append(limit)
-
-        c.execute(ps_query, ps_params)
-        ps_rows = c.fetchall()
-
-        pool_map = {}
-        for row in ps_rows:
-            bucket_ts = row['bucket_ts']
-            fb, lb = row['first_block'], row['last_block']
-            c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = ?', (fb,))
-            open_row = c.fetchone()
-            c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = ?', (lb,))
-            close_row = c.fetchone()
-            pool_map[bucket_ts] = {
-                'mark_open': open_row['mark_price'] if open_row else None,
-                'mark_close': close_row['mark_price'] if close_row else None,
-                'mark_high': row['mark_high'],
-                'mark_low': row['mark_low'],
-                'tick_close': close_row['tick'] if close_row else None,
-                'liq_close': close_row['liquidity'] if close_row else None,
-            }
-
-        conn.close()
+            pool_map = {}
+            for row in ps_rows:
+                bucket_ts = row['bucket_ts']
+                fb, lb = row['first_block'], row['last_block']
+                c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = %s', (fb,))
+                open_row = c.fetchone()
+                c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = %s', (lb,))
+                close_row = c.fetchone()
+                pool_map[bucket_ts] = {
+                    'mark_open': open_row['mark_price'] if open_row else None,
+                    'mark_close': close_row['mark_price'] if close_row else None,
+                    'mark_high': row['mark_high'],
+                    'mark_low': row['mark_low'],
+                    'tick_close': close_row['tick'] if close_row else None,
+                    'liq_close': close_row['liquidity'] if close_row else None,
+                }
 
         chart_data = []
         for row in reversed(ms_rows):
@@ -855,26 +846,24 @@ async def get_volume(
 ):
     """Get trade volume aggregated from Swap events."""
     try:
-        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
+        with get_conn() as conn:
+            c = conn.cursor()
 
-        # Get latest timestamp
-        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
-        max_ts = c.fetchone()[0]
-        if not max_ts:
-            return {"volume_24h": 0, "swap_count": 0, "volume_formatted": "$0"}
+            # Get latest timestamp
+            c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+            max_ts = c.fetchone()[0]
+            if not max_ts:
+                return {"volume_24h": 0, "swap_count": 0, "volume_formatted": "$0"}
 
-        cutoff = max_ts - (hours * 3600)
+            cutoff = max_ts - (hours * 3600)
 
-        c.execute('''
-            SELECT COUNT(*),
-                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
-            FROM events
-            WHERE event_name='Swap' AND timestamp >= ?
-        ''', (cutoff,))
-        count, vol_raw = c.fetchone()
-        conn.close()
+            c.execute("""
+                SELECT COUNT(*),
+                       SUM(ABS(CAST(data->>'amount1' AS BIGINT)))
+                FROM events
+                WHERE event_name='Swap' AND timestamp >= %s
+            """, (cutoff,))
+            count, vol_raw = c.fetchone()
 
         vol_raw = vol_raw or 0
         vol_usd = vol_raw / 1e6
@@ -909,41 +898,39 @@ async def get_volume_history(
     Returns array of {timestamp, volume_usd, swap_count} buckets.
     """
     try:
-        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
+        with get_conn() as conn:
+            c = conn.cursor()
 
-        # Get time range
-        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
-        max_ts = c.fetchone()[0]
-        if not max_ts:
-            return {"bars": [], "bucket_hours": bucket}
+            # Get time range
+            c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+            max_ts = c.fetchone()[0]
+            if not max_ts:
+                return {"bars": [], "bucket_hours": bucket}
 
-        bucket_sec = bucket * 3600
-        cutoff = max_ts - (hours * 3600)
+            bucket_sec = bucket * 3600
+            cutoff = max_ts - (hours * 3600)
 
-        c.execute('''
-            SELECT (timestamp / ?) * ? as bucket_ts,
-                   COUNT(*),
-                   SUM(ABS(CAST(json_extract(data, '$.amount0') AS INTEGER))),
-                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
-            FROM events
-            WHERE event_name='Swap' AND timestamp >= ?
-            GROUP BY bucket_ts
-            ORDER BY bucket_ts
-        ''', (bucket_sec, bucket_sec, cutoff))
+            c.execute("""
+                SELECT (timestamp / %s) * %s as bucket_ts,
+                       COUNT(*),
+                       SUM(ABS(CAST(data->>'amount0' AS BIGINT))),
+                       SUM(ABS(CAST(data->>'amount1' AS BIGINT)))
+                FROM events
+                WHERE event_name='Swap' AND timestamp >= %s
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts
+            """, (bucket_sec, bucket_sec, cutoff))
 
-        bars = []
-        for row in c.fetchall():
-            ts, count, vol0_raw, vol1_raw = row
-            # Use the larger of the two amounts (both are 6-decimal tokens)
-            vol_usd = max(vol0_raw or 0, vol1_raw or 0) / 1e6
-            bars.append({
-                "timestamp": ts,
-                "volume_usd": round(vol_usd, 2),
-                "swap_count": count,
-            })
-        conn.close()
+            bars = []
+            for row in c.fetchall():
+                ts, count, vol0_raw, vol1_raw = row
+                # Use the larger of the two amounts (both are 6-decimal tokens)
+                vol_usd = max(vol0_raw or 0, vol1_raw or 0) / 1e6
+                bars.append({
+                    "timestamp": ts,
+                    "volume_usd": round(vol_usd, 2),
+                    "swap_count": count,
+                })
 
         return {"bars": bars, "bucket_hours": bucket, "total_bars": len(bars)}
     except Exception as e:
@@ -1101,11 +1088,11 @@ async def get_liquidity_distribution(
     num_bins: int = Query(60, ge=10, le=200),
 ):
     """
-    Pool-wide liquidity distribution — production endpoint with caching.
+    Pool-wide liquidity distribution - production endpoint with caching.
 
     Reads from lp_positions DB table (populated by indexer).
     Falls back to direct POSM RPC scan if DB is empty.
-    Result is cached for ~12s (1 block).
+    Result is cached for about 12 seconds (1 block).
     """
     now = _time.time()
 

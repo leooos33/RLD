@@ -61,7 +61,7 @@ export_if_unset "POOL_MANAGER"    "$(jq -r '.pool_manager'    "$CONFIG_FILE")"
 export_if_unset "TOKEN0"          "$(jq -r '.token0'          "$CONFIG_FILE")"
 export_if_unset "TOKEN1"          "$(jq -r '.token1'          "$CONFIG_FILE")"
 export_if_unset "MOCK_ORACLE"     "$(jq -r '.mock_oracle'     "$CONFIG_FILE")"
-export_if_unset "MOCK_ORACLE_ADDR" "$(jq -r '.mock_oracle'    "$CONFIG_FILE")"
+export_if_unset "MOCK_ORACLE_ADDR" "$MOCK_ORACLE"  # alias used by daemons
 
 echo ""
 echo "🚀 Starting: $@"

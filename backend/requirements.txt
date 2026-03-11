@@ -8,3 +8,4 @@ requests
 cachetools
 websockets
 strawberry-graphql[fastapi]
+psycopg2-binary

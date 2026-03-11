@@ -28,6 +28,7 @@ from db.comprehensive import (
     get_block_summary,
     get_latest_summary,
     build_5m_candles,
+    write_batch,
 )
 
 # Load environment
@@ -1187,6 +1188,7 @@ class ComprehensiveIndexer:
     def snapshot_block(self, block_number: int = None) -> Dict:
         """
         Take a complete snapshot of state at a given block.
+        All DB writes are batched into a single transaction.
         Returns the snapshot data.
         """
         if block_number is None:
@@ -1203,224 +1205,231 @@ class ComprehensiveIndexer:
             'market_id': self.market_id
         }
         
+        # ── Collect all data from RPC (no DB writes yet) ──
+        
         # 1. Market State
         market_state = self.get_market_state()
         index_price = self.get_index_price()
         market_state['index_price'] = index_price or 0
-        
-        insert_block_state(block_number, block_timestamp, self.market_id, market_state)
         snapshot['market_state'] = market_state
         logger.info(f"   📊 Market: NF={market_state.get('normalization_factor', 0)/1e18:.10f}, "
                    f"Debt={market_state.get('total_debt', 0)/1e6:.2f}")
         
-        # 2. Pool State (read via extsload)
+        # 2. Pool State
         pool_state = self.get_pool_state()
+        pool_id_hex = self.pool_id.hex() if self.pool_id else ""
         if pool_state and self.pool_id:
-            pool_id_hex = self.pool_id.hex() if self.pool_id else ""
-            insert_pool_state(block_number, pool_id_hex, pool_state)
             snapshot['pool_state'] = pool_state
             logger.info(f"   💧 Pool: Price=${pool_state.get('mark_price', 0):.4f}, "
                        f"Tick={pool_state.get('tick', 0)}, "
                        f"Liq={pool_state.get('liquidity', 0)}")
         
-        # 3. Events
+        # 3. Events (collected for batch write below)
         events = self.get_events_in_block(block_number)
-        for event in events:
-            insert_event(
-                block_number, event['tx_hash'], event['log_index'],
-                event['event_name'], self.rld_core.address,
-                event['market_id'], event['data'], block_timestamp
-            )
         snapshot['events'] = events
         if events:
             logger.info(f"   📝 Events: {len(events)} event(s)")
-        
-        # 3a. Process bond events (BondMinted / BondClosed)
-        from db.comprehensive import insert_bond, update_bond_closed
-        bond_events = [e for e in events if e['event_name'] in ('BondMinted', 'BondClosed', 'BondReturned', 'BondClaimed')]
-        for be in bond_events:
-            bd = be.get('data', {})
-            try:
-                if be['event_name'] == 'BondMinted':
-                    insert_bond(
-                        broker_address=bd['broker'],
-                        owner=bd['user'],
-                        bond_factory=self.bond_factory_addr or '',
-                        notional=bd.get('notional', '0'),
-                        hedge=bd.get('hedge', '0'),
-                        duration=bd.get('duration', 0),
-                        created_block=block_number,
-                        created_timestamp=block_timestamp,
-                        created_tx=be['tx_hash'],
-                    )
-                    # Auto-track the new bond's broker
-                    if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
-                        self.tracked_brokers.append(bd['broker'])
-                    logger.info(f"   🔗 Bond minted: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
-                elif be['event_name'] == 'BondClosed':
-                    update_bond_closed(
-                        broker_address=bd['broker'],
-                        closed_block=block_number,
-                        closed_timestamp=block_timestamp,
-                        closed_tx=be['tx_hash'],
-                        collateral_returned=bd.get('collateralReturned', '0'),
-                        position_returned=bd.get('positionReturned', '0'),
-                    )
-                    logger.info(f"   🔓 Bond closed: broker={bd['broker'][:10]}...")
-                elif be['event_name'] in ('BondReturned', 'BondClaimed'):
-                    update_bond_closed(
-                        broker_address=bd['broker'],
-                        closed_block=block_number,
-                        closed_timestamp=block_timestamp,
-                        closed_tx=be['tx_hash'],
-                    )
-                    logger.info(f"   🔓 Bond {be['event_name'].lower()}: broker={bd['broker'][:10]}...")
-            except Exception as ex:
-                logger.warning(f"   ⚠️  Failed to process bond event: {ex}")
 
-        # 3a-2. Process basis trade events (BasisTradeOpened / BasisTradeClosed)
-        basis_events = [e for e in events if e['event_name'] in ('BasisTradeOpened', 'BasisTradeClosed')]
-        for be in basis_events:
-            bd = be.get('data', {})
-            try:
-                if be['event_name'] == 'BasisTradeOpened':
-                    insert_bond(
-                        broker_address=bd['broker'],
-                        owner=bd['user'],
-                        bond_factory=self.basis_trade_factory_addr or '',
-                        notional=bd.get('notional', '0'),
-                        hedge=bd.get('hedge', '0'),
-                        duration=bd.get('duration', 0),
-                        created_block=block_number,
-                        created_timestamp=block_timestamp,
-                        created_tx=be['tx_hash'],
-                    )
-                    # Auto-track the new basis trade's broker
-                    if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
-                        self.tracked_brokers.append(bd['broker'])
-                    logger.info(f"   📈 Basis trade opened: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
-                elif be['event_name'] == 'BasisTradeClosed':
-                    update_bond_closed(
-                        broker_address=bd['broker'],
-                        closed_block=block_number,
-                        closed_timestamp=block_timestamp,
-                        closed_tx=be['tx_hash'],
-                        collateral_returned=bd.get('collateralReturned', '0'),
-                        position_returned=bd.get('positionReturned', '0'),
-                    )
-                    logger.info(f"   📉 Basis trade closed: broker={bd['broker'][:10]}...")
-            except Exception as ex:
-                logger.warning(f"   ⚠️  Failed to process basis trade event: {ex}")
-        
-        # 3b. Override pool state from Swap events (most accurate source)
-        # Swap events contain the post-swap sqrtPriceX96, tick, and liquidity
-        # from the ACTUAL trading pool — guaranteed to be correct.
-        swap_events = [e for e in events if e['event_name'] == 'Swap']
-        if swap_events:
-            last_swap = swap_events[-1]
-            swap_data = last_swap.get('data', {})
-            swap_sqrt = int(swap_data.get('sqrtPriceX96', '0'))
-            swap_tick = swap_data.get('tick', 0)
-            swap_liq = int(swap_data.get('liquidity', '0'))
-            swap_pool_id = swap_data.get('pool_id', '')
-            
-            if swap_sqrt > 0:
-                swap_mark = self._get_mark_price_from_quoter() or self._mark_price_from_sqrt(swap_sqrt)
-                
-                # Auto-detect pool_id on first swap if not yet known from events
-                if swap_pool_id and not os.getenv("POOL_ID"):
-                    new_pid = bytes.fromhex(swap_pool_id.replace('0x', ''))
-                    if self.pool_id is None or new_pid != self.pool_id:
-                        logger.info(f"   🔄 Auto-updating pool_id from swap event: {swap_pool_id}")
-                        self.pool_id = new_pid
-                
-                # Build corrected pool state from swap event
-                corrected_pool_state = {
-                    'token0': self.token0,
-                    'token1': self.token1,
-                    'sqrt_price_x96': swap_sqrt,
-                    'tick': swap_tick,
-                    'liquidity': swap_liq,
-                    'mark_price': swap_mark,
-                    'fee_growth_global0': pool_state.get('fee_growth_global0', 0) if pool_state else 0,
-                    'fee_growth_global1': pool_state.get('fee_growth_global1', 0) if pool_state else 0,
-                    'token0_balance': pool_state.get('token0_balance', 0) if pool_state else 0,
-                    'token1_balance': pool_state.get('token1_balance', 0) if pool_state else 0
-                }
-                
-                pool_id_hex = swap_pool_id or (self.pool_id.hex() if self.pool_id else "")
-                
-                # Update DB with corrected pool state
-                insert_pool_state(block_number, pool_id_hex, corrected_pool_state)
-                snapshot['pool_state'] = corrected_pool_state
-                logger.info(f"   🔄 Pool (swap): Price=${swap_mark:.4f}, "
-                           f"Tick={swap_tick}, Liq={swap_liq}")
-        
-        # 4. Broker Positions
+        # 4 & 5: Collect broker positions, LP positions, and transactions for batch write
         broker_positions = []
         for broker in self.tracked_brokers:
             position = self.get_broker_position(broker)
             if position:
-                insert_broker_position(block_number, broker, self.market_id, position)
                 broker_positions.append({'broker': broker, **position})
         snapshot['broker_positions'] = broker_positions
         if broker_positions:
             logger.info(f"   👤 Brokers: {len(broker_positions)} position(s) tracked")
 
-        # 4b. LP Positions (V4 NFTs for each broker)
         all_lp = []
         for broker in self.tracked_brokers:
-            lp_positions = self.get_broker_lp_positions(broker, block_number)
-            for lp in lp_positions:
-                insert_lp_position(block_number, broker, lp)
+            lp_positions_data = self.get_broker_lp_positions(broker, block_number)
+            for lp in lp_positions_data:
                 all_lp.append({'broker': broker, **lp})
         snapshot['lp_positions'] = all_lp
         if all_lp:
             logger.info(f"   📌 LP Positions: {len(all_lp)} NFT(s) across {len(self.tracked_brokers)} broker(s)")
-        
-        # 5. Transactions (all contract interactions)
+
         transactions = self.get_transactions_in_block(block_number)
-        for tx in transactions:
-            insert_transaction(
-                block_number, tx['tx_hash'], tx['tx_index'],
-                tx['from_address'], tx['to_address'], tx['value'],
-                tx['gas_used'], tx['gas_price'], tx['input_data'],
-                tx['method_id'], tx['method_name'], tx['decoded_args'],
-                block_timestamp, tx['status']
-            )
         snapshot['transactions'] = transactions
         if transactions:
             logger.info(f"   💳 Transactions: {len(transactions)} contract interaction(s)")
         
-        # Update indexer state
-        update_last_indexed_block(block_number)
+        # ── Batched DB write: single transaction for all inserts ──
+        with write_batch() as conn:
+            cur = conn.cursor()
+            
+            # Market state
+            insert_block_state(block_number, block_timestamp, self.market_id, market_state, cur=cur)
+            
+            # Pool state
+            if pool_state and self.pool_id:
+                insert_pool_state(block_number, pool_id_hex, pool_state, cur=cur)
+            
+            # Events
+            for event in events:
+                insert_event(
+                    block_number, event['tx_hash'], event['log_index'],
+                    event['event_name'], self.rld_core.address,
+                    event['market_id'], event['data'], block_timestamp,
+                    cur=cur,
+                )
+            
+            # Bond events
+            from db.comprehensive import insert_bond, update_bond_closed
+            bond_events = [e for e in events if e['event_name'] in ('BondMinted', 'BondClosed', 'BondReturned', 'BondClaimed')]
+            for be in bond_events:
+                bd = be.get('data', {})
+                try:
+                    if be['event_name'] == 'BondMinted':
+                        insert_bond(
+                            broker_address=bd['broker'],
+                            owner=bd['user'],
+                            bond_factory=self.bond_factory_addr or '',
+                            notional=bd.get('notional', '0'),
+                            hedge=bd.get('hedge', '0'),
+                            duration=bd.get('duration', 0),
+                            created_block=block_number,
+                            created_timestamp=block_timestamp,
+                            created_tx=be['tx_hash'],
+                            cur=cur,
+                        )
+                        if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
+                            self.tracked_brokers.append(bd['broker'])
+                        logger.info(f"   🔗 Bond minted: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
+                    elif be['event_name'] == 'BondClosed':
+                        update_bond_closed(
+                            broker_address=bd['broker'],
+                            closed_block=block_number,
+                            closed_timestamp=block_timestamp,
+                            closed_tx=be['tx_hash'],
+                            collateral_returned=bd.get('collateralReturned', '0'),
+                            position_returned=bd.get('positionReturned', '0'),
+                            cur=cur,
+                        )
+                        logger.info(f"   🔓 Bond closed: broker={bd['broker'][:10]}...")
+                    elif be['event_name'] in ('BondReturned', 'BondClaimed'):
+                        update_bond_closed(
+                            broker_address=bd['broker'],
+                            closed_block=block_number,
+                            closed_timestamp=block_timestamp,
+                            closed_tx=be['tx_hash'],
+                            cur=cur,
+                        )
+                        logger.info(f"   🔓 Bond {be['event_name'].lower()}: broker={bd['broker'][:10]}...")
+                except Exception as ex:
+                    logger.warning(f"   ⚠️  Failed to process bond event: {ex}")
+            
+            # Basis trade events
+            basis_events = [e for e in events if e['event_name'] in ('BasisTradeOpened', 'BasisTradeClosed')]
+            for be in basis_events:
+                bd = be.get('data', {})
+                try:
+                    if be['event_name'] == 'BasisTradeOpened':
+                        insert_bond(
+                            broker_address=bd['broker'],
+                            owner=bd['user'],
+                            bond_factory=self.basis_trade_factory_addr or '',
+                            notional=bd.get('notional', '0'),
+                            hedge=bd.get('hedge', '0'),
+                            duration=bd.get('duration', 0),
+                            created_block=block_number,
+                            created_timestamp=block_timestamp,
+                            created_tx=be['tx_hash'],
+                            cur=cur,
+                        )
+                        if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
+                            self.tracked_brokers.append(bd['broker'])
+                        logger.info(f"   📈 Basis trade opened: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
+                    elif be['event_name'] == 'BasisTradeClosed':
+                        update_bond_closed(
+                            broker_address=bd['broker'],
+                            closed_block=block_number,
+                            closed_timestamp=block_timestamp,
+                            closed_tx=be['tx_hash'],
+                            collateral_returned=bd.get('collateralReturned', '0'),
+                            position_returned=bd.get('positionReturned', '0'),
+                            cur=cur,
+                        )
+                        logger.info(f"   📉 Basis trade closed: broker={bd['broker'][:10]}...")
+                except Exception as ex:
+                    logger.warning(f"   ⚠️  Failed to process basis trade event: {ex}")
+            
+            # Pool state override from swap events
+            swap_events = [e for e in events if e['event_name'] == 'Swap']
+            if swap_events:
+                last_swap = swap_events[-1]
+                swap_data = last_swap.get('data', {})
+                swap_sqrt = int(swap_data.get('sqrtPriceX96', '0'))
+                swap_tick = swap_data.get('tick', 0)
+                swap_liq = int(swap_data.get('liquidity', '0'))
+                swap_pool_id = swap_data.get('pool_id', '')
+                
+                if swap_sqrt > 0:
+                    swap_mark = self._get_mark_price_from_quoter() or self._mark_price_from_sqrt(swap_sqrt)
+                    
+                    if swap_pool_id and not os.getenv("POOL_ID"):
+                        new_pid = bytes.fromhex(swap_pool_id.replace('0x', ''))
+                        if self.pool_id is None or new_pid != self.pool_id:
+                            logger.info(f"   🔄 Auto-updating pool_id from swap event: {swap_pool_id}")
+                            self.pool_id = new_pid
+                    
+                    corrected_pool_state = {
+                        'token0': self.token0,
+                        'token1': self.token1,
+                        'sqrt_price_x96': swap_sqrt,
+                        'tick': swap_tick,
+                        'liquidity': swap_liq,
+                        'mark_price': swap_mark,
+                        'fee_growth_global0': pool_state.get('fee_growth_global0', 0) if pool_state else 0,
+                        'fee_growth_global1': pool_state.get('fee_growth_global1', 0) if pool_state else 0,
+                        'token0_balance': pool_state.get('token0_balance', 0) if pool_state else 0,
+                        'token1_balance': pool_state.get('token1_balance', 0) if pool_state else 0
+                    }
+                    
+                    corrected_pool_id = swap_pool_id or (self.pool_id.hex() if self.pool_id else "")
+                    insert_pool_state(block_number, corrected_pool_id, corrected_pool_state, cur=cur)
+                    snapshot['pool_state'] = corrected_pool_state
+                    logger.info(f"   🔄 Pool (swap): Price=${swap_mark:.4f}, "
+                               f"Tick={swap_tick}, Liq={swap_liq}")
+            
+            # Broker positions
+            broker_positions = []
+            for broker in self.tracked_brokers:
+                position = self.get_broker_position(broker)
+                if position:
+                    insert_broker_position(block_number, broker, self.market_id, position, cur=cur)
+                    broker_positions.append({'broker': broker, **position})
+            snapshot['broker_positions'] = broker_positions
+            if broker_positions:
+                logger.info(f"   👤 Brokers: {len(broker_positions)} position(s) tracked")
+            
+            # LP Positions
+            all_lp = []
+            for broker in self.tracked_brokers:
+                lp_positions = self.get_broker_lp_positions(broker, block_number)
+                for lp in lp_positions:
+                    insert_lp_position(block_number, broker, lp, cur=cur)
+                    all_lp.append({'broker': broker, **lp})
+            snapshot['lp_positions'] = all_lp
+            if all_lp:
+                logger.info(f"   📌 LP Positions: {len(all_lp)} NFT(s) across {len(self.tracked_brokers)} broker(s)")
+            
+            # Transactions
+            for tx in transactions:
+                insert_transaction(
+                    block_number, tx['tx_hash'], tx['tx_index'],
+                    tx['from_address'], tx['to_address'], tx['value'],
+                    tx['gas_used'], tx['gas_price'], tx['input_data'],
+                    tx['method_id'], tx['method_name'], tx['decoded_args'],
+                    block_timestamp, tx['status'],
+                    cur=cur,
+                )
+            snapshot['transactions'] = transactions
+            
+            # Update indexer state
+            update_last_indexed_block(block_number, cur=cur)
         
-        # 5. Log JSON state summary
-        json_state = {
-            'block': block_number,
-            'timestamp': block_timestamp,
-            'market': {
-                'normalization_factor': f"{market_state.get('normalization_factor', 0)/1e18:.12f}",
-                'total_debt': f"{market_state.get('total_debt', 0)/1e6:.2f}",
-                'index_price': f"${market_state.get('index_price', 0)/1e18:.4f}" if market_state.get('index_price', 0) > 0 else "N/A"
-            },
-            'pool': {
-                'mark_price': f"${pool_state.get('mark_price', 0):.4f}" if pool_state else "N/A",
-                'tick': pool_state.get('tick', 0) if pool_state else 0,
-                'liquidity': pool_state.get('liquidity', 0) if pool_state else 0
-            },
-            'brokers': [
-                {
-                    'address': p['broker'][:10] + '...',
-                    'collateral': f"${p.get('collateral', 0)/1e6:.0f}",
-                    'debt': f"{p.get('debt', 0)/1e6:.0f} wRLP"
-                }
-                for p in broker_positions
-            ],
-            'events_count': len(events),
-            'transactions_count': len(transactions)
-        }
-        logger.info(f"   📋 STATE: {json.dumps(json_state)}")
+        # ── End of batched write (committed) ──
         
         return snapshot
     

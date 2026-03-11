@@ -1,6 +1,9 @@
 #!/bin/bash
-# backup-databases.sh — Daily SQLite backup with compression & rotation
+# backup-databases.sh — Daily backup of rates-indexer SQLite DBs
 # Cron: 0 3 * * * sudo /home/ubuntu/RLD/docker/scripts/backup-databases.sh
+#
+# NOTE: Only backs up rates-indexer DBs. Sim-indexer uses Postgres
+# and its data is intentionally ephemeral (cleared on each deploy).
 #
 # Uses VACUUM INTO for hot backups (safe while DB is in use).
 # Compresses with gzip, retains 7 days, logs results.

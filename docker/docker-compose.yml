@@ -9,6 +9,7 @@
 #    3. docker compose up --build
 #
 #  What happens:
+#    postgres   → shared database for all simulations
 #    deployer   → deploys protocol, market, users, router, then exits
 #    indexer    → starts indexing after deployer finishes
 #    mm-daemon  → starts market making after deployer finishes
@@ -16,6 +17,24 @@
 # ═══════════════════════════════════════════════════════════════
 
 services:
+  # ─── POSTGRES (shared, persistent) ──────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=rld
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
+      - POSTGRES_DB=rld_indexer
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rld -d rld_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # ─── DEPLOYER (one-shot) ────────────────────────────────────
   deployer:
     build:
@@ -46,14 +65,17 @@ services:
     depends_on:
       deployer:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     volumes:
       - ./deployment.json:/config/deployment.json:ro
-      - indexer-data:/data
     ports:
       - "${INDEXER_PORT:-8080}:8080"
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - CONFIG_FILE=/config/deployment.json
+      - DB_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - SIM_ID=${SIM_ID:-default}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -61,11 +83,11 @@ services:
       test:
         [
           "CMD-SHELL",
-          'python3 -c "import urllib.request; urllib.request.urlopen(''http://localhost:8080/'')" || exit 1',
+          'python3 -c "import urllib.request; urllib.request.urlopen(''http://localhost:8080/health'')" || exit 1',
         ]
       interval: 30s
-      timeout: 5s
-      start_period: 60s
+      timeout: 10s
+      start_period: 90s
       retries: 3
 
   # ─── MM DAEMON (long-running) ────────────────────────────────
@@ -132,4 +154,4 @@ services:
       retries: 3
 
 volumes:
-  indexer-data: # Persistent indexer SQLite DB
+  postgres-data: # Persistent PostgreSQL data

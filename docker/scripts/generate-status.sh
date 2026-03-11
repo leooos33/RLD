@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-OUTPUT="/home/ubuntu/RLD/dashboard/status.json"
-HISTORY="/home/ubuntu/RLD/dashboard/history.json"
+OUTPUT="/home/ubuntu/RLD/docker/dashboard/status.json"
+HISTORY="/home/ubuntu/RLD/docker/dashboard/history.json"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # ── System ──
@@ -202,6 +202,26 @@ except Exception as e:
     result['clean_rates'] = {'error': str(e)}
 
 print(json.dumps(result))
+" 2>/dev/null) || DB_JSON='{}'
+
+# --- Postgres sim-indexer health ---
+PG_JSON=$(docker exec docker-postgres-1 psql -U rld -d rld_indexer -t -A -c "
+SELECT json_build_object(
+  'healthy', true,
+  'schemas', (SELECT json_agg(schema_name) FROM information_schema.schemata WHERE schema_name LIKE 'sim_%'),
+  'last_indexed_block', COALESCE((SELECT last_indexed_block FROM sim_default.indexer_state WHERE id=1), -1),
+  'block_state_rows', (SELECT COUNT(*) FROM sim_default.block_state),
+  'events_rows', (SELECT COUNT(*) FROM sim_default.events)
+);
+" 2>/dev/null) || PG_JSON='{"healthy":false}'
+
+# Merge rates + postgres DB checks
+DB_JSON=$(python3 -c "
+import json, sys
+rates = json.loads('''$DB_JSON''') if '''$DB_JSON'''.strip() else {}
+pg = json.loads('''$PG_JSON''') if '''$PG_JSON'''.strip() else {'healthy': False}
+rates['sim_indexer_pg'] = pg
+print(json.dumps(rates))
 " 2>/dev/null) || DB_JSON='{}'
 
 # ── History tracking (keep last 60 data points = ~1 hour) ──
