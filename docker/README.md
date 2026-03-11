@@ -1,6 +1,6 @@
 # RLD Docker Deployment
 
-Complete containerized infrastructure for the RLD Protocol: simulation stack, rates indexer, Telegram bot, and production frontend.
+Complete containerized infrastructure for the RLD Protocol: simulation stack (Postgres-backed), rates indexer, Telegram bot, and production frontend.
 
 ## Architecture
 
@@ -17,12 +17,11 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
                   │                                                  │
                   │  ┌─── docker_default network ───────────────┐    │
                   │  │                                          │    │
-                  │  │  rates-indexer ◄── monitor-bot           │    │
-                  │  │       ▲              │                   │    │
-                  │  │       │              ├──► Telegram API   │    │
-                  │  │  indexer ◄── mm-daemon                   │    │
-                  │  │       ▲       chaos-trader               │    │
-                  │  │       │                                  │    │
+                  │  │  postgres ◄── indexer ◄── mm-daemon      │    │
+                  │  │                 ▲          chaos-trader   │    │
+                  │  │                 │                         │    │
+                  │  │  rates-indexer ◄── monitor-bot            │    │
+                  │  │                                          │    │
                   │  │  deployer (one-shot)                     │    │
                   │  └──────────────────────────────────────────┘    │
                   │                                                  │
@@ -37,30 +36,24 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
 
 ```bash
 # One command does everything: kills Anvil, tears down containers,
-# restarts Anvil from clean fork, deploys contracts, launches all services,
-# waits for health, and prints a status report.
+# cleans deployment.json, restarts Anvil from clean fork, deploys
+# contracts, launches all services, waits for health, and prints status.
 ./docker/restart.sh
 ```
 
 **CLI Flags:**
 
-| Flag          | Description                                               |
-| ------------- | --------------------------------------------------------- |
-| `--sim-only`  | Only restart sim stack — keep rates-indexer + bot running |
-| `--no-build`  | Skip Docker image rebuilds (faster if no code changes)    |
-| `--keep-data` | Preserve indexer data volume across restart               |
-| `--help`      | Show usage                                                |
+| Flag         | Description                                            |
+| ------------ | ------------------------------------------------------ |
+| `--no-build` | Skip Docker image rebuilds (faster if no code changes) |
+| `--help`     | Show usage                                             |
 
 ```bash
-# Quick restart after code change to daemons only
-./docker/restart.sh --sim-only
-
 # Fast restart without rebuilding images
 ./docker/restart.sh --no-build
-
-# Keep indexer history across restart
-./docker/restart.sh --keep-data
 ```
+
+> **Note:** Each restart cleans `deployment.json` before deploying, ensuring all addresses represent the latest on-chain state. No stale addresses carry over between simulations.
 
 ### Manual Setup (step by step)
 
@@ -73,7 +66,7 @@ docker compose -f docker/docker-compose.rates.yml --env-file docker/.env up -d
 docker compose -f docker/docker-compose.bot.yml --env-file docker/.env up -d
 
 # 3. Deploy + launch simulation
-cd docker && docker compose up --build -d
+cd docker && docker compose --env-file .env up --build -d
 ```
 
 ### Frontend (production)
@@ -92,24 +85,25 @@ docker compose -f docker/docker-compose.frontend.yml up -d --build
 
 ### Compose Files
 
-| File                          | Services                                   | Lifecycle      |
-| ----------------------------- | ------------------------------------------ | -------------- |
-| `docker-compose.yml`          | deployer, indexer, mm-daemon, chaos-trader | Per simulation |
-| `docker-compose.rates.yml`    | rates-indexer                              | Persistent     |
-| `docker-compose.bot.yml`      | monitor-bot                                | Persistent     |
-| `docker-compose.frontend.yml` | frontend                                   | Persistent     |
+| File                          | Services                                               | Lifecycle      |
+| ----------------------------- | ------------------------------------------------------ | -------------- |
+| `docker-compose.yml`          | postgres, deployer, indexer, mm-daemon, chaos-trader   | Per simulation |
+| `docker-compose.rates.yml`    | rates-indexer                                          | Persistent     |
+| `docker-compose.bot.yml`      | monitor-bot                                            | Persistent     |
+| `docker-compose.frontend.yml` | frontend                                               | Persistent     |
 
 ### Container Details
 
-| Container       | Image                        | Port | Health           | Depends On | Description                                                                |
-| --------------- | ---------------------------- | ---- | ---------------- | ---------- | -------------------------------------------------------------------------- |
-| `deployer`      | `docker/deployer/Dockerfile` | —    | Exits on success | —          | Deploys protocol, oracle, market, users, router → writes `deployment.json` |
-| `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python urllib`  | `deployer` | Indexes simulation blocks + serves API. Auto-resets DB on restart          |
-| `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Market maker: arb trades + oracle updates from live rates                  |
-| `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | `pgrep`          | `deployer` | Random trades for market activity                                          |
-| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl             | —          | Indexes Aave V3 rates + ETH price (Uniswap V3 slot0) per block (~12s)      |
-| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl             | —          | Telegram bot: `/status` dashboard, hourly rate+price digests               |
-| `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget             | —          | Multi-stage build: Node 20 → Nginx Alpine (68MB)                           |
+| Container       | Image                        | Port | Health          | Depends On            | Description                                                                          |
+| --------------- | ---------------------------- | ---- | --------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `postgres`      | `postgres:15-alpine`         | 5432 | `pg_isready`    | —                     | Shared PostgreSQL database for all simulation data. Persistent volume                |
+| `deployer`      | `docker/deployer/Dockerfile` | —    | Exits on success| postgres (healthy)    | Deploys protocol, oracle, market, users, router → writes `deployment.json`           |
+| `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python urllib` | deployer, postgres    | Indexes simulation blocks, serves REST + GraphQL API. Auto-resets tables on restart  |
+| `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | `pgrep`         | deployer              | Market maker: arb trades + oracle updates from live rates                            |
+| `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | `pgrep`         | deployer              | Random trades for market activity                                                    |
+| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl            | —                     | Indexes Aave V3 rates + ETH price (Uniswap V3 slot0) per block (~12s)                |
+| `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl            | —                     | Telegram bot: `/status` dashboard, hourly rate+price digests                         |
+| `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget            | —                     | Multi-stage build: Node 20 → Nginx Alpine (68MB)                                     |
 
 ### Service Ordering & Resilience
 
@@ -121,6 +115,45 @@ The simulation stack uses three layers of defense against startup race condition
 
 3. **`entrypoint.py`** (indexer) — Retries on-chain market discovery up to 30 times with 10s backoff. If contracts aren't deployed yet when the indexer starts, it waits instead of crashing.
 
+4. **Deployer retry logic** — `forge create` commands (e.g., MockRLDAaveOracle) retry up to 3 times with 3s delays to handle transient failures (stale caches, nonce collisions on re-deploys).
+
+---
+
+## deployment.json
+
+The deployer writes `deployment.json` on success. This file is the **single source of truth** for all contract addresses used by the indexer, daemons, and frontend. It is cleaned at the start of each restart to prevent stale addresses.
+
+### Structure
+
+```json
+{
+    "rpc_url": "http://host.docker.internal:8545",
+    "rld_core": "0x...",
+    "twamm_hook": "0x...",
+    "market_id": "0x...",
+    "mock_oracle": "0x...",
+    "broker_router": "0x...",
+    "wausdc": "0x...",
+    "position_token": "0x...",
+    "broker_factory": "0x...",
+    "swap_router": "0x...",
+    "bond_factory": "0x...",
+    "basis_trade_factory": "0x...",
+    "broker_executor": "0x...",
+    "pool_manager": "0x...",
+    "pool_id": "0x...",
+    "external_contracts": {
+        "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "ausdc": "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
+        "aave_pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "susde": "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
+        "usdc_whale": "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
+    }
+}
+```
+
+The `external_contracts` block contains canonical mainnet addresses for tokens and protocols used by the simulation (USDC, aUSDC, Aave V3 Pool, sUSDe, USDC whale for faucet). These are served to the frontend via the indexer's `marketInfo` response, eliminating hardcoded addresses across the codebase.
+
 ---
 
 ## Networking
@@ -129,6 +162,7 @@ All compose-managed containers share the `docker_default` network. Services comm
 
 | From           | To              | URL                                |
 | -------------- | --------------- | ---------------------------------- |
+| `indexer`      | `postgres`      | `postgresql://rld:...@postgres:5432/rld_indexer` |
 | `monitor-bot`  | `rates-indexer` | `http://rates-indexer:8080`        |
 | `mm-daemon`    | `rates-indexer` | `http://rates-indexer:8080`        |
 | All containers | Anvil           | `http://host.docker.internal:8545` |
@@ -137,18 +171,65 @@ All compose-managed containers share the `docker_default` network. Services comm
 
 ---
 
-## Indexer Auto-Reset
+## Database
 
-The simulation indexer (`entrypoint.py`) automatically detects stale data on startup:
+### PostgreSQL (Simulation Indexer)
 
-```
-[3/4] Checking for stale data (simulation restart)...
-⚠️  STALE DB DETECTED: indexed block 21,800,739 > chain head 21,702,736 (lag: 98,003)
-🔄 Simulation was restarted — wiping DB and re-indexing from scratch
-✅ DB reset complete. Will index from chain head.
-```
+The simulation indexer uses PostgreSQL (`postgres:15-alpine`) with a persistent volume. Tables are auto-created on startup and wiped on simulation restart (stale data detection).
 
-**Logic:** If `last_indexed_block > chain_head + 1`, the Anvil fork was restarted. The indexer wipes its SQLite DB and re-indexes from the current chain head.
+| Table              | Description                                    |
+| ------------------ | ---------------------------------------------- |
+| `block_state`      | Per-block market state (NF, debt, reserves)    |
+| `pool_state`       | Per-block pool state (price, tick, liquidity)  |
+| `events`           | Decoded protocol events                        |
+| `broker_snapshots` | Broker NAV, debt, collateral ratio per block   |
+| `price_candles_5m` | 5-minute OHLC candles for price charts         |
+
+### SQLite (Rates Indexer)
+
+The rates indexer uses SQLite (`aave_rates.db` + `clean_rates.db`), managed separately from the simulation stack.
+
+---
+
+## API Endpoints
+
+### Simulation Indexer (port 8080)
+
+#### REST API
+
+| Endpoint                  | Description                                          |
+| ------------------------- | ---------------------------------------------------- |
+| `GET /`                   | Service status                                       |
+| `GET /health`             | Health check                                         |
+| `GET /config`             | Discovered contract addresses                        |
+| `GET /api/latest`         | Latest market/pool/broker state                      |
+| `GET /api/market-info`    | Full market config including `external_contracts`    |
+| `GET /api/status`         | Indexer stats (last block, total events)             |
+| `GET /api/events?limit=N` | Recent events                                        |
+| `GET /api/history/market` | Market state history                                 |
+| `GET /api/history/pool`   | Pool state history                                   |
+| `GET /api/chart/price`    | Price chart data (supports `5M`, `1H`, `4H`, `1D`)  |
+| `GET /docs`               | Swagger UI                                           |
+
+#### GraphQL API (`POST /graphql`)
+
+The indexer also serves a Strawberry GraphQL API. Key queries:
+
+| Query                            | Description                                                                 |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| `marketInfo`                     | Full market configuration, risk params, infrastructure, `externalContracts` |
+| `marketInfo.externalContracts`   | USDC, aUSDC, Aave Pool, sUSDe, USDC whale addresses                        |
+| `marketInfo.infrastructure`      | Pool manager, position manager, state view, routers                         |
+| `simSnapshot`                    | Combined market state, pool state, broker snapshots per block               |
+
+### Rates Indexer (port 8081, proxied at `/api/`)
+
+| Endpoint                                 | Description                                  |
+| ---------------------------------------- | -------------------------------------------- |
+| `GET /`                                  | Service status                               |
+| `GET /rates?symbol=USDC&limit=N`         | Historical spot rates (hourly from clean DB) |
+| `GET /eth-prices?limit=N`                | ETH price history (hourly, default)          |
+| `GET /eth-prices?limit=N&resolution=RAW` | ETH price (block-level, ~12s, from raw DB)   |
 
 ---
 
@@ -182,36 +263,9 @@ cd frontend && npm run build
 | 22/tcp    | ✅ Open        | SSH                               |
 | 80/tcp    | ✅ Open        | HTTP → HTTPS redirect             |
 | 443/tcp   | ✅ Open        | HTTPS (Nginx)                     |
+| 5432      | 🔒 Docker only | PostgreSQL (internal)             |
 | 8545      | 🔒 Docker only | Anvil (172.16.0.0/12)             |
 | 8080-8082 | 🔒 Blocked     | Internal only (Docker networking) |
-
----
-
-## API Endpoints
-
-### Simulation Indexer (port 8080)
-
-| Endpoint                  | Description                              |
-| ------------------------- | ---------------------------------------- |
-| `GET /`                   | Service status                           |
-| `GET /health`             | Health check                             |
-| `GET /config`             | Discovered contract addresses            |
-| `GET /api/latest`         | Latest market/pool/broker state          |
-| `GET /api/status`         | Indexer stats (last block, total events) |
-| `GET /api/events?limit=N` | Recent events                            |
-| `GET /api/history/market` | Market state history                     |
-| `GET /api/history/pool`   | Pool state history                       |
-| `GET /api/chart/price`    | Price chart data                         |
-| `GET /docs`               | Swagger UI                               |
-
-### Rates Indexer (port 8081, proxied at `/api/`)
-
-| Endpoint                                 | Description                                  |
-| ---------------------------------------- | -------------------------------------------- |
-| `GET /`                                  | Service status                               |
-| `GET /rates?symbol=USDC&limit=N`         | Historical spot rates (hourly from clean DB) |
-| `GET /eth-prices?limit=N`                | ETH price history (hourly, default)          |
-| `GET /eth-prices?limit=N&resolution=RAW` | ETH price (block-level, ~12s, from raw DB)   |
 
 ---
 
@@ -225,6 +279,9 @@ cd frontend && npm run build
 | `MAINNET_RPC_URL`     | **Unrestricted** Alchemy key for server-side use        | Yes             |
 | `ETH_PRICE_GRAPH_URL` | The Graph API URL for Uniswap V3 ETH/USDC pool data     | Yes             |
 | `RESERVE_RPC_URL`     | Infura RPC for reserve/fallback mainnet access          | Yes             |
+| `DB_PASSWORD`         | PostgreSQL password (default: `rld_dev_password`)       | Simulation only |
+| `DB_PORT`             | PostgreSQL port (default: `5432`)                       | No              |
+| `SIM_ID`              | Simulation identifier (default: `default`)              | No              |
 | `DEPLOYER_KEY`        | Anvil key #0 (deploy contracts)                         | Simulation only |
 | `USER_A_KEY`          | Anvil key #0 (LP provider)                              | Simulation only |
 | `USER_B_KEY`          | Anvil key #1 (long user)                                | Simulation only |
@@ -262,11 +319,8 @@ cd frontend && npm run build
 # Full clean restart (Anvil + all containers)
 ./docker/restart.sh
 
-# Restart sim only (keep rates + bot)
-./docker/restart.sh --sim-only
-
 # Fast restart (no image rebuild)
-./docker/restart.sh --sim-only --no-build
+./docker/restart.sh --no-build
 ```
 
 ### Monitoring
@@ -282,6 +336,9 @@ docker compose -f docker/docker-compose.bot.yml logs -f monitor-bot
 
 # Check indexer lag
 curl -s http://localhost:8080/api/status | python3 -m json.tool
+
+# Check external contracts served by indexer
+curl -s http://localhost:8080/api/market-info | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('external_contracts',{}), indent=2))"
 
 # Check Anvil block
 cast block-number --rpc-url http://localhost:8545
@@ -307,7 +364,7 @@ tail -f /home/ubuntu/RLD/logs/status-gen.log
 | Section         | Metrics                                                 |
 | --------------- | ------------------------------------------------------- |
 | System          | CPU load, memory, disk, uptime, connections             |
-| Containers      | Status, health, uptime for all 6 containers             |
+| Containers      | Status, health, uptime for all containers               |
 | Services        | Health check + response time for each service endpoint  |
 | Database Health | Table freshness, row counts, file sizes                 |
 | Data Quality    | NULL values (7d), corrupt rows, sync age, missing hours |
@@ -316,7 +373,7 @@ tail -f /home/ubuntu/RLD/logs/status-gen.log
 
 **How it works:**
 
-1. `generate-status.sh` runs every minute via cron, collecting metrics from Docker, SQLite DBs, service endpoints, and system stats
+1. `generate-status.sh` runs every minute via cron, collecting metrics from Docker, PostgreSQL/SQLite DBs, service endpoints, and system stats
 2. Writes `dashboard/status.json` atomically (`mktemp` → `mv`) to prevent partial reads
 3. `dashboard/index.html` (React/Babel) fetches `status.json` every 12s and renders
 
@@ -343,6 +400,7 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 | RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin | Use an unrestricted key in `MAINNET_RPC_URL`           |
 | Port already in use on restart    | Orphaned container from previous run          | `restart.sh` handles this automatically                |
 | Deployer `nonce too low`          | Rapid-fire transactions without receipt wait  | Already fixed in `deploy_all.sh`                       |
+| MockOracle deploy fails           | Transient `forge create` failure on re-deploy | Fixed: 3-attempt retry with 3s delay                   |
 | Containers stuck in `Created`     | Deployer dependency not met                   | Fixed: `depends_on: service_completed_successfully`    |
 | Services start with empty config  | `deployment.json` exists but is `{}`          | Fixed: `wait-for-config.sh` validates `rld_core` key   |
 | Indexer crashes on first attempt  | Contracts not deployed when discovery runs    | Fixed: `entrypoint.py` retries 30× with 10s backoff    |
@@ -351,6 +409,7 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 | ETH price stale by ~1 hour        | Using `1H` resolution instead of `RAW`        | Use `/eth-prices?resolution=RAW` for live price        |
 | Sync age > 5min on dashboard      | `SYNC_INTERVAL` too high in daemon.py         | Set to 60s (current default)                           |
 | Dashboard shows 5/6 services ok   | Stopped deployer counted in health check      | Fixed: stopped/created containers excluded from count  |
+| Stale addresses after restart     | Old `deployment.json` carried over            | Fixed: `restart.sh` cleans file before deploying       |
 
 ---
 
