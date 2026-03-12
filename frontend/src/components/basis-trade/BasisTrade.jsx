@@ -172,7 +172,7 @@ export default function BasisTradePage() {
     fetchBal();
     const id = setInterval(fetchBal, 10000);
     return () => clearInterval(id);
-  }, [account, marketInfo]);
+  }, [account, marketInfo, SUSDE_ADDRESS, USDC_ADDRESS]);
   const walletBalance = selectedToken === "USDC" ? (usdcBalance ?? 0) : (susdeBalance ?? 0);
 
   useEffect(() => {
@@ -215,7 +215,7 @@ export default function BasisTradePage() {
       addToast({ type: "error", title: "Approval Failed", message: msg });
     } finally {
       setIsApproving(false);
-      try { await restoreAnvilChainId(); } catch {}
+      try { await restoreAnvilChainId(); } catch { /* non-critical */ }
     }
   };
 
@@ -246,8 +246,6 @@ export default function BasisTradePage() {
 
   const {
     activeTab,
-    notional,
-    maturityHours,
   } = tradeLogic.state;
   const {
     setActiveTab,

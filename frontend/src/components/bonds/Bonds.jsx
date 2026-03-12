@@ -145,7 +145,7 @@ export default function BondsPage() {
       addToast({ type: "error", title: "Approval Failed", message: msg });
     } finally {
       setIsApproving(false);
-      try { await restoreAnvilChainId(); } catch {}
+      try { await restoreAnvilChainId(); } catch { /* non-critical */ }
     }
   };
 
