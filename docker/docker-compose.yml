@@ -76,6 +76,7 @@ services:
       - CONFIG_FILE=/config/deployment.json
       - DB_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
       - SIM_ID=${SIM_ID:-default}
+      - RATES_API_URL=${RATES_API_URL:-http://rates-indexer:8080}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

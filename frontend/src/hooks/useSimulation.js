@@ -163,7 +163,7 @@ export function useSimulation({
     account ? [GQL_URL, ACCOUNT_QUERY, accountVars] : null,
     gqlFetcher,
     {
-      refreshInterval: 5000,
+      refreshInterval: 15000,   // balances trigger RPC calls — don't hammer
       revalidateOnFocus: false,
       dedupingInterval: 2000,
       keepPreviousData: true,
