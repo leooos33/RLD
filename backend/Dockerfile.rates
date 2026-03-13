@@ -10,13 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code (new directory structure)
+# Copy backend code
 COPY backend/config.py .
 COPY backend/api/ api/
 COPY backend/rates/ rates/
-COPY backend/indexers/ indexers/
 COPY backend/db/ db/
-COPY backend/services/ services/
 
 # Copy startup script
 COPY backend/start_rates.sh .
@@ -26,7 +24,6 @@ RUN chmod +x start_rates.sh
 RUN mkdir -p /app/data
 
 ENV PYTHONUNBUFFERED=1
-ENV RATE_ONLY=true
 
 EXPOSE 8080
 

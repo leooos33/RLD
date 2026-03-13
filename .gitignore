@@ -50,3 +50,7 @@ docs/internal_audit/
 .DS_Store
 Thumbs.db
 ^out/
+
+# Stale local DB files (live data is in Docker volumes)
+backend/data/
+data/
