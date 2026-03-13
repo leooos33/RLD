@@ -278,6 +278,18 @@ else
     log_info "DATABASE_URL not set — indexer will pick up from deployment.json"
 fi
 
+# Force-mine blocks to align EVM clock with block headers (called from Phase 5)
+sync_timestamp() {
+    log_step "" "Syncing EVM timestamp with block headers..."
+    for i in $(seq 1 10); do
+        local LATEST_TS
+        LATEST_TS=$(cast block latest --field timestamp --rpc-url "$RPC_URL" 2>/dev/null)
+        local NEXT_TS=$((LATEST_TS + 1))
+        cast rpc evm_setNextBlockTimestamp "$NEXT_TS" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+        cast rpc evm_mine --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+    done
+}
+
 # ═══════════════════════════════════════════════════════════════
 # PHASE 3: SETUP USERS (skipped when SKIP_USER_SETUP=true)
 # ═══════════════════════════════════════════════════════════════
@@ -387,21 +399,6 @@ withdraw_collateral() {
 prime_oracle() {
     cast rpc evm_increaseTime 7200 --rpc-url "$RPC_URL" > /dev/null
     cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
-}
-
-# Force-mine a block so the next forge broadcast sees the correct block.timestamp.
-# Anvil's pending block uses fork_ts + block_count, ignoring evm_increaseTime jumps.
-# We must explicitly set the next block timestamp to match the chain tip.
-# Sync multiple consecutive blocks to ensure the EVM clock is fully aligned.
-sync_timestamp() {
-    log_step "" "Syncing EVM timestamp with block headers..."
-    for i in $(seq 1 10); do
-        local LATEST_TS
-        LATEST_TS=$(cast block latest --field timestamp --rpc-url "$RPC_URL" 2>/dev/null)
-        local NEXT_TS=$((LATEST_TS + 1))
-        cast rpc evm_setNextBlockTimestamp "$NEXT_TS" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-        cast rpc evm_mine --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-    done
 }
 
 # ─── User A: LP Provider ($100M collateral, $5M LP) ───────────
