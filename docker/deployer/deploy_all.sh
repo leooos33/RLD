@@ -422,9 +422,9 @@ LP_WEI=$((5000000 * 1000000))
 MAX_UINT=$(python3 -c 'print(2**160-1)')
 MAX_UINT48=$(python3 -c 'print(2**48-1)')
 
-cast send "$WAUSDC" "approve(address,uint256)" "$PERMIT2" "$LP_WEI" \
+cast send "$WAUSDC" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
     --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
-cast send "$POSITION_TOKEN" "approve(address,uint256)" "$PERMIT2" "$LP_WEI" \
+cast send "$POSITION_TOKEN" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
     --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
 cast send "$PERMIT2" "approve(address,address,uint160,uint48)" \
     "$WAUSDC" "$V4_POSITION_MANAGER" "$MAX_UINT" "$MAX_UINT48" \
@@ -434,18 +434,20 @@ cast send "$PERMIT2" "approve(address,address,uint160,uint48)" \
     --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
 
 cd /workspace/contracts
-AUSDC_AMOUNT=$LP_WEI WRLP_AMOUNT=$LP_WEI \
+AUSDC_AMOUNT=$LP_WEI WRLP_AMOUNT=$LP_WEI PRIVATE_KEY=$USER_A_KEY \
     WAUSDC=$WAUSDC POSITION_TOKEN=$POSITION_TOKEN TWAMM_HOOK=$TWAMM_HOOK \
-    TICK_SPACING=60 POOL_FEE=3000 \
+    TICK_SPACING=5 POOL_FEE=500 \
     forge script script/AddLiquidityWrapped.s.sol --tc AddLiquidityWrappedScript \
-    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v > /tmp/lp_output.log 2>&1 || true
+    --rpc-url "$RPC_URL" --code-size-limit 99999 -v > /tmp/lp_output.log 2>&1 || true
 
-if grep -q "LP Position Created" /tmp/lp_output.log; then
-    log_ok "LP position created"
-else
-    echo "  ⚠️  LP creation may have failed"
-    tail -5 /tmp/lp_output.log
-fi
+echo ""
+echo "=== LP SIMULATION OUTPUT (no broadcast - reading amounts only) ==="
+USER_A_WAUSDC=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_A_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
+USER_A_WRLP=$(cast call "$POSITION_TOKEN" "balanceOf(address)(uint256)" "$USER_A_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
+log_step "3.1b" "User A: waUSDC=${USER_A_WAUSDC} wRLP=${USER_A_WRLP}"
+grep -E "sqrtPrice|Amount:|liquidity|Tick|range|waUSDC|wRLP|currency|Error|revert|fail" /tmp/lp_output.log || true
+echo "=== END ==="
+log_ok "Dry run complete - amounts shown above"
 
 # ─── User B: Long User ($100k) ────────────────────────────────
 log_step "3.2" "Setting up Long User (User B)..."
