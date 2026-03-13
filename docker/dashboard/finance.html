@@ -1284,7 +1284,7 @@
                         )}
                         {!isSwap && !isTransfer && (
                           <span style={{ fontSize: 11, color: "var(--td)" }}>
-                            {JSON.stringify(e.event_data).slice(0, 80)}…
+                            {(JSON.stringify(e.event_data || {}) || "{}").slice(0, 80)}…
                           </span>
                         )}
                       </div>

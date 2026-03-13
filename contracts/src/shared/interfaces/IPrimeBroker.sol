@@ -50,6 +50,24 @@ interface IPrimeBroker {
     /// @notice Emitted when an operator is updated.
     event OperatorUpdated(address indexed operator, bool active);
 
+    // V4 LP Position Events
+    /// @notice Emitted when a V4 LP position is created by this broker
+    event LiquidityAdded(uint256 indexed tokenId, uint128 liquidity);
+    /// @notice Emitted when a V4 LP position is removed/reduced by this broker
+    event LiquidityRemoved(uint256 indexed tokenId, uint128 liquidity, bool burned);
+    /// @notice Emitted when the registered (solvency-tracked) V4 position changes
+    event ActivePositionChanged(uint256 oldTokenId, uint256 newTokenId);
+
+    // TWAMM Order Events
+    /// @notice Emitted when a TWAMM order is submitted via this broker
+    event TwammOrderSubmitted(bytes32 indexed orderId, bool zeroForOne, uint256 amountIn, uint256 expiration);
+    /// @notice Emitted when a TWAMM order is cancelled via this broker
+    event TwammOrderCancelled(bytes32 indexed orderId, uint256 buyTokensOut, uint256 sellTokensRefund);
+    /// @notice Emitted when an expired TWAMM order is claimed via this broker
+    event TwammOrderClaimed(bytes32 indexed orderId, uint256 claimed0, uint256 claimed1);
+    /// @notice Emitted when the registered (solvency-tracked) TWAMM order changes
+    event ActiveTwammOrderChanged(bytes32 oldOrderId, bytes32 newOrderId);
+
     // Indexing Events
     /// @notice Emitted on any balance change for indexer tracking
     event AccountBalanceChanged(

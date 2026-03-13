@@ -11,7 +11,6 @@
 #  What happens:
 #    postgres   → shared database for all simulations
 #    deployer   → deploys protocol, market, users, router, then exits
-#    indexer    → starts indexing after deployer finishes
 #    mm-daemon  → starts market making after deployer finishes
 #    chaos      → starts chaos trading after deployer finishes
 # ═══════════════════════════════════════════════════════════════
@@ -56,40 +55,6 @@ services:
       - API_KEY=${API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  # ─── INDEXER (long-running) ──────────────────────────────────
-  indexer:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile.indexer
-    depends_on:
-      deployer:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./deployment.json:/config/deployment.json:ro
-    ports:
-      - "${INDEXER_PORT:-8080}:8080"
-    environment:
-      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
-      - CONFIG_FILE=/config/deployment.json
-      - DB_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
-      - SIM_ID=${SIM_ID:-default}
-      - RATES_API_URL=${RATES_API_URL:-http://rates-indexer:8080}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'python3 -c "import urllib.request; urllib.request.urlopen(''http://localhost:8080/health'')" || exit 1',
-        ]
-      interval: 30s
-      timeout: 10s
-      start_period: 90s
-      retries: 3
 
   # ─── MM DAEMON (long-running) ────────────────────────────────
   mm-daemon:

@@ -905,7 +905,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             );
         }
 
+        uint256 oldTokenId = activeTokenId;
         activeTokenId = newTokenId;
+        emit ActivePositionChanged(oldTokenId, newTokenId);
 
         // SECURITY: Prevent gaming by switching to smaller positions
         _checkSolvency();
@@ -970,13 +972,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         // Auto-track first position; subsequent positions require setActiveV4Position()
         tokenId = IPositionManager(POSM).nextTokenId() - 1;
         if (activeTokenId == 0) {
+            uint256 oldTokenId = activeTokenId;
             activeTokenId = tokenId;
+            emit ActivePositionChanged(oldTokenId, tokenId);
         }
 
         // Cache hook address for future reference
         if (hookAddress == address(0)) {
             hookAddress = twammHook;
         }
+
+        emit LiquidityAdded(tokenId, liquidity);
 
         // SECURITY: Solvency check after adding LP
         _checkSolvency();
@@ -1018,8 +1024,11 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
         // Clear tracking if this was the tracked position and fully removed
         if (fullRemoval && tokenId == activeTokenId) {
+            emit ActivePositionChanged(activeTokenId, 0);
             activeTokenId = 0;
         }
+
+        emit LiquidityRemoved(tokenId, actualLiquidity, fullRemoval);
 
         // SECURITY: Solvency check after removing LP
         _checkSolvency();
@@ -1076,7 +1085,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             require(info.orderKey.owner == address(this), "!owner");
         }
 
+        bytes32 oldOrderId = activeTwammOrder.orderId;
         activeTwammOrder = info;
+        emit ActiveTwammOrderChanged(oldOrderId, info.orderId);
 
         // SECURITY: Prevent gaming by switching to smaller orders
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "!solv");
@@ -1091,7 +1102,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         whenNotFrozen
     {
+        uint256 oldTokenId = activeTokenId;
         activeTokenId = 0;
+        emit ActivePositionChanged(oldTokenId, 0);
         _checkSolvency();
     }
 
@@ -1139,11 +1152,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         ERC20(sellToken).approve(twammHook, 0);
 
         // Step 4: Auto-register for solvency tracking
+        bytes32 oldOrderId = activeTwammOrder.orderId;
         activeTwammOrder = TwammOrderInfo({
             key: params.key,
             orderKey: orderKey,
             orderId: orderId
         });
+        emit TwammOrderSubmitted(orderId, params.zeroForOne, params.amountIn, orderKey.expiration);
+        emit ActiveTwammOrderChanged(oldOrderId, orderId);
 
         // Step 5: Verify solvency
         _checkSolvency();
@@ -1161,7 +1177,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
         require(activeTwammOrder.orderId != bytes32(0), "!order");
+        bytes32 cancelledOrderId = activeTwammOrder.orderId;
         (buyTokensOut, sellTokensRefund) = _cancelTwammOrder();
+        emit TwammOrderCancelled(cancelledOrderId, buyTokensOut, sellTokensRefund);
+        emit ActiveTwammOrderChanged(cancelledOrderId, bytes32(0));
         _checkSolvency();
     }
 
@@ -1178,6 +1197,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         returns (uint256 claimed0, uint256 claimed1)
     {
         require(activeTwammOrder.orderId != bytes32(0), "!order");
+        bytes32 claimedOrderId = activeTwammOrder.orderId;
 
         // syncAndClaimTokens: syncs earnings, auto-deletes expired orders,
         // and transfers both token0 and token1 owed to this broker
@@ -1191,6 +1211,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
         // Clear tracking
         delete activeTwammOrder;
+        emit TwammOrderClaimed(claimedOrderId, claimed0, claimed1);
+        emit ActiveTwammOrderChanged(claimedOrderId, bytes32(0));
     }
 
     /// @notice Claims tokens from an arbitrary expired TWAMM order (not tracked)
@@ -1213,9 +1235,11 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     {
         require(orderKey.owner == address(this), "!owner");
 
+        bytes32 claimedOrderId = keccak256(abi.encode(orderKey));
         (claimed0, claimed1) = IJTM(twammHook).syncAndClaimTokens(
             IJTM.SyncParams({key: key, orderKey: orderKey})
         );
+        emit TwammOrderClaimed(claimedOrderId, claimed0, claimed1);
     }
 
     /* ============================================================================================ */

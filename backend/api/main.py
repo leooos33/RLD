@@ -1,10 +1,8 @@
 """
 Rate Dashboard API — FastAPI Application Entrypoint.
 
-This module creates the FastAPI app, configures middleware, and includes
-route modules. In RATE_ONLY mode (rates-indexer container), only rate
-routes are loaded. In full mode (sim-indexer), simulation routes are
-also included.
+Rates-only service: exposes rate data and GraphQL endpoints.
+No chain indexing logic — that belongs in the new indexer.
 """
 
 import asyncio
@@ -26,11 +24,6 @@ from api.routes.rates import router as rates_router, broadcast_rates
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Mode Detection ---
-_RATE_ONLY = os.getenv("RATE_ONLY", "").lower() in ("true", "1", "yes")
-
-if _RATE_ONLY:
-    logger.info("📊 RATE_ONLY mode: skipping chain-dependent imports")
 
 # --- App ---
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -118,41 +111,13 @@ app.include_router(rates_router)
 from api.routes.graphql_rates import graphql_router
 app.include_router(graphql_router)
 
-# Sim routes: only include in full mode
-_sim_tasks = []
-if not _RATE_ONLY:
-    try:
-        from api.routes.sim import router as sim_router, start_indexers, stop_indexers
-        app.include_router(sim_router)
-        logger.info("✅ Simulation routes loaded")
-    except ImportError as e:
-        logger.warning(f"⚠️ Could not load simulation routes: {e}")
-
 
 # --- Lifecycle ---
 @app.on_event("startup")
 async def startup_event():
-    global _sim_tasks
-
-    if _RATE_ONLY:
-        logger.info("📊 Running in RATE_ONLY mode - skipping chain indexers")
-    else:
-        try:
-            _sim_tasks = await start_indexers()
-        except Exception as e:
-            logger.error(f"Failed to start indexers: {e}")
-
-    # Start WebSocket broadcast (both modes)
     asyncio.create_task(broadcast_rates())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    if not _RATE_ONLY:
-        try:
-            stop_indexers()
-        except Exception:
-            pass
-    for task in _sim_tasks:
-        task.cancel()
     logger.info("🛑 Shutdown complete")
