@@ -114,38 +114,11 @@ echo "  TWAMM Hook:    $TWAMM_HOOK"
 echo "  Factory:       $FACTORY"
 echo "  BrokerRouter:  $BROKER_ROUTER"
 
-# ─── Deploy MockOracle ─────────────────────────────────────────
-log_step "1.2" "Deploying MockRLDAaveOracle..."
-MOCK_ORACLE=""
-for _attempt in 1 2 3; do
-    MOCK_ORACLE=$(forge create test/mocks/MockRLDAaveOracle.sol:MockRLDAaveOracle \
-        --private-key $DEPLOYER_KEY \
-        --rpc-url $RPC_URL \
-        --broadcast 2>&1 | grep "Deployed to:" | awk '{print $3}')
-    [ -n "$MOCK_ORACLE" ] && break
-    log_info "MockOracle deploy attempt $_attempt failed, retrying in 3s..."
-    sleep 3
-done
-[ -z "$MOCK_ORACLE" ] && log_err "Failed to deploy MockOracle after 3 attempts"
-log_ok "MockOracle: $MOCK_ORACLE"
-
-# ─── Set initial rate ──────────────────────────────────────────
-log_step "1.3" "Setting initial rate..."
-APY="5.0"
-API_URL_RATE="${API_URL:-http://host.docker.internal:8080}"
-API_KEY_RATE="${API_KEY:-}"
-RATE_JSON=$(curl -s --max-time 5 "$API_URL_RATE/rates?limit=1&symbol=USDC" -H "X-API-Key: $API_KEY_RATE" 2>/dev/null) || true
-API_APY=$(echo "$RATE_JSON" | jq -r '.[0].apy' 2>/dev/null) || true
-if [ -n "$API_APY" ] && [ "$API_APY" != "null" ]; then
-    APY="$API_APY"
-else
-    log_info "Rate API unavailable, using default 5%"
-fi
-
-RATE_RAY=$(python3 -c "print(int($APY / 100 * 1e27))")
-cast send $MOCK_ORACLE "setRate(uint256)" $RATE_RAY \
-    --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
-log_ok "Rate set to ${APY}%"
+# ─── Use RLDAaveOracle (reads live Aave V3 data from fork) ────
+log_step "1.2" "Loading RLDAaveOracle from deployments.json..."
+MOCK_ORACLE=$(jq -r '.RLDAaveOracle' deployments.json)
+[ -z "$MOCK_ORACLE" ] || [ "$MOCK_ORACLE" = "null" ] && log_err "RLDAaveOracle not found in deployments.json"
+log_ok "RLDAaveOracle: $MOCK_ORACLE (reads live Aave V3 rate from fork)"
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 2: DEPLOY MARKET
@@ -155,7 +128,7 @@ log_phase "2" "DEPLOY WRAPPED MARKET"
 cd /workspace/contracts
 
 log_step "2.1" "Deploying wrapped market..."
-MARKET_OUTPUT=$(USE_MOCK_ORACLE=true MOCK_ORACLE=$MOCK_ORACLE \
+MARKET_OUTPUT=$(USE_MOCK_ORACLE=false \
     forge script script/DeployWrappedMarket.s.sol --tc DeployWrappedMarket \
     --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
 
@@ -533,7 +506,7 @@ prime_oracle
 
 # Compute wRLP mint amount from price
 WRLP_PRICE_WAD=$(cast call "$MOCK_ORACLE" "getIndexPrice(address,address)(uint256)" \
-    "0x0000000000000000000000000000000000000000" "0x0000000000000000000000000000000000000000" \
+    "$AAVE_POOL" "$USDC" \
     --rpc-url "$RPC_URL" | awk '{print $1}')
 WRLP_MINT=$(python3 -c "
 price_wad = $WRLP_PRICE_WAD
