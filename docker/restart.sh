@@ -353,7 +353,7 @@ done
 header "STEP 5: VERIFY ALL CONTAINERS"
 
 step "5a" "Checking container statuses..."
-EXPECTED_RUNNING=("docker-postgres-1" "docker-indexer-1" "docker-mm-daemon-1" "docker-chaos-trader-1")
+EXPECTED_RUNNING=("docker-postgres-1" "docker-mm-daemon-1" "docker-chaos-trader-1")
 ALL_RUNNING=true
 
 for container in "${EXPECTED_RUNNING[@]}"; do
@@ -387,21 +387,7 @@ else
     ALL_RUNNING=false
 fi
 
-# Wait for indexer to become healthy
-step "5c" "Waiting for indexer health check..."
-for i in $(seq 1 "$HEALTH_TIMEOUT"); do
-    if curl -sf http://localhost:${INDEXER_PORT:-8080}/health > /dev/null 2>&1; then
-        ok "Indexer API healthy (took ${i}s)"
-        break
-    fi
-    if [ $((i % 15)) -eq 0 ]; then
-        dim "Still waiting... (${i}/${HEALTH_TIMEOUT}s)"
-    fi
-    sleep 1
-done
-if ! curl -sf http://localhost:${INDEXER_PORT:-8080}/health > /dev/null 2>&1; then
-    warn "Indexer not responding yet - may still be initializing"
-fi
+
 
 # Quick daemon sanity check — look for errors in last few log lines
 step "5c" "Daemon health check..."
@@ -453,7 +439,7 @@ printf "${MAGENTA}║${NC}  %-28s %s %-22s ${MAGENTA}║${NC}\n" "docker-postgre
 echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
 
 # Ports
-printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Indexer=:${INDEXER_PORT:-8080}  Postgres=:${DB_PORT:-5432}"
+printf "${MAGENTA}║${NC}  %-1s  %-42s ${MAGENTA}║${NC}\n" "Ports:" "Anvil=:$ANVIL_PORT  Postgres=:${DB_PORT:-5432}"
 
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
