@@ -49,3 +49,4 @@ docs/internal_audit/
 # ── OS Files ───────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+^out/
