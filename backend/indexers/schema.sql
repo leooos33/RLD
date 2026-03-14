@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS markets (
   liq_close_factor    TEXT NOT NULL,
   funding_period_sec  BIGINT NOT NULL,
   debt_cap            TEXT NOT NULL,
+  -- Global market state (latest snapshot)
+  normalization_factor NUMERIC DEFAULT 1000000000000000000,
+  total_debt_raw       NUMERIC DEFAULT 0,
+  bad_debt             NUMERIC DEFAULT 0,
   created_at          TIMESTAMPTZ NOT NULL
 );
 
@@ -50,12 +54,15 @@ CREATE TABLE IF NOT EXISTS brokers (
   market_id           TEXT NOT NULL REFERENCES markets(market_id),
   owner               TEXT NOT NULL,
   -- State (NULL until first state event arrives)
-  collateral          NUMERIC,
-  debt                NUMERIC,
-  collateral_value    NUMERIC,
-  debt_value          NUMERIC,
+  wausdc_balance      NUMERIC,
+  wrlp_balance        NUMERIC,
+  wausdc_value        NUMERIC,
+  wrlp_value          NUMERIC,
   health_factor       TEXT,
-  active_token_id     BIGINT,
+  active_lp_token_id     BIGINT DEFAULT 0,
+  active_twamm_order_id  TEXT DEFAULT '',
+  debt_principal      NUMERIC DEFAULT 0,
+  is_liquidated       BOOLEAN DEFAULT false,
   -- Provenance
   created_block       BIGINT NOT NULL,
   created_tx          TEXT NOT NULL
@@ -84,6 +91,20 @@ CREATE TABLE IF NOT EXISTS block_states (
   fee_growth_global0    TEXT,
   fee_growth_global1    TEXT,
   PRIMARY KEY (market_id, block_number)
+);
+
+-- ── LIQUIDATIONS ─────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS liquidations (
+  market_id           TEXT NOT NULL REFERENCES markets(market_id),
+  block_number        BIGINT NOT NULL,
+  block_timestamp     BIGINT NOT NULL,
+  user_address        TEXT NOT NULL,
+  liquidator_address  TEXT NOT NULL,
+  debt_covered        NUMERIC NOT NULL,
+  collateral_seized   NUMERIC NOT NULL,
+  wrlp_burned         NUMERIC NOT NULL,
+  PRIMARY KEY (market_id, block_number, user_address)
 );
 
 -- ── RAW EVENT LOG ────────────────────────────────────────────────────────────
@@ -139,24 +160,53 @@ CREATE TABLE IF NOT EXISTS lp_positions (
   entry_tick      INT,
   mint_block      BIGINT NOT NULL,
   is_active       BOOLEAN NOT NULL,
-  is_burned       BOOLEAN NOT NULL
+  is_burned       BOOLEAN NOT NULL,
+  is_registered   BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_lp_market_broker ON lp_positions(market_id, broker_address);
 
 -- ── TWAMM ORDERS ─────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS twamm_orders (
-  order_id        TEXT PRIMARY KEY,   -- keccak256(owner || expiration || zeroForOne)
+  order_id        TEXT PRIMARY KEY,   -- JTM assigned order ID
   market_id       TEXT NOT NULL REFERENCES markets(market_id),
   owner           TEXT NOT NULL,
-  broker_address  TEXT,               -- NULL if submitted directly
+  broker_address  TEXT,               -- broker that owns this order
   amount_in       TEXT NOT NULL,      -- raw uint256 string
-  sell_rate       TEXT,               -- filled from getOrder() enrichment
   expiration      BIGINT NOT NULL,
   start_epoch     BIGINT NOT NULL,
   zero_for_one    BOOLEAN NOT NULL,
   block_number    BIGINT NOT NULL,
   tx_hash         TEXT NOT NULL,
-  is_cancelled    BOOLEAN NOT NULL
+  status          TEXT NOT NULL DEFAULT 'active',  -- active | cancelled | claimed
+  is_registered   BOOLEAN NOT NULL DEFAULT false,
+  buy_tokens_out  TEXT DEFAULT '0',
+  sell_tokens_refund TEXT DEFAULT '0',
+  is_cancelled    BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_twamm_market_owner ON twamm_orders(market_id, owner);
+CREATE INDEX IF NOT EXISTS idx_twamm_broker ON twamm_orders(broker_address);
+
+-- ── RAW EVENT QUEUE (ingestor → processor) ──────────────────────────────────
+-- Ingestor writes here. Processor polls status='pending', decodes & updates
+-- domain tables, then marks status='done'. Decouples ingestion from processing.
+
+CREATE TABLE IF NOT EXISTS raw_events (
+  id              BIGSERIAL PRIMARY KEY,
+  block_number    BIGINT NOT NULL,
+  block_timestamp BIGINT NOT NULL,
+  tx_hash         TEXT NOT NULL,
+  log_index       INT NOT NULL,
+  contract        TEXT NOT NULL,
+  topic0          TEXT NOT NULL,
+  topic1          TEXT,
+  topic2          TEXT,
+  topic3          TEXT,
+  data            TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'pending',  -- pending | done | error
+  error_msg       TEXT,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (tx_hash, log_index)
+);
+CREATE INDEX IF NOT EXISTS idx_raw_pending ON raw_events(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_raw_block   ON raw_events(block_number);
