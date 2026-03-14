@@ -15,12 +15,13 @@ import logging
 log = logging.getLogger(__name__)
 
 
-async def handle_normalization_factor_updated(
+async def handle_funding_applied(
     conn: asyncpg.Connection,
     market_id: str,
     block_number: int,
     block_timestamp: int,
     new_factor: int,
+    funding_rate: int,
 ) -> None:
     await conn.execute("""
         INSERT INTO block_states (market_id, block_number, block_timestamp, normalization_factor)
@@ -28,7 +29,7 @@ async def handle_normalization_factor_updated(
         ON CONFLICT (market_id, block_number) DO UPDATE
           SET normalization_factor = EXCLUDED.normalization_factor
     """, market_id, block_number, block_timestamp, new_factor / 1e18)
-    log.debug("[market] NF updated market=%s block=%d nf=%s", market_id, block_number, new_factor)
+    log.debug("[market] Funding applied market=%s block=%d nf=%s rate=%s", market_id, block_number, new_factor, funding_rate)
 
 
 async def handle_market_state_updated(
@@ -36,15 +37,17 @@ async def handle_market_state_updated(
     market_id: str,
     block_number: int,
     block_timestamp: int,
+    normalization_factor: int,
     total_debt: int,
 ) -> None:
     await conn.execute("""
-        INSERT INTO block_states (market_id, block_number, block_timestamp, total_debt)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO block_states (market_id, block_number, block_timestamp, normalization_factor, total_debt)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (market_id, block_number) DO UPDATE
-          SET total_debt = EXCLUDED.total_debt
-    """, market_id, block_number, block_timestamp, total_debt / 1e6)
-    log.debug("[market] debt updated market=%s block=%d debt=%s", market_id, block_number, total_debt)
+          SET normalization_factor = EXCLUDED.normalization_factor,
+              total_debt = EXCLUDED.total_debt
+    """, market_id, block_number, block_timestamp, normalization_factor / 1e18, total_debt / 1e6)
+    log.debug("[market] state updated market=%s block=%d nf=%s debt=%s", market_id, block_number, normalization_factor, total_debt)
 
 
 async def handle_rate_updated(
@@ -61,3 +64,12 @@ async def handle_rate_updated(
           SET index_price = EXCLUDED.index_price
     """, market_id, block_number, block_timestamp, index_price / 1e18)
     log.debug("[market] index_price updated market=%s block=%d price=%s", market_id, block_number, index_price)
+async def handle_bad_debt_registered(
+    conn: asyncpg.Connection,
+    market_id: str,
+    total_bad_debt: int,
+) -> None:
+    await conn.execute("""
+        UPDATE markets SET bad_debt = $1 WHERE market_id = $2
+    """, total_bad_debt / 1e6, market_id)
+    log.debug("[market] Bad debt registered market=%s total=%s", market_id, total_bad_debt)

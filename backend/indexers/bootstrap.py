@@ -91,13 +91,94 @@ async def apply_schema(conn: asyncpg.Connection) -> None:
     log.info("Schema applied from %s", SCHEMA_PATH)
 
 
+async def reset(pool: asyncpg.Pool) -> None:
+    """Truncate all indexed data and re-seed market — called by POST /admin/reset."""
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            TRUNCATE events, block_states, candles,
+                     brokers, lp_positions, twamm_orders, liquidations,
+                     indexer_state, markets
+            CASCADE
+        """)
+    log.info("All indexed data truncated")
+    await bootstrap_market(pool)
+
+
 async def bootstrap(pool: asyncpg.Pool) -> dict:
     """
-    1. Load deployment.json (tolerant of old/new formats)
-    2. Apply schema (idempotent)
-    3. Return normalised global config dict for the indexer loop
+    Startup-only: apply schema.
+    Does NOT seed markets or load deployment.json — that happens via
+    POST /admin/reset from the deployer after contracts are deployed.
     """
-    cfg = load_deployment_json()
     async with pool.acquire() as conn:
         await apply_schema(conn)
+    log.info("Schema applied, waiting for deployer to call POST /admin/reset")
+    return {}
+
+
+async def bootstrap_market(pool: asyncpg.Pool) -> dict:
+    """
+    Seed the markets row from deployment.json.
+    Called ONLY from reset() after deployer has written fresh config.
+    """
+    cfg = load_deployment_json()
+    market_id = cfg.get("market_id", "")
+    if not market_id:
+        log.warning("No market_id in deployment.json — skipping market seed")
+        return cfg
+
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO markets (
+                market_id, deploy_block, deploy_timestamp,
+                broker_factory, mock_oracle, twamm_hook,
+                wausdc, wausdc_symbol, wrlp, wrlp_symbol,
+                pool_id, pool_fee, tick_spacing,
+                swap_router, bond_factory, basis_trade_factory, broker_executor,
+                min_col_ratio, maintenance_margin, liq_close_factor,
+                funding_period_sec, debt_cap, created_at
+            ) VALUES (
+                $1, $2, 0,
+                $3, $4, $5,
+                $6, 'waUSDC', $7, 'wRLP',
+                $8, 500, 5,
+                $9, $10, $11, $12,
+                '1500000000000000000', '1250000000000000000', '500000000000000000',
+                28800, '1000000000000000000000000', NOW()
+            )
+            ON CONFLICT (market_id) DO UPDATE SET
+                wausdc              = COALESCE(NULLIF(EXCLUDED.wausdc, ''),              markets.wausdc),
+                wrlp                = COALESCE(NULLIF(EXCLUDED.wrlp, ''),                markets.wrlp),
+                pool_id             = COALESCE(NULLIF(EXCLUDED.pool_id, ''),             markets.pool_id),
+                broker_factory      = COALESCE(NULLIF(EXCLUDED.broker_factory, ''),      markets.broker_factory),
+                mock_oracle         = COALESCE(NULLIF(EXCLUDED.mock_oracle, ''),         markets.mock_oracle),
+                twamm_hook          = COALESCE(NULLIF(EXCLUDED.twamm_hook, ''),          markets.twamm_hook),
+                swap_router         = COALESCE(NULLIF(EXCLUDED.swap_router, ''),         markets.swap_router),
+                bond_factory        = COALESCE(NULLIF(EXCLUDED.bond_factory, ''),        markets.bond_factory),
+                basis_trade_factory = COALESCE(NULLIF(EXCLUDED.basis_trade_factory, ''), markets.basis_trade_factory),
+                broker_executor     = COALESCE(NULLIF(EXCLUDED.broker_executor, ''),     markets.broker_executor)
+        """,
+            market_id,
+            cfg.get("session_start_block", 0),
+            cfg.get("broker_factory", ""),
+            cfg.get("mock_oracle", ""),
+            cfg.get("twamm_hook", ""),
+            cfg.get("wausdc", cfg.get("token0", "")),
+            cfg.get("position_token", cfg.get("token1", "")),
+            cfg.get("pool_id", ""),
+            cfg.get("swap_router", ""),
+            cfg.get("bond_factory", ""),
+            cfg.get("basis_trade_factory", ""),
+            cfg.get("broker_executor", ""),
+        )
+        # Also seed indexer_state so the polling loop knows where to start
+        await conn.execute("""
+            INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
+            VALUES ($1, $2, 0)
+            ON CONFLICT (market_id) DO UPDATE SET last_indexed_block = EXCLUDED.last_indexed_block
+        """, market_id, cfg.get("session_start_block", 0))
+
+    log.info("Seeded market %s with oracle=%s pool_id=%s",
+             market_id[:16], cfg.get("mock_oracle", "")[:16], cfg.get("pool_id", "")[:16])
     return cfg
+

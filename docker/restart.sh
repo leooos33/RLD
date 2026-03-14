@@ -221,6 +221,7 @@ nohup anvil \
     --chain-id 31337 \
     --block-time 12 \
     --host "$ANVIL_HOST" \
+    --code-size-limit 100000 \
     --dump-state /tmp/anvil-state/state.json \
     > "$ANVIL_LOG" 2>&1 &
 

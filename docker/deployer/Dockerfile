@@ -25,9 +25,11 @@ COPY scripts/ /workspace/scripts/
 # Copy deploy_swap_router.py
 COPY backend/tools/deploy_swap_router.py /workspace/backend/tools/deploy_swap_router.py
 
-# Copy the master deploy script
+# Copy the master deploy script + modular phases
 COPY docker/deployer/deploy_all.sh /workspace/deploy_all.sh
-RUN chmod +x /workspace/deploy_all.sh
+COPY docker/deployer/phases/ /workspace/phases/
+COPY docker/deployer/lib_setup.sh /workspace/lib_setup.sh
+RUN chmod +x /workspace/deploy_all.sh /workspace/phases/*.sh
 
 # Pre-install forge dependencies
 WORKDIR /workspace/contracts

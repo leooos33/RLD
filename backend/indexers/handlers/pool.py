@@ -29,11 +29,24 @@ RESOLUTIONS = {
 }
 
 
-def sqrt_price_x96_to_price(sqrt_price_x96: int) -> float:
-    """Convert Uniswap V4 sqrtPriceX96 to human price (token1/token0)."""
+def sqrt_price_x96_to_price(sqrt_price_x96: int, wausdc: str, wrlp: str) -> float:
+    """
+    Convert Uniswap V4 sqrtPriceX96 to a standardized Mark Price (wRLP/waUSDC).
+    Uniswap sorts token0 (lower address) and token1 (higher address).
+    sqrtPriceX96 is always token1 / token0.
+    """
     if sqrt_price_x96 == 0:
         return 0.0
-    return (sqrt_price_x96 / (2 ** 96)) ** 2
+
+    token0_is_wausdc = wausdc.lower() < wrlp.lower()
+    raw_price = (sqrt_price_x96 / (2 ** 96)) ** 2
+
+    if token0_is_wausdc:
+        # P = wRLP / waUSDC. We want waUSDC per wRLP, so invert.
+        return 1.0 / raw_price if raw_price > 0 else 0.0
+    else:
+        # P = waUSDC / wRLP. Already what we want.
+        return raw_price
 
 
 def tick_to_price(tick: int) -> float:
@@ -50,8 +63,10 @@ async def handle_swap(
     amount0: int,
     amount1: int,
     liquidity: int,
+    wausdc: str,
+    wrlp: str,
 ) -> None:
-    mark_price = sqrt_price_x96_to_price(sqrt_price_x96)
+    mark_price = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp)
 
     # Volume: absolute value of the USDC side (amount1 for wRLP/waUSDC pools where token1=waUSDC)
     volume_usd = abs(amount1) / 1e6
@@ -111,6 +126,8 @@ async def handle_modify_liquidity(
     tick_upper: int,
     liquidity_delta: int,
     sqrt_price_x96: int,
+    wausdc: str,
+    wrlp: str,
 ) -> None:
     # Update block_states liquidity snapshot
     await conn.execute("""
@@ -121,7 +138,7 @@ async def handle_modify_liquidity(
           tick       = COALESCE(block_states.tick,       EXCLUDED.tick),
           mark_price = COALESCE(block_states.mark_price, EXCLUDED.mark_price)
     """, market_id, block_number, block_timestamp,
-         None, sqrt_price_x96_to_price(sqrt_price_x96) if sqrt_price_x96 else None)
+         None, sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else None)
 
     log.debug("[pool] ModifyLiquidity market=%s block=%d delta=%d [%d, %d]",
               market_id, block_number, liquidity_delta, tick_lower, tick_upper)

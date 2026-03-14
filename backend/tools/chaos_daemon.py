@@ -62,14 +62,46 @@ load_dotenv("/home/ubuntu/RLD/.env")
 
 RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:8545")
 PRIVATE_KEY = os.getenv("CHAOS_KEY")
-BROKER = os.getenv("CHAOS_BROKER")
-WAUSDC = os.getenv("WAUSDC")
-POSITION_TOKEN = os.getenv("POSITION_TOKEN")
-TWAMM_HOOK = os.getenv("TWAMM_HOOK")
-SWAP_ROUTER = os.getenv("SWAP_ROUTER")
+INDEXER_URL = os.getenv("INDEXER_URL", "http://indexer:8080")
 
-TOKEN0 = min(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
-TOKEN1 = max(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
+# These will be set by load_config_from_indexer()
+BROKER = None
+WAUSDC = None
+POSITION_TOKEN = None
+TWAMM_HOOK = None
+SWAP_ROUTER = None
+TOKEN0 = None
+TOKEN1 = None
+
+
+def load_config_from_indexer():
+    """Poll GET /config on the indexer until deployer has seeded the market."""
+    global BROKER, WAUSDC, POSITION_TOKEN, TWAMM_HOOK, SWAP_ROUTER, TOKEN0, TOKEN1
+    import requests
+
+    logger.info("⏳ Waiting for deployment config from indexer at %s/config ...", INDEXER_URL)
+    while True:
+        try:
+            resp = requests.get(f"{INDEXER_URL}/config", timeout=5)
+            if resp.status_code == 200:
+                cfg = resp.json()
+                WAUSDC = cfg.get("wausdc")
+                POSITION_TOKEN = cfg.get("position_token") or cfg.get("wrlp")
+                TWAMM_HOOK = cfg.get("twamm_hook")
+                SWAP_ROUTER = cfg.get("swap_router")
+                TOKEN0 = min(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
+                TOKEN1 = max(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
+                logger.info("✅ Config loaded from indexer:")
+                logger.info("   WAUSDC=%s  POSITION_TOKEN=%s", WAUSDC, POSITION_TOKEN)
+                logger.info("   SWAP_ROUTER=%s", SWAP_ROUTER)
+                return cfg
+            else:
+                logger.info("   Indexer returned %d — deployer not done yet...", resp.status_code)
+        except Exception as e:
+            logger.info("   Indexer not reachable (%s), retrying in 5s...", e)
+        time.sleep(5)
+
+
 TRADE_INTERVAL_MIN = 10  # seconds
 TRADE_INTERVAL_MAX = 15  # seconds
 
@@ -202,10 +234,10 @@ def main():
     if not PRIVATE_KEY:
         print("ERROR: CHAOS_KEY not set in .env")
         sys.exit(1)
-    if not WAUSDC or not POSITION_TOKEN:
-        print("ERROR: Token addresses not set in .env")
-        sys.exit(1)
-    
+
+    # Poll indexer for deployment config (blocks until deployer has run)
+    load_config_from_indexer()
+
     trader = ChaosTrader()
     trader.run()
 

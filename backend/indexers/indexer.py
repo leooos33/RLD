@@ -32,12 +32,16 @@ log = logging.getLogger(__name__)
 
 TOPICS = {
     # RLDCore
-    Web3.keccak(text="NormalizationFactorUpdated(bytes32,uint128,uint128)").hex():
-        "NormalizationFactorUpdated",
+    Web3.keccak(text="FundingApplied(bytes32,uint256,uint256,int256,uint256)").hex():
+        "FundingApplied",
     Web3.keccak(text="MarketStateUpdated(bytes32,uint128,uint128)").hex():
         "MarketStateUpdated",
+    Web3.keccak(text="PositionModified(bytes32,address,int256,int256)").hex():
+        "PositionModified",
+    Web3.keccak(text="BadDebtRegistered(bytes32,uint128,uint128)").hex():
+        "BadDebtRegistered",
     # MockOracle
-    Web3.keccak(text="RateUpdated(bytes32,int256)").hex():
+    Web3.keccak(text="RateUpdated(uint256,uint256)").hex():
         "RateUpdated",
     # BrokerFactory
     Web3.keccak(text="BrokerCreated(address,address,bytes32)").hex():
@@ -80,15 +84,17 @@ async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str
     markets = await conn.fetch("SELECT * FROM markets")
     brokers = await conn.fetch("SELECT address FROM brokers")
 
-    watched = {
-        global_cfg["rld_core"].lower(),
-        global_cfg["v4_pool_manager"].lower(),
-        global_cfg["v4_position_manager"].lower(),
-    }
+    watched = set()
+    # Global addresses from deployment config
+    for key in ("rld_core", "v4_pool_manager", "v4_position_manager"):
+        addr = global_cfg.get(key)
+        if addr:
+            watched.add(addr.lower())
+    # Per-market addresses from DB
     for m in markets:
-        watched.add(m["broker_factory"].lower())
-        watched.add(m["mock_oracle"].lower())
-        watched.add(m["twamm_hook"].lower())
+        for col in ("broker_factory", "mock_oracle", "twamm_hook"):
+            if m[col]:
+                watched.add(m[col].lower())
     for b in brokers:
         watched.add(b["address"].lower())
 
@@ -133,6 +139,17 @@ async def dispatch(
 
     topic0 = topics[0].hex() if isinstance(topics[0], bytes) else topics[0]
     event_name = TOPICS.get(topic0)
+    raw_data = log_entry.get("data", "0x")
+    
+    # Normalize data to bytes
+    if isinstance(raw_data, str):
+        hex_str = raw_data[2:] if raw_data.startswith("0x") else raw_data
+        data_bytes = bytes.fromhex(hex_str)
+    else:
+        data_bytes = bytes(raw_data)
+
+    log.info("[dispatch] topic0=%s name=%s dataLen=%d", topic0, event_name, len(data_bytes))
+
     if not event_name:
         return  # Unknown event, skip
 
@@ -145,9 +162,10 @@ async def dispatch(
     log_index = log_entry["logIndex"]
 
     market_id = addr_market_map.get(contract)
-    data = log_entry.get("data", "0x")
-    if isinstance(data, bytes):
-        data = data.hex()
+    # If not in map (singleton contracts), resolve via topics[1] if it looks like a market_id
+    if not market_id and len(topics) > 1:
+        tid = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
+        market_id = "0x" + tid if not tid.startswith("0x") else tid
 
     # ── Record raw event ─────────────────────────────────────────────────
     await conn.execute("""
@@ -157,9 +175,10 @@ async def dispatch(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (tx_hash, log_index) DO NOTHING
     """, market_id, block_number, block_timestamp, tx_hash, log_index,
-         event_name, contract, json.dumps({"raw": data, "topics": [
-             t.hex() if isinstance(t, bytes) else t for t in topics
-         ]}))
+       event_name, contract, json.dumps({
+           "raw": "0x" + data_bytes.hex(),
+           "topics": [t.hex() if isinstance(t, bytes) else t for t in topics]
+       }))
 
     # ── Route to handler ─────────────────────────────────────────────────
 
@@ -171,8 +190,8 @@ async def dispatch(
             else "0x" + topics[2][-40:]
 
         # Decode marketId from data
-        raw_data = data if data.startswith("0x") else "0x" + data
-        market_id_bytes = raw_data[2:66] if len(raw_data) >= 66 else None
+        market_id_hex = data_bytes.hex()
+        market_id_bytes = "0x" + market_id_hex if len(market_id_hex) == 64 else None
         resolved_market_id = market_id or (
             addr_market_map.get(contract) if market_id_bytes else None
         )
@@ -181,18 +200,44 @@ async def dispatch(
             block_number, tx_hash,
         )
 
-    elif event_name == "NormalizationFactorUpdated" and market_id:
-        # data: (newFactor uint128, timestamp uint128)
-        decoded = w3.eth.codec.decode(["uint128", "uint128"], bytes.fromhex(data[2:]))
-        await market_handler.handle_normalization_factor_updated(
-            conn, market_id, block_number, block_timestamp, decoded[0]
+    elif event_name == "FundingApplied" and market_id:
+        # data: (oldNormFactor uint256, newNormFactor uint256, fundingRate int256, timeDelta uint256)
+        # marketId is indexed (topics[1])
+        decoded = w3.eth.codec.decode(["uint256", "uint256", "int256", "uint256"], data_bytes)
+        await market_handler.handle_funding_applied(
+            conn, market_id, block_number, block_timestamp, decoded[1], decoded[2]
+        )
+
+    elif event_name == "MarketStateUpdated" and market_id:
+        # data: (normalizationFactor uint128, totalDebt uint128)
+        decoded = w3.eth.codec.decode(["uint128", "uint128"], data_bytes)
+        await market_handler.handle_market_state_updated(
+            conn, market_id, block_number, block_timestamp, decoded[0], decoded[1]
+        )
+
+    elif event_name == "PositionModified" and market_id:
+        # topics: [topic0, marketId, user]  data: (deltaCollateral int256, deltaDebt int256)
+        user = "0x" + topics[2][-20:].hex() if isinstance(topics[2], bytes) else "0x" + topics[2][-40:]
+        decoded = w3.eth.codec.decode(["int256", "int256"], data_bytes)
+        await broker_handler.handle_position_modified(
+            conn, market_id, user, decoded[0], decoded[1], block_number
+        )
+
+    elif event_name == "BadDebtRegistered" and market_id:
+        # data: (amount uint128, totalBadDebt uint128)
+        decoded = w3.eth.codec.decode(["uint128", "uint128"], data_bytes)
+        await market_handler.handle_bad_debt_registered(
+            conn, market_id, decoded[0], decoded[1]
         )
 
     elif event_name == "RateUpdated" and market_id:
-        # data: (marketId bytes32, indexPrice int256)
-        decoded = w3.eth.codec.decode(["bytes32", "int256"], bytes.fromhex(data[2:]))
+        # data: (newRateRay uint256, timestamp uint256)
+        decoded = w3.eth.codec.decode(["uint256", "uint256"], data_bytes)
+        # newRateRay → compute index price: (rate * K_SCALAR) / 1e9 = WAD price
+        new_rate_ray = decoded[0]
+        index_price_wad = (new_rate_ray * 100) // 10**9  # K=100, RAY→WAD
         await market_handler.handle_rate_updated(
-            conn, market_id, block_number, block_timestamp, decoded[1]
+            conn, market_id, block_number, block_timestamp, index_price_wad
         )
 
     elif event_name == "Swap":
@@ -212,28 +257,52 @@ async def dispatch(
         #            uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
         # Topics: [sig, id, sender]  Data: (amount0, amount1, sqrtPriceX96, liquidity, tick, fee)
         try:
+            pool_id = market_id  # In Swap, topic1 is the pool_id
+            market_info = await conn.fetchrow(
+                "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
+            )
+            if not market_info:
+                return
+                
+            real_market_id = market_info["market_id"]
+            wausdc = market_info["wausdc"]
+            wrlp = market_info["wrlp"]
+
             decoded = w3.eth.codec.decode(
                 ["int128", "int128", "uint160", "uint128", "int24", "uint24"],
-                bytes.fromhex(data[2:])
+                data_bytes
             )
             await pool_handler.handle_swap(
-                conn, market_id, block_number, block_timestamp,
+                conn, real_market_id, block_number, block_timestamp,
                 sqrt_price_x96=decoded[2], tick=decoded[4],
-                amount0=decoded[0], amount1=decoded[1], liquidity=decoded[3]
+                amount0=decoded[0], amount1=decoded[1], liquidity=decoded[3],
+                wausdc=wausdc, wrlp=wrlp
             )
         except Exception as e:
             log.warning("[dispatch] Swap decode failed block=%d: %s", block_number, e)
 
     elif event_name == "ModifyLiquidity" and market_id:
         try:
+            pool_id = market_id
+            market_info = await conn.fetchrow(
+                "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
+            )
+            if not market_info:
+                return
+                
+            real_market_id = market_info["market_id"]
+            wausdc = market_info["wausdc"]
+            wrlp = market_info["wrlp"]
+
             decoded = w3.eth.codec.decode(
                 ["int24", "int24", "int256", "bytes32"],
-                bytes.fromhex(data[2:])
+                data_bytes
             )
             await pool_handler.handle_modify_liquidity(
-                conn, market_id, block_number, block_timestamp,
+                conn, real_market_id, block_number, block_timestamp,
                 tick_lower=decoded[0], tick_upper=decoded[1],
-                liquidity_delta=decoded[2], sqrt_price_x96=0
+                liquidity_delta=decoded[2], sqrt_price_x96=0,
+                wausdc=wausdc, wrlp=wrlp
             )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
@@ -242,7 +311,7 @@ async def dispatch(
         try:
             decoded = w3.eth.codec.decode(
                 ["uint256", "int24", "int24", "uint128"],
-                bytes.fromhex(data[2:])
+                data_bytes
             )
             await lp_handler.handle_v4_liquidity_added(
                 conn, market_id, contract,
@@ -254,14 +323,14 @@ async def dispatch(
 
     elif event_name == "V4LiquidityRemoved":
         try:
-            decoded = w3.eth.codec.decode(["uint256", "uint128"], bytes.fromhex(data[2:]))
+            decoded = w3.eth.codec.decode(["uint256", "uint128"], data_bytes)
             await lp_handler.handle_v4_liquidity_removed(conn, decoded[0], decoded[1])
         except Exception as e:
             log.warning("[dispatch] V4LiquidityRemoved decode failed: %s", e)
 
     elif event_name == "ActiveTokenSet":
         try:
-            decoded = w3.eth.codec.decode(["uint256"], bytes.fromhex(data[2:]))
+            decoded = w3.eth.codec.decode(["uint256"], data_bytes)
             await broker_handler.handle_active_token_set(conn, contract, decoded[0])
         except Exception as e:
             log.warning("[dispatch] ActiveTokenSet decode failed: %s", e)
@@ -270,7 +339,7 @@ async def dispatch(
         # topics: [sig, owner(indexed)]  data: (expiration, zeroForOne, amountIn)  OR all in data
         try:
             owner = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
-            decoded = w3.eth.codec.decode(["uint160", "bool", "uint256"], bytes.fromhex(data[2:]))
+            decoded = w3.eth.codec.decode(["uint160", "bool", "uint256"], data_bytes)
             await twamm_handler.handle_submit_order(
                 conn, market_id, owner,
                 expiration=decoded[0], start_epoch=block_timestamp,
@@ -283,7 +352,7 @@ async def dispatch(
     elif event_name == "CancelOrder":
         try:
             owner = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
-            decoded = w3.eth.codec.decode(["uint160", "bool"], bytes.fromhex(data[2:]))
+            decoded = w3.eth.codec.decode(["uint160", "bool"], data_bytes)
             await twamm_handler.handle_cancel_order(conn, owner, decoded[0], decoded[1])
         except Exception as e:
             log.warning("[dispatch] CancelOrder decode failed: %s", e)
@@ -305,12 +374,38 @@ async def update_indexer_state(conn: asyncpg.Connection, market_id: str, block_n
 
 async def run(rpc_url: str, dsn: str) -> None:
     await db.init(dsn)
-    global_cfg = await bootstrap.bootstrap(db.pool)
+    # Schema-only — no market config needed yet
+    await bootstrap.bootstrap(db.pool)
 
     w3 = Web3(Web3.HTTPProvider(rpc_url))
     log.info("Connected to chain %d at %s", w3.eth.chain_id, rpc_url)
 
+    # Wait for deployer to seed market via POST /admin/reset
+    log.info("Waiting for market config in DB (deployer must call POST /admin/reset)...")
+    global_cfg = {}
+    while True:
+        async with db.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT market_id, deploy_block FROM markets LIMIT 1")
+            state = await conn.fetchrow("SELECT last_indexed_block FROM indexer_state LIMIT 1")
+        if row:
+            global_cfg["market_id"] = row["market_id"]
+            global_cfg["session_start_block"] = row["deploy_block"] or 0
+            # Load full config from deployment.json for rld_core, v4_pool_manager etc.
+            try:
+                full_cfg = bootstrap.load_deployment_json()
+                global_cfg.update(full_cfg)
+            except (FileNotFoundError, ValueError):
+                pass
+            log.info("Market found: %s (deploy_block=%d)", row["market_id"], global_cfg["session_start_block"])
+            break
+        await asyncio.sleep(5)
+
     last_block = global_cfg["session_start_block"] - 1
+    if state and state["last_indexed_block"] is not None:
+        last_block = max(last_block, state["last_indexed_block"])
+        log.info("Resuming from block %d (from DB)", last_block)
+    else:
+        log.info("Starting from block %d (no state in DB)", last_block)
 
     while True:
         try:
@@ -334,53 +429,51 @@ async def run(rpc_url: str, dsn: str) -> None:
 
                 # Fetch all logs in [last_block+1 .. to_block] for watched addresses
                 # web3.py requires checksum addresses for the filter; internally we use lowercase
-                watched_cs = [Web3.to_checksum_address(a) for a in watched]
+                # Filter out empty or invalid addresses to prevent Web3 Checksum errors
+                valid_watched = [a for a in watched if isinstance(a, str) and a.startswith("0x") and len(a) == 42]
+                watched_cs = [Web3.to_checksum_address(a) for a in valid_watched]
                 logs = w3.eth.get_logs({
                     "fromBlock": last_block + 1,
                     "toBlock": to_block,
                     "address": watched_cs,
                 })
 
-                if not logs:
-                    last_block = to_block
-                    await asyncio.sleep(POLL_INTERVAL)
-                    continue
-
-                # Enrich logs with block timestamps (batch blocks)
-                block_timestamps: dict[int, int] = {}
-                for log_entry in logs:
-                    bn = log_entry["blockNumber"]
-                    if bn not in block_timestamps:
-                        block_timestamps[bn] = w3.eth.get_block(bn)["timestamp"]
-                    log_entry["_block_timestamp"] = block_timestamps[bn]
+                if logs:
+                    # Enrich logs with block timestamps (batch blocks)
+                    enriched_logs = []
+                    block_timestamps: dict[int, int] = {}
+                    for log_entry in logs:
+                        bn = log_entry["blockNumber"]
+                        if bn not in block_timestamps:
+                            block_timestamps[bn] = w3.eth.get_block(bn)["timestamp"]
+                        
+                        entry_dict = dict(log_entry)
+                        entry_dict["_block_timestamp"] = block_timestamps[bn]
+                        enriched_logs.append(entry_dict)
+                    logs = enriched_logs
 
                 # ── Single transaction per batch ────────────────────────
                 async with conn.transaction():
-                    for log_entry in logs:
-                        await dispatch(log_entry, conn, global_cfg, addr_market_map, w3)
+                    if logs:
+                        for log_entry in logs:
+                            await dispatch(log_entry, conn, global_cfg, addr_market_map, w3)
 
-                    # Advance progress for ALL tracked markets, not just those
-                    # with events in this batch. Without this, last_indexed_block
-                    # freezes at deploy_block when the market is quiet, creating
-                    # a fake block-lag reading.
+                    # Advance progress for ALL tracked markets
                     all_market_ids = set(addr_market_map.values()) - {None}
                     for mid in all_market_ids:
-                        row = await conn.fetchrow(
-                            "SELECT 1 FROM indexer_state WHERE market_id = $1", mid
-                        )
-                        if row:
-                            await conn.execute("""
-                                UPDATE indexer_state
-                                SET last_indexed_block = $1,
-                                    last_indexed_at = NOW(),
-                                    total_events = (SELECT COUNT(*) FROM events WHERE market_id = $2)
-                                WHERE market_id = $2
-                                  AND last_indexed_block < $1
-                            """, to_block, mid)
+                        await conn.execute("""
+                            INSERT INTO indexer_state (market_id, last_indexed_block, last_indexed_at, total_events)
+                            VALUES ($1, $2, NOW(), (SELECT COUNT(*) FROM events WHERE market_id = $1))
+                            ON CONFLICT (market_id) DO UPDATE SET
+                              last_indexed_block = EXCLUDED.last_indexed_block,
+                              last_indexed_at = EXCLUDED.last_indexed_at,
+                              total_events = EXCLUDED.total_events
+                            WHERE indexer_state.last_indexed_block < EXCLUDED.last_indexed_block
+                        """, mid, to_block)
 
             last_block = to_block
-            log.info("Indexed blocks %d→%d (%d logs)", last_block - len(logs) + 1,
-                     to_block, len(logs))
+            log.info("Indexed blocks %d→%d (%d logs)", last_block - BATCH_SIZE + 1 if last_block > BATCH_SIZE else 0,
+                     to_block, len(logs) if logs else 0)
 
         except Exception as e:
             log.error("Poll cycle error (will retry): %s", e, exc_info=True)

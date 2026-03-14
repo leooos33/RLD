@@ -1,22 +1,26 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# RLD Master Deploy Script
+# RLD Master Deploy — Thin Orchestrator
 # ═══════════════════════════════════════════════════════════════
-# Consolidates all deployment phases into one script.
-# Writes /config/deployment.json with all addresses when done.
+# Sources each phase script in order. All contract addresses
+# are exported as env vars between phases.
+#
+# Phase order (IMPORTANT — indexer must be watching before users):
+#   01_protocol   → RLDCore, TWAMM, Oracle, BrokerRouter
+#   02_market     → waUSDC, wRLP, BrokerFactory, oracle warmup
+#   03_periphery  → SwapRouter, BondFactory, BrokerExecutor, BasisTrade
+#   04_finalize   → Write deployment.json, POST /admin/reset, verify
+#   05_users      → Fund users, create brokers, LP, swaps
 #
 # Required env vars:
 #   RPC_URL, DEPLOYER_KEY, USER_A_KEY, USER_B_KEY, USER_C_KEY,
 #   MM_KEY, CHAOS_KEY
-#
-# Optional env vars:
-#   ETH_RPC_URL, API_URL, API_KEY
 # ═══════════════════════════════════════════════════════════════
 
 set -e
 export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 
-# ─── Colors ────────────────────────────────────────────────────
+# ─── Colors & logging ─────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -35,7 +39,7 @@ log_info()  { echo -e "${CYAN}ℹ $1${NC}"; }
 RPC_URL=${RPC_URL:-"http://host.docker.internal:8545"}
 PRIVATE_KEY=${DEPLOYER_KEY}
 
-for VAR in DEPLOYER_KEY USER_A_KEY USER_B_KEY USER_C_KEY MM_KEY CHAOS_KEY; do
+for VAR in DEPLOYER_KEY; do
     if [ -z "${!VAR}" ]; then
         log_err "$VAR not set"
     fi
@@ -47,7 +51,7 @@ AUSDC="0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
 AAVE_POOL="0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 USDC_WHALE="0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
 
-# ─── Official Uniswap V4 mainnet addresses (always available on mainnet fork) ──
+# ─── Official Uniswap V4 mainnet addresses ────────────────────
 POOL_MANAGER="0x000000000004444c5dc75cB358380D2e3dE08A90"
 V4_POSITION_MANAGER="0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e"
 V4_QUOTER="0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203"
@@ -56,18 +60,18 @@ V4_STATE_VIEW="0x7ffe42c4a5deea5b0fec41c94c136cf115597227"
 UNIVERSAL_ROUTER="0x66a9893cc07d91d95644aedd05d03f95e1dba8af"
 PERMIT2="0x000000000022D473030F116dDEE9F6B43aC78BA3"
 
-# ─── Basis Trade addresses (mainnet fork) ──────────────────────
+# ─── Basis Trade addresses ─────────────────────────────────────
 SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
 USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
 PYUSD="0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"
 CURVE_USDE_USDC_POOL="0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72"
 CURVE_PYUSD_USDC_POOL="0x383E6b4437b59fff47B619CBA855CA29342A8559"
 
-# ─── Morpho Blue (mainnet fork) ────────────────────────────────
+# ─── Morpho Blue ───────────────────────────────────────────────
 MORPHO="0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 MORPHO_ORACLE="0xE6212D05cB5aF3C821Fef1C1A233a678724F9E7E"
 MORPHO_IRM="0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
-MORPHO_LLTV="915000000000000000"  # 91.5%
+MORPHO_LLTV="915000000000000000"
 
 # ─── Wait for Anvil ───────────────────────────────────────────
 log_phase "0" "WAITING FOR ANVIL"
@@ -82,733 +86,22 @@ for i in $(seq 1 60); do
 done
 cast block-number --rpc-url "$RPC_URL" > /dev/null 2>&1 || log_err "Anvil not reachable at $RPC_URL"
 
-# Switch Anvil to auto-mine mode for deployment (prevents nonce collisions)
 cast rpc evm_setAutomine true --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 log_ok "Auto-mine enabled for deployment"
 
-# ═══════════════════════════════════════════════════════════════
-# PHASE 1: DEPLOY PROTOCOL
-# ═══════════════════════════════════════════════════════════════
-log_phase "1" "DEPLOY PROTOCOL"
-
-cd /workspace/contracts
-
-log_step "1.1" "Deploying RLD Protocol..."
-DEPLOY_OUTPUT=$(forge script script/DeployRLDProtocol.s.sol --tc DeployRLDProtocol \
-    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
-
-if ! echo "$DEPLOY_OUTPUT" | grep -q "DEPLOYMENT COMPLETE"; then
-    echo "$DEPLOY_OUTPUT"
-    log_err "Protocol deployment failed"
-fi
-
-TWAMM_HOOK=$(jq -r '.TWAMM' deployments.json)
-FACTORY=$(jq -r '.RLDMarketFactory' deployments.json)
-RLD_CORE=$(jq -r '.RLDCore' deployments.json)
-BROKER_ROUTER=$(jq -r '.BrokerRouter' deployments.json)
-BROKER_FACTORY_ADDR=""  # Comes from market deploy
-
-log_ok "Protocol deployed"
-echo "  RLDCore:       $RLD_CORE"
-echo "  TWAMM Hook:    $TWAMM_HOOK"
-echo "  Factory:       $FACTORY"
-echo "  BrokerRouter:  $BROKER_ROUTER"
-
-# ─── Use RLDAaveOracle (reads live Aave V3 data from fork) ────
-log_step "1.2" "Loading RLDAaveOracle from deployments.json..."
-MOCK_ORACLE=$(jq -r '.RLDAaveOracle' deployments.json)
-[ -z "$MOCK_ORACLE" ] || [ "$MOCK_ORACLE" = "null" ] && log_err "RLDAaveOracle not found in deployments.json"
-log_ok "RLDAaveOracle: $MOCK_ORACLE (reads live Aave V3 rate from fork)"
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 2: DEPLOY MARKET
-# ═══════════════════════════════════════════════════════════════
-log_phase "2" "DEPLOY WRAPPED MARKET"
-
-cd /workspace/contracts
-
-log_step "2.1" "Deploying wrapped market..."
-MARKET_OUTPUT=$(USE_MOCK_ORACLE=false \
-    forge script script/DeployWrappedMarket.s.sol --tc DeployWrappedMarket \
-    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
-
-if ! echo "$MARKET_OUTPUT" | grep -q "WRAPPED MARKET CREATED"; then
-    echo "$MARKET_OUTPUT"
-    log_err "Market deployment failed"
-fi
-
-# Extract addresses
-WAUSDC=$(echo "$MARKET_OUTPUT" | grep -i "waUSDC deployed:" | awk '{print $NF}')
-[ -z "$WAUSDC" ] && WAUSDC=$(echo "$MARKET_OUTPUT" | grep "collateralToken (waUSDC):" | awk '{print $NF}')
-MARKET_ID=$(echo "$MARKET_OUTPUT" | grep "MarketId:" | awk '{print $NF}')
-POSITION_TOKEN=$(echo "$MARKET_OUTPUT" | grep "positionToken (wRLP):" | awk '{print $NF}')
-BROKER_FACTORY_ADDR=$(echo "$MARKET_OUTPUT" | grep "BrokerFactory:" | awk '{print $NF}')
-
-[ -z "$WAUSDC" ] || [ -z "$POSITION_TOKEN" ] || [ -z "$BROKER_FACTORY_ADDR" ] && log_err "Failed to extract market addresses"
-
-log_ok "Wrapped market deployed"
-echo "  waUSDC:         $WAUSDC"
-echo "  wRLP:           $POSITION_TOKEN"
-echo "  BrokerFactory:  $BROKER_FACTORY_ADDR"
-echo "  MarketId:       $MARKET_ID"
-
-# Token order
-WAUSDC_LOWER=$(echo "$WAUSDC" | tr '[:upper:]' '[:lower:]')
-POSITION_TOKEN_LOWER=$(echo "$POSITION_TOKEN" | tr '[:upper:]' '[:lower:]')
-if [[ "$WAUSDC_LOWER" < "$POSITION_TOKEN_LOWER" ]]; then
-    TOKEN0="$WAUSDC"; TOKEN1="$POSITION_TOKEN"; ZERO_FOR_ONE_LONG=true
-else
-    TOKEN0="$POSITION_TOKEN"; TOKEN1="$WAUSDC"; ZERO_FOR_ONE_LONG=false
-fi
-log_ok "Token order: TOKEN0=$TOKEN0"
-
-# Prime TWAMM oracle + grow observation cardinality
-log_step "2.2" "Priming TWAMM oracle & growing cardinality..."
-
-# Compute PoolId = keccak256(abi.encode(PoolKey))
-# PoolKey = (currency0, currency1, fee=500, tickSpacing=5, hooks=TWAMM_HOOK)
-POOL_ID=$(cast keccak "$(cast abi-encode "x(address,address,uint24,int24,address)" "$TOKEN0" "$TOKEN1" 500 5 "$TWAMM_HOOK")")
-log_ok "PoolId: $POOL_ID"
-
-# Grow oracle cardinality to max uint16 (65535 slots)
-cast send "$TWAMM_HOOK" "increaseCardinality(bytes32,uint16)" "$POOL_ID" 65535 \
-    --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
-log_ok "Oracle cardinality grown to 65535"
-
-# Warm up oracle: advance time and trigger observation writes
-# Each iteration advances 30 min and writes one observation slot.
-# We need at least 2 populated slots for TWAP to work (cardinality >= 2).
-# Writing 10 slots provides a solid baseline (5 hours of history).
-# NOTE: Individual iterations are best-effort — transient failures are OK.
-WARMUP_OK=0
-for i in $(seq 1 10); do
-    cast rpc evm_increaseTime 1800 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-    cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-    # Trigger an oracle write via executeJTMOrders (no-op swap, just writes observation)
-    if cast send "$TWAMM_HOOK" \
-        "executeJTMOrders((address,address,uint24,int24,address))" \
-        "($TOKEN0,$TOKEN1,500,5,$TWAMM_HOOK)" \
-        --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1; then
-        WARMUP_OK=$((WARMUP_OK + 1))
-    fi
-done
-log_ok "Oracle warmed up ($WARMUP_OK/10 observations written)"
-
-# ─── Configure BrokerRouter deposit route ──────────────────────
-log_step "2.3" "Configuring BrokerRouter deposit route (USDC → aUSDC → waUSDC)..."
-
-# BrokerRouter.setDepositRoute(collateralToken, (underlying, aToken, wrapped, aavePool))
-cast send "$BROKER_ROUTER" \
-    "setDepositRoute(address,(address,address,address,address))" \
-    "$WAUSDC" \
-    "($USDC,$AUSDC,$WAUSDC,$AAVE_POOL)" \
-    --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
-
-log_ok "Deposit route configured: USDC → aUSDC → waUSDC"
-
-# ─── CRITICAL: Register market in DB NOW before Phase 3 ───────────────────
-# The indexer must be watching broker_factory BEFORE Phase 3 creates brokers.
-# If we wait until Phase 5, all BrokerCreated events are permanently missed.
-if [ -n "${DATABASE_URL:-}" ]; then
-    log_step "2.4" "Registering market in Postgres (must happen before Phase 3)..."
-    DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
-    DEPLOY_TS=$(date +%s)
-    python3 - <<PYEOF
-import os, sys
-try:
-    import psycopg2
-except ImportError:
-    print("psycopg2 not available — skipping DB registration")
-    sys.exit(0)
-
-dsn = os.environ["DATABASE_URL"]
-conn = psycopg2.connect(dsn)
-cur = conn.cursor()
-
-cur.execute("""
-    INSERT INTO markets (
-        market_id, deploy_block, deploy_timestamp,
-        broker_factory, mock_oracle, twamm_hook,
-        swap_router, bond_factory, basis_trade_factory, broker_executor,
-        wausdc, wausdc_symbol, wrlp, wrlp_symbol,
-        pool_id, pool_fee, tick_spacing,
-        min_col_ratio, maintenance_margin, liq_close_factor,
-        funding_period_sec, debt_cap,
-        created_at
-    ) VALUES (
-        %(mid)s, %(db)s, %(dt)s,
-        %(bf)s, %(mo)s, %(th)s,
-        %(sr)s, %(bof)s, %(btf)s, %(be)s,
-        %(wa)s, 'waUSDC', %(pt)s, 'wRLP',
-        %(pid)s, 500, 5,
-        '1500000000000000000', '1200000000000000000', '500000000000000000',
-        2592000, '10000000000000000000000000000',
-        NOW()
-    )
-    ON CONFLICT (market_id) DO NOTHING
-""", {
-    'mid': "${MARKET_ID}",
-    'db':  int("${DEPLOY_BLOCK}" or "0"),
-    'dt':  int("${DEPLOY_TS}"),
-    'bf':  "${BROKER_FACTORY_ADDR}",
-    'mo':  "${MOCK_ORACLE}",
-    'th':  "${TWAMM_HOOK}",
-    'sr':  "${SWAP_ROUTER}" or None,
-    'bof': "${BOND_FACTORY}" or None,
-    'btf': "${BASIS_TRADE_FACTORY}" or None,
-    'be':  "${BROKER_EXECUTOR}" or None,
-    'wa':  "${WAUSDC}",
-    'pt':  "${POSITION_TOKEN}",
-    'pid': "${POOL_ID}",
-})
-
-cur.execute("""
-    INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
-    VALUES (%(mid)s, %(db)s, 0)
-    ON CONFLICT DO NOTHING
-""", {'mid': "${MARKET_ID}", 'db': int("${DEPLOY_BLOCK}" or "0")})
-
-conn.commit()
-cur.close()
-conn.close()
-print("Market ${MARKET_ID} registered in DB at block ${DEPLOY_BLOCK}")
-PYEOF
-    log_ok "Market registered in Postgres (indexer will watch from next block)"
-else
-    log_info "DATABASE_URL not set — indexer will pick up from deployment.json"
-fi
-
-# Force-mine blocks to align EVM clock with block headers (called from Phase 5)
-sync_timestamp() {
-    log_step "" "Syncing EVM timestamp with block headers..."
-    for i in $(seq 1 10); do
-        local LATEST_TS
-        LATEST_TS=$(cast block latest --field timestamp --rpc-url "$RPC_URL" 2>/dev/null)
-        local NEXT_TS=$((LATEST_TS + 1))
-        cast rpc evm_setNextBlockTimestamp "$NEXT_TS" --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-        cast rpc evm_mine --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-    done
-}
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 3: SETUP USERS (skipped when SKIP_USER_SETUP=true)
-# ═══════════════════════════════════════════════════════════════
-if [ "${SKIP_USER_SETUP:-true}" != "true" ]; then
-log_phase "3" "SETUP USERS"
-
-# ─── Helper functions ──────────────────────────────────────────
-fund_user() {
-    local ADDR=$1 KEY=$2 AMOUNT_USD=$3
-    local AMOUNT_WEI=$((AMOUNT_USD * 1000000))
-
-    # Set ETH balance
-    cast rpc anvil_setBalance "$USDC_WHALE" "0x56BC75E2D63100000" --rpc-url "$RPC_URL" > /dev/null
-    cast rpc anvil_setBalance "$ADDR" "0x56BC75E2D63100000" --rpc-url "$RPC_URL" > /dev/null
-
-    # Transfer USDC from whale
-    cast rpc anvil_impersonateAccount "$USDC_WHALE" --rpc-url "$RPC_URL" > /dev/null
-    cast send "$USDC" "transfer(address,uint256)" "$ADDR" "$AMOUNT_WEI" \
-        --from "$USDC_WHALE" --unlocked --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-    cast rpc anvil_stopImpersonatingAccount "$USDC_WHALE" --rpc-url "$RPC_URL" > /dev/null
-
-    # Supply to Aave
-    cast send "$USDC" "approve(address,uint256)" "$AAVE_POOL" "$AMOUNT_WEI" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-    cast send "$AAVE_POOL" "supply(address,uint256,address,uint16)" \
-        "$USDC" "$AMOUNT_WEI" "$ADDR" 0 \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-
-    # Wrap aUSDC → waUSDC
-    local AUSDC_BAL=$(cast call "$AUSDC" "balanceOf(address)(uint256)" "$ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-    cast send "$AUSDC" "approve(address,uint256)" "$WAUSDC" "$AUSDC_BAL" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" --gas-limit 150000 > /dev/null
-    sleep 1
-    cast send "$WAUSDC" "wrap(uint256)" "$AUSDC_BAL" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" --gas-limit 500000 > /dev/null
-    sleep 1
-
-    log_ok "Funded $ADDR with \$$AMOUNT_USD"
-}
-
-create_broker() {
-    local KEY=$1
-    local SALT=$(cast keccak "broker-$(date +%s)-$RANDOM")
-
-    # cast send --json can produce multiple JSON documents; jq -s handles them
-    local BROKER=$(cast send "$BROKER_FACTORY_ADDR" "createBroker(bytes32)" "$SALT" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" --json 2>/dev/null \
-        | jq -r '[.logs[]? | select(.topics[0] == "0xc418c83b1622e1e32aac5d6d2848134a7e89eb8e96c8514afd1757d25ee5ef71")] | .[0].data // empty' 2>/dev/null \
-        | head -1 \
-        | python3 -c "
-import sys
-data = sys.stdin.readline().strip()
-if data and data.startswith('0x') and len(data) >= 66:
-    print('0x' + data[26:66])
-else:
-    print('')
-")
-    [ -z "$BROKER" ] && log_err "Failed to create broker"
-    echo "$BROKER"
-}
-
-deposit_to_broker() {
-    local BROKER=$1 KEY=$2 AMOUNT=$3
-    local USER_ADDR=$(cast wallet address --private-key "$KEY" 2>/dev/null)
-
-    if [ "$AMOUNT" = "all" ]; then
-        AMOUNT=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-    else
-        AMOUNT=$((AMOUNT * 1000000))
-    fi
-
-    cast send "$WAUSDC" "transfer(address,uint256)" "$BROKER" "$AMOUNT" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-}
-
-mint_wrlp() {
-    local BROKER=$1 KEY=$2 AMOUNT_USD=$3
-    local AMOUNT_WEI=$((AMOUNT_USD * 1000000))
-    cast send "$BROKER" "modifyPosition(bytes32,int256,int256)" \
-        "$MARKET_ID" 0 "$AMOUNT_WEI" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-}
-
-withdraw_position() {
-    local BROKER=$1 KEY=$2 AMOUNT_USD=$3
-    local AMOUNT_WEI=$((AMOUNT_USD * 1000000))
-    local USER_ADDR=$(cast wallet address --private-key "$KEY" 2>/dev/null)
-    cast send "$BROKER" "withdrawPositionToken(address,uint256)" "$USER_ADDR" "$AMOUNT_WEI" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-}
-
-withdraw_collateral() {
-    local BROKER=$1 KEY=$2 AMOUNT_USD=$3
-    local AMOUNT_WEI=$((AMOUNT_USD * 1000000))
-    local USER_ADDR=$(cast wallet address --private-key "$KEY" 2>/dev/null)
-    cast send "$BROKER" "withdrawCollateral(address,uint256)" "$USER_ADDR" "$AMOUNT_WEI" \
-        --private-key "$KEY" --rpc-url "$RPC_URL" > /dev/null
-    sleep 1
-}
-
-prime_oracle() {
-    cast rpc evm_increaseTime 7200 --rpc-url "$RPC_URL" > /dev/null
-    cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
-}
-
-# ─── User A: LP Provider ($100M collateral, $5M LP) ───────────
-log_step "3.1" "Setting up LP Provider (User A)..."
-USER_A_ADDR=$(cast wallet address --private-key "$USER_A_KEY" 2>/dev/null)
-fund_user "$USER_A_ADDR" "$USER_A_KEY" 100000000
-
-USER_A_BROKER=$(create_broker "$USER_A_KEY")
-log_ok "User A broker: $USER_A_BROKER"
-
-deposit_to_broker "$USER_A_BROKER" "$USER_A_KEY" "all"
-
-# Mint wRLP for LP (5M + 10% buffer)
-mint_wrlp "$USER_A_BROKER" "$USER_A_KEY" 5500000
-withdraw_position "$USER_A_BROKER" "$USER_A_KEY" 5000000
-withdraw_collateral "$USER_A_BROKER" "$USER_A_KEY" 5000000
-
-# Add V4 LP
-log_step "3.1b" "Adding V4 LP..."
-LP_WEI=$((5000000 * 1000000))
-MAX_UINT=$(python3 -c 'print(2**160-1)')
-MAX_UINT48=$(python3 -c 'print(2**48-1)')
-
-cast send "$WAUSDC" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
-    --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
-cast send "$POSITION_TOKEN" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
-    --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
-cast send "$PERMIT2" "approve(address,address,uint160,uint48)" \
-    "$WAUSDC" "$V4_POSITION_MANAGER" "$MAX_UINT" "$MAX_UINT48" \
-    --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
-cast send "$PERMIT2" "approve(address,address,uint160,uint48)" \
-    "$POSITION_TOKEN" "$V4_POSITION_MANAGER" "$MAX_UINT" "$MAX_UINT48" \
-    --private-key "$USER_A_KEY" --rpc-url "$RPC_URL" > /dev/null
-
-cd /workspace/contracts
-AUSDC_AMOUNT=$LP_WEI WRLP_AMOUNT=$LP_WEI PRIVATE_KEY=$USER_A_KEY \
-    WAUSDC=$WAUSDC POSITION_TOKEN=$POSITION_TOKEN TWAMM_HOOK=$TWAMM_HOOK \
-    TICK_SPACING=5 POOL_FEE=500 \
-    forge script script/AddLiquidityWrapped.s.sol --tc AddLiquidityWrappedScript \
-    --rpc-url "$RPC_URL" --code-size-limit 99999 -v > /tmp/lp_output.log 2>&1 || true
-
-echo ""
-echo "=== LP SIMULATION OUTPUT (no broadcast - reading amounts only) ==="
-USER_A_WAUSDC=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_A_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-USER_A_WRLP=$(cast call "$POSITION_TOKEN" "balanceOf(address)(uint256)" "$USER_A_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-log_step "3.1b" "User A: waUSDC=${USER_A_WAUSDC} wRLP=${USER_A_WRLP}"
-grep -E "sqrtPrice|Amount:|liquidity|Tick|range|waUSDC|wRLP|currency|Error|revert|fail" /tmp/lp_output.log || true
-echo "=== END ==="
-log_ok "Dry run complete - amounts shown above"
-
-# ─── User B: Long User ($100k) ────────────────────────────────
-log_step "3.2" "Setting up Long User (User B)..."
-USER_B_ADDR=$(cast wallet address --private-key "$USER_B_KEY" 2>/dev/null)
-fund_user "$USER_B_ADDR" "$USER_B_KEY" 100000
-
-# Swap waUSDC → wRLP (go long)
-WAUSDC_BAL_B=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_B_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-cd /workspace/contracts
-TOKEN0="$TOKEN0" TOKEN1="$TOKEN1" TWAMM_HOOK="$TWAMM_HOOK" \
-    SWAP_AMOUNT="$WAUSDC_BAL_B" ZERO_FOR_ONE="$ZERO_FOR_ONE_LONG" \
-    SWAP_USER_KEY="$USER_B_KEY" \
-    forge script script/LifecycleSwap.s.sol --tc LifecycleSwap \
-    --rpc-url "$RPC_URL" --broadcast -v > /dev/null 2>&1 || true
-log_ok "Long user ready"
-
-# ─── User C: TWAMM User ($100k, funded but NO automatic order) ─
-log_step "3.3" "Setting up TWAMM User (User C)..."
-USER_C_ADDR=$(cast wallet address --private-key "$USER_C_KEY" 2>/dev/null)
-fund_user "$USER_C_ADDR" "$USER_C_KEY" 100000
-
-# NOTE: TWAMM order placement disabled — orders will be placed manually
-# WAUSDC_BAL_C=$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$USER_C_ADDR" --rpc-url "$RPC_URL" | awk '{print $1}')
-# cd /workspace/contracts
-# TOKEN0="$TOKEN0" TOKEN1="$TOKEN1" TWAMM_HOOK="$TWAMM_HOOK" \
-#     ORDER_AMOUNT="$WAUSDC_BAL_C" DURATION_SECONDS=3600 \
-#     ZERO_FOR_ONE="$ZERO_FOR_ONE_LONG" TWAMM_USER_KEY="$USER_C_KEY" \
-#     forge script script/LifecycleTWAMM.s.sol --tc LifecycleTWAMM \
-#     --rpc-url "$RPC_URL" --broadcast -v > /dev/null 2>&1 || true
-log_ok "TWAMM user funded (no order placed)"
-
-# ─── MM Bot ($10M) ─────────────────────────────────────────────
-log_step "3.4" "Setting up Market Maker..."
-MM_ADDR=$(cast wallet address --private-key "$MM_KEY" 2>/dev/null)
-fund_user "$MM_ADDR" "$MM_KEY" 10000000
-
-MM_BROKER=$(create_broker "$MM_KEY")
-log_ok "MM broker: $MM_BROKER"
-deposit_to_broker "$MM_BROKER" "$MM_KEY" 6500000
-
-prime_oracle
-mint_wrlp "$MM_BROKER" "$MM_KEY" 1000000
-withdraw_position "$MM_BROKER" "$MM_KEY" 1000000
-log_ok "MM bot ready"
-
-# ─── Chaos Trader ($10M) ──────────────────────────────────────
-log_step "3.5" "Setting up Chaos Trader..."
-CHAOS_ADDR=$(cast wallet address --private-key "$CHAOS_KEY" 2>/dev/null)
-fund_user "$CHAOS_ADDR" "$CHAOS_KEY" 10000000
-
-CHAOS_BROKER=$(create_broker "$CHAOS_KEY")
-log_ok "Chaos broker: $CHAOS_BROKER"
-deposit_to_broker "$CHAOS_BROKER" "$CHAOS_KEY" 5000000
-
-prime_oracle
-
-# Compute wRLP mint amount from price
-WRLP_PRICE_WAD=$(cast call "$MOCK_ORACLE" "getIndexPrice(address,address)(uint256)" \
-    "$AAVE_POOL" "$USDC" \
-    --rpc-url "$RPC_URL" | awk '{print $1}')
-WRLP_MINT=$(python3 -c "
-price_wad = $WRLP_PRICE_WAD
-target_usd = 1000000
-tokens = int(target_usd * 1e18 / price_wad)
-print(tokens)
-")
-mint_wrlp "$CHAOS_BROKER" "$CHAOS_KEY" "$WRLP_MINT"
-withdraw_position "$CHAOS_BROKER" "$CHAOS_KEY" "$WRLP_MINT"
-log_ok "Chaos trader ready"
-
-else
-    log_ok "Phase 3 skipped (SKIP_USER_SETUP=true — contracts-only mode)"
-fi # end SKIP_USER_SETUP
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 4: DEPLOY SWAP ROUTER
-# ═══════════════════════════════════════════════════════════════
-log_phase "4" "DEPLOY SWAP ROUTER"
-
-# Export vars for deploy_swap_router.py
-export RPC_URL DEPLOYER_KEY MM_KEY CHAOS_KEY WAUSDC POSITION_TOKEN
-
-cd /workspace/contracts
-ROUTER_OUTPUT=$(forge script script/DeploySwapRouter.s.sol --tc DeploySwapRouter \
-    --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v 2>&1) || true
-
-SWAP_ROUTER=$(echo "$ROUTER_OUTPUT" | grep "SWAP_ROUTER:" | awk -F: '{print $NF}' | tr -d ' ')
-if [ -z "$SWAP_ROUTER" ]; then
-    echo "  ⚠️  Could not parse SWAP_ROUTER, trying python deploy..."
-    cd /workspace
-    SWAP_ROUTER=$(python3 -c "
-import subprocess, os
-result = subprocess.run(
-    ['forge', 'script', 'script/DeploySwapRouter.s.sol', '--tc', 'DeploySwapRouter',
-     '--rpc-url', os.environ['RPC_URL'], '--broadcast', '-v'],
-    cwd='/workspace/contracts', capture_output=True, text=True,
-    env={**os.environ}
-)
-for line in result.stdout.split('\n'):
-    if 'SWAP_ROUTER:' in line:
-        print(line.split(':')[-1].strip())
-        break
-")
-fi
-
-if [ -n "$SWAP_ROUTER" ]; then
-    log_ok "SwapRouter: $SWAP_ROUTER"
-else
-    log_info "SwapRouter deploy skipped (non-critical)"
-    SWAP_ROUTER=""
-fi
-
-# Approve tokens for MM and Chaos (via python for web3 calls)
-if [ -n "$SWAP_ROUTER" ]; then
-    python3 -c "
-from web3 import Web3
-from eth_account import Account
-import os
-
-w3 = Web3(Web3.HTTPProvider(os.environ['RPC_URL']))
-ERC20_ABI = [
-    {'inputs': [{'name': 'spender', 'type': 'address'}, {'name': 'amount', 'type': 'uint256'}],
-     'name': 'approve', 'outputs': [{'name': '', 'type': 'bool'}],
-     'stateMutability': 'nonpayable', 'type': 'function'},
-]
-MAX_UINT = 2**256 - 1
-pm = '$POOL_MANAGER'
-router = '$SWAP_ROUTER'
-wausdc = '$WAUSDC'
-pos_token = '$POSITION_TOKEN'
-
-for name, key_env in [('MM', 'MM_KEY'), ('Chaos', 'CHAOS_KEY')]:
-    key = os.environ.get(key_env)
-    if not key: continue
-    acct = Account.from_key(key)
-    for token_addr, tname in [(wausdc, 'waUSDC'), (pos_token, 'wRLP')]:
-        token = w3.eth.contract(address=Web3.to_checksum_address(token_addr), abi=ERC20_ABI)
-        for spender, sname in [(router, 'Router'), (pm, 'PoolManager')]:
-            nonce = w3.eth.get_transaction_count(acct.address)
-            tx = token.functions.approve(Web3.to_checksum_address(spender), MAX_UINT).build_transaction({
-                'from': acct.address, 'nonce': nonce, 'gas': 60000,
-                'maxFeePerGas': w3.to_wei('2', 'gwei'), 'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-            })
-            signed = w3.eth.account.sign_transaction(tx, key)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-            print(f'  ✅ {name} approved {tname} for {sname}')
-"
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 4.5: DEPLOY BONDFACTORY
-# ═══════════════════════════════════════════════════════════════
-log_phase "4.5" "DEPLOY BONDFACTORY"
-
-cd /workspace/contracts
-
-log_step "4.5" "Deploying BondFactory (single-TX bond mint/close)..."
-BOND_FACTORY=$(forge create src/periphery/BondFactory.sol:BondFactory \
-    --private-key $DEPLOYER_KEY \
-    --rpc-url $RPC_URL \
-    --broadcast \
-    --constructor-args \
-        $BROKER_FACTORY_ADDR \
-        $BROKER_ROUTER \
-        $TWAMM_HOOK \
-        $WAUSDC \
-        $POOL_MANAGER \
-        $V4_QUOTER \
-    2>&1 | grep "Deployed to:" | awk '{print $3}')
-
-if [ -n "$BOND_FACTORY" ]; then
-    log_ok "BondFactory: $BOND_FACTORY"
-else
-    log_info "BondFactory deploy failed (non-critical)"
-    BOND_FACTORY=""
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 4.6: DEPLOY BROKER EXECUTOR
-# ═══════════════════════════════════════════════════════════════
-log_phase "4.6" "DEPLOY BROKER EXECUTOR"
-
-cd /workspace/contracts
-
-log_step "4.6" "Deploying BrokerExecutor (atomic multicall with ephemeral operator)..."
-BROKER_EXECUTOR=$(forge create src/periphery/BrokerExecutor.sol:BrokerExecutor \
-    --private-key $DEPLOYER_KEY \
-    --rpc-url $RPC_URL \
-    --broadcast \
-    2>&1 | grep "Deployed to:" | awk '{print $3}')
-
-if [ -n "$BROKER_EXECUTOR" ]; then
-    log_ok "BrokerExecutor: $BROKER_EXECUTOR"
-else
-    log_info "BrokerExecutor deploy failed (non-critical)"
-    BROKER_EXECUTOR=""
-fi
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 4.7: DEPLOY BASIS TRADE FACTORY (Flash Loan / Morpho Blue)
-# ═══════════════════════════════════════════════════════════════
-log_phase "4.7" "DEPLOY BASIS TRADE FACTORY (Morpho Flash Loan)"
-
-cd /workspace/contracts
-
-log_step "4.7" "Deploying BasisTradeFactory (18-arg Morpho constructor)..."
-BASIS_TRADE_FACTORY=$(forge create src/periphery/BasisTradeFactory.sol:BasisTradeFactory \
-    --private-key $DEPLOYER_KEY \
-    --rpc-url $RPC_URL \
-    --broadcast \
-    --constructor-args \
-        $BROKER_FACTORY_ADDR \
-        $TWAMM_HOOK \
-        $WAUSDC \
-        $POOL_MANAGER \
-        $MORPHO \
-        $SUSDE \
-        $USDE \
-        $USDC \
-        $PYUSD \
-        $CURVE_USDE_USDC_POOL \
-        $CURVE_PYUSD_USDC_POOL \
-        0 \
-        1 \
-        0 \
-        1 \
-        $MORPHO_ORACLE \
-        $MORPHO_IRM \
-        $MORPHO_LLTV \
-    2>&1 | grep "Deployed to:" | awk '{print $3}')
-
-if [ -n "$BASIS_TRADE_FACTORY" ]; then
-    log_ok "BasisTradeFactory: $BASIS_TRADE_FACTORY"
-else
-    log_info "BasisTradeFactory deploy failed (non-critical)"
-    BASIS_TRADE_FACTORY=""
-fi
-
-# ═══════════════════════════════════════════════════════════════
-log_phase "5" "WRITE DEPLOYMENT CONFIG"
-
-mkdir -p /config
-
-cat > /config/deployment.json << EOF
-{
-    "rpc_url": "$RPC_URL",
-    "rld_core": "$RLD_CORE",
-    "twamm_hook": "$TWAMM_HOOK",
-    "market_id": "$MARKET_ID",
-    "mock_oracle": "$MOCK_ORACLE",
-    "broker_router": "$BROKER_ROUTER",
-    "wausdc": "$WAUSDC",
-    "position_token": "$POSITION_TOKEN",
-    "broker_factory": "$BROKER_FACTORY_ADDR",
-    "swap_router": "$SWAP_ROUTER",
-    "bond_factory": "$BOND_FACTORY",
-    "basis_trade_factory": "$BASIS_TRADE_FACTORY",
-    "broker_executor": "$BROKER_EXECUTOR",
-    "pool_manager": "$POOL_MANAGER",
-    "pool_id": "$POOL_ID",
-    "v4_quoter": "$V4_QUOTER",
-    "v4_position_manager": "$V4_POSITION_MANAGER",
-    "v4_position_descriptor": "$V4_POSITION_DESCRIPTOR",
-    "v4_state_view": "$V4_STATE_VIEW",
-    "universal_router": "$UNIVERSAL_ROUTER",
-    "permit2": "$PERMIT2",
-    "token0": "$TOKEN0",
-    "token1": "$TOKEN1",
-    "zero_for_one_long": $ZERO_FOR_ONE_LONG,
-    "user_a_broker": "$USER_A_BROKER",
-    "mm_broker": "$MM_BROKER",
-    "chaos_broker": "$CHAOS_BROKER",
-    "external_contracts": {
-        "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "ausdc": "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
-        "aave_pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
-        "susde": "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
-        "usdc_whale": "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
-    }
-}
-EOF
-
-log_ok "Written /config/deployment.json"
-cat /config/deployment.json | python3 -m json.tool
-
-# ─── DB registration moved to Phase 2.4 — indexer must watch broker_factory ──
-# before Phase 3 creates brokers. This note is kept here for reference only.
-log_info "Market DB registration already done at Phase 2.4"
-
-sync_timestamp
-log_ok "Timestamp synchronized after deployment"
-cast rpc evm_setAutomine false --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-cast rpc evm_setIntervalMining 12 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-log_ok "Interval mining restored (12s blocks)"
-
-# ═══════════════════════════════════════════════════════════════
-# PHASE 5.5: VERIFY FACTORY IMMUTABLES (Poka-Yoke)
-# ═══════════════════════════════════════════════════════════════
-log_phase "5.5" "VERIFY FACTORY IMMUTABLES"
-
-VERIFY_FAILED=false
-
-# Verify BondFactory immutables match deployed addresses
-if [ -n "$BOND_FACTORY" ]; then
-    log_step "5.5a" "Verifying BondFactory immutables..."
-    BF_COLLATERAL=$(cast call "$BOND_FACTORY" "COLLATERAL()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-    BF_TWAMM=$(cast call "$BOND_FACTORY" "TWAMM_HOOK()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-    BF_ROUTER=$(cast call "$BOND_FACTORY" "ROUTER()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-    EXPECTED_WAUSDC=$(echo "$WAUSDC" | tr '[:upper:]' '[:lower:]')
-    EXPECTED_TWAMM=$(echo "$TWAMM_HOOK" | tr '[:upper:]' '[:lower:]')
-    EXPECTED_ROUTER=$(echo "$BROKER_ROUTER" | tr '[:upper:]' '[:lower:]')
-
-    if [ "$BF_COLLATERAL" != "$EXPECTED_WAUSDC" ]; then
-        echo -e "${RED}  ✗ BondFactory.COLLATERAL=$BF_COLLATERAL != expected $EXPECTED_WAUSDC${NC}"
-        VERIFY_FAILED=true
-    fi
-    if [ "$BF_TWAMM" != "$EXPECTED_TWAMM" ]; then
-        echo -e "${RED}  ✗ BondFactory.TWAMM_HOOK=$BF_TWAMM != expected $EXPECTED_TWAMM${NC}"
-        VERIFY_FAILED=true
-    fi
-    if [ "$BF_ROUTER" != "$EXPECTED_ROUTER" ]; then
-        echo -e "${RED}  ✗ BondFactory.ROUTER=$BF_ROUTER != expected $EXPECTED_ROUTER${NC}"
-        VERIFY_FAILED=true
-    fi
-    if [ "$VERIFY_FAILED" = false ]; then
-        log_ok "BondFactory immutables verified ✓"
-    fi
-else
-    log_info "BondFactory not deployed — skipping verification"
-fi
-
-# Verify BasisTradeFactory immutables match deployed addresses
-if [ -n "$BASIS_TRADE_FACTORY" ]; then
-    log_step "5.5b" "Verifying BasisTradeFactory immutables..."
-    BTF_COLLATERAL=$(cast call "$BASIS_TRADE_FACTORY" "COLLATERAL()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-    BTF_TWAMM=$(cast call "$BASIS_TRADE_FACTORY" "TWAMM_HOOK()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-
-    if [ "$BTF_COLLATERAL" != "$EXPECTED_WAUSDC" ]; then
-        echo -e "${RED}  ✗ BasisTradeFactory.COLLATERAL=$BTF_COLLATERAL != expected $EXPECTED_WAUSDC${NC}"
-        VERIFY_FAILED=true
-    fi
-    if [ "$BTF_TWAMM" != "$EXPECTED_TWAMM" ]; then
-        echo -e "${RED}  ✗ BasisTradeFactory.TWAMM_HOOK=$BTF_TWAMM != expected $EXPECTED_TWAMM${NC}"
-        VERIFY_FAILED=true
-    fi
-    if [ "$VERIFY_FAILED" = false ]; then
-        log_ok "BasisTradeFactory immutables verified ✓"
-    fi
-else
-    log_info "BasisTradeFactory not deployed — skipping verification"
-fi
-
-if [ "$VERIFY_FAILED" = true ]; then
-    log_err "FATAL: Factory immutables do not match deployed addresses — deployment is inconsistent!"
-fi
+# ─── Source & run phases ──────────────────────────────────────
+PHASE_DIR="$(cd "$(dirname "$0")" && pwd)/phases"
+
+source "$PHASE_DIR/01_protocol.sh"
+source "$PHASE_DIR/02_market.sh"
+source "$PHASE_DIR/03_periphery.sh"
+source "$PHASE_DIR/04_finalize.sh"
+source "$PHASE_DIR/05_users.sh"
 
 echo ""
 echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"
 echo -e "${MAGENTA}║     DEPLOYMENT COMPLETE                           ║${NC}"
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  MM daemon and Chaos trader will start automatically."
+echo "  Daemons poll indexer for config and start automatically."
 echo ""

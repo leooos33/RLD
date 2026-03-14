@@ -44,6 +44,9 @@ class Market:
     min_col_ratio: str
     maintenance_margin: str
     debt_cap: str
+    normalization_factor: Optional[str]
+    total_debt_raw: Optional[str]
+    bad_debt: Optional[str]
 
 
 @strawberry.type
@@ -53,6 +56,11 @@ class Broker:
     owner: str
     created_block: int
     active_token_id: Optional[int]
+    wausdc_balance: Optional[str]
+    wrlp_balance: Optional[str]
+    debt_principal: Optional[str]
+    is_liquidated: Optional[bool]
+    health_factor: Optional[str]
 
 
 @strawberry.type
@@ -120,6 +128,14 @@ class IndexerStatus:
     total_events: int
 
 
+@strawberry.type
+class Event:
+    event_name: str
+    block_timestamp: int
+    block_number: int
+    data: str
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _market(r) -> Market:
@@ -131,6 +147,9 @@ def _market(r) -> Market:
         min_col_ratio=str(r["min_col_ratio"]),
         maintenance_margin=str(r["maintenance_margin"]),
         debt_cap=str(r["debt_cap"]),
+        normalization_factor=str(r["normalization_factor"]) if r["normalization_factor"] else None,
+        total_debt_raw=str(r["total_debt_raw"]) if r["total_debt_raw"] else None,
+        bad_debt=str(r["bad_debt"]) if r["bad_debt"] else None,
     )
 
 
@@ -178,6 +197,13 @@ class Query:
         return _market(r) if r else None
 
     @strawberry.field
+    async def markets(self) -> List[Market]:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM markets ORDER BY deploy_timestamp DESC")
+        return [_market(r) for r in rows]
+
+    @strawberry.field
     async def brokers(self, market_id: str) -> List[Broker]:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -187,7 +213,12 @@ class Query:
         return [Broker(
             address=r["address"], market_id=r["market_id"],
             owner=r["owner"], created_block=r["created_block"],
-            active_token_id=r["active_token_id"],
+            active_token_id=r["active_lp_token_id"],
+            wausdc_balance=str(r["wausdc_balance"]) if r["wausdc_balance"] is not None else None,
+            wrlp_balance=str(r["wrlp_balance"]) if r["wrlp_balance"] is not None else None,
+            debt_principal=str(r["debt_principal"]) if r["debt_principal"] is not None else None,
+            is_liquidated=r["is_liquidated"],
+            health_factor=str(r["health_factor"]) if r["health_factor"] is not None else None,
         ) for r in rows]
 
     @strawberry.field
@@ -226,19 +257,29 @@ class Query:
         self,
         market_id: str,
         resolution: str,
-        from_bucket: int,
-        to_bucket: int,
+        from_bucket: Optional[int] = None,
+        to_bucket: Optional[int] = None,
         limit: Optional[int] = 500,
     ) -> List[Candle]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT * FROM candles
-                WHERE market_id=$1 AND resolution=$2
-                  AND bucket BETWEEN $3 AND $4
-                ORDER BY bucket ASC
-                LIMIT $5
-            """, market_id, resolution, from_bucket, to_bucket, limit or 500)
+            if from_bucket is not None and to_bucket is not None:
+                rows = await conn.fetch("""
+                    SELECT * FROM candles
+                    WHERE market_id=$1 AND resolution=$2
+                      AND bucket BETWEEN $3 AND $4
+                    ORDER BY bucket ASC
+                    LIMIT $5
+                """, market_id, resolution, from_bucket, to_bucket, limit or 500)
+            else:
+                rows = await conn.fetch("""
+                    SELECT * FROM candles
+                    WHERE market_id=$1 AND resolution=$2
+                    ORDER BY bucket DESC
+                    LIMIT $3
+                """, market_id, resolution, limit or 500)
+                # Sort back to ascending for the chart
+                rows = sorted(rows, key=lambda x: x["bucket"])
         return [_candle(r) for r in rows]
 
     @strawberry.field
@@ -292,6 +333,23 @@ class Query:
             total_events=r["total_events"],
         ) for r in rows]
 
+    @strawberry.field
+    async def events(self, limit: int = 100) -> List[Event]:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT event_name, block_timestamp, block_number, data 
+                FROM events 
+                ORDER BY block_number DESC, log_index DESC
+                LIMIT $1
+            """, limit)
+        return [Event(
+            event_name=r["event_name"],
+            block_timestamp=r["block_timestamp"],
+            block_number=r["block_number"],
+            data=r["data"]
+        ) for r in rows]
+
 
 # ── App factory ────────────────────────────────────────────────────────────
 
@@ -300,6 +358,16 @@ def create_app() -> FastAPI:
     graphql_app = GraphQLRouter(schema)
 
     app = FastAPI(title="RLD Indexer GraphQL API", version="1.0.0")
+
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.include_router(graphql_app, prefix="/graphql")
 
     @app.get("/healthz")
@@ -311,6 +379,60 @@ def create_app() -> FastAPI:
             return {"status": "ok"}
         except Exception as e:
             from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.post("/admin/reset")
+    async def admin_reset():
+        """Deployer calls this after writing deployment.json to wipe stale data."""
+        import bootstrap
+        import logging
+        log = logging.getLogger("admin.reset")
+        try:
+            pool = await get_pool()
+            log.info("POST /admin/reset — truncating all indexed data")
+            await bootstrap.reset(pool)  # truncates + re-seeds from deployment.json
+            cfg = bootstrap.load_deployment_json()
+            market_id = cfg.get("market_id", "unknown")
+            log.info("Reset complete — market_id=%s", market_id)
+            return {"status": "ok", "market_id": market_id}
+        except Exception as e:
+            log.error("Reset failed: %s", e, exc_info=True)
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+
+    @app.get("/config")
+    async def get_config():
+        """Daemons poll this to get deployment config. 503 until deployer has run."""
+        from fastapi.responses import JSONResponse
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+                           wausdc, wrlp, pool_id, pool_fee, tick_spacing,
+                           swap_router, bond_factory, basis_trade_factory, broker_executor
+                    FROM markets LIMIT 1
+                """)
+            if not row:
+                return JSONResponse(
+                    {"status": "waiting", "detail": "No market deployed yet"},
+                    status_code=503
+                )
+            cfg = dict(row)
+            # Overlay fields from deployment.json that are missing or null in DB
+            import bootstrap
+            try:
+                deploy_cfg = bootstrap.load_deployment_json()
+                for key in ("rpc_url", "rld_core", "pool_manager", "position_token",
+                            "swap_router", "bond_factory", "basis_trade_factory",
+                            "broker_executor", "broker_router", "token0", "token1",
+                            "zero_for_one_long", "v4_quoter", "v4_position_manager"):
+                    if key in deploy_cfg and not cfg.get(key):
+                        cfg[key] = deploy_cfg[key]
+            except (FileNotFoundError, ValueError):
+                pass
+            return cfg
+        except Exception as e:
             return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
 
     return app

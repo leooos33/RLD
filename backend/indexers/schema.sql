@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS liquidations (
 
 CREATE TABLE IF NOT EXISTS events (
   id                  BIGSERIAL PRIMARY KEY,
-  market_id           TEXT REFERENCES markets(market_id),
+  market_id           TEXT,
   block_number        BIGINT NOT NULL,
   block_timestamp     BIGINT NOT NULL,
   tx_hash             TEXT NOT NULL,

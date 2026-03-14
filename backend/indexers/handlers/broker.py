@@ -41,6 +41,25 @@ async def handle_broker_created(
              market_id, broker_address, owner, block_number)
 
 
+async def handle_position_modified(
+    conn: asyncpg.Connection,
+    market_id: str,
+    broker_address: str,
+    delta_collateral: int,
+    delta_debt: int,
+    block_number: int,
+) -> None:
+    # Update debt principal. deltaDebt is raw 6-decimal integer.
+    # We add it to debt_principal in brokers table.
+    await conn.execute("""
+        UPDATE brokers
+        SET debt_principal = debt_principal + $1
+        WHERE address = $2
+    """, delta_debt, broker_address.lower())
+    log.debug("[broker] PositionModified broker=%s deltaDebt=%d block=%d",
+              broker_address, delta_debt, block_number)
+
+
 async def handle_collateral_deposited(
     conn: asyncpg.Connection,
     broker_address: str,

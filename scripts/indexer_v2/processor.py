@@ -181,13 +181,32 @@ async def handle_swap(conn: asyncpg.Connection, row: asyncpg.Record) -> None:
     liquidity = decode_uint256(slice_data(data, 3))
     tick = decode_int256(slice_data(data, 4))
 
-    market = await conn.fetchval("SELECT market_id FROM markets LIMIT 1")
-    if not market:
+    market_info = await conn.fetchrow("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
+    if not market_info:
         return
+    market = market_info["market_id"]
+    wausdc = market_info["wausdc"]
+    wrlp = market_info["wrlp"]
 
-    # Compute mark price from sqrtPriceX96
-    # mark_price = (sqrtPriceX96 / 2^96)^2
-    mark_price = (sqrt_price / (2**96)) ** 2
+    # Compute mark price from sqrtPriceX96. 
+    # Uniswap V4 sorts token0 and token1 by hex address.
+    token0_is_wausdc = wausdc.lower() < wrlp.lower()
+
+    if sqrt_price == 0:
+        mark_price = 0
+    else:
+        # P = (sqrtPrice / 2^96)^2 gives token1 / token0
+        raw_price = (sqrt_price / (2**96)) ** 2
+        
+        # We want the price of wRLP in terms of waUSDC.
+        if token0_is_wausdc:
+            # waUSDC is token0, wRLP is token1. raw_price = wRLP / waUSDC. 
+            # So 1 waUSDC = raw_price wRLP.
+            # We want waUSDC / wRLP, which is 1 / raw_price (or ((2**96) / sqrtPrice)^2)
+            mark_price = ((2**96) / sqrt_price) ** 2
+        else:
+            # wRLP is token0, waUSDC is token1. raw_price = waUSDC / wRLP. This is already what we want.
+            mark_price = raw_price
 
     await conn.execute("""
         INSERT INTO block_states (market_id, block_number, block_timestamp,
@@ -237,13 +256,69 @@ async def handle_market_state(conn: asyncpg.Connection, row: asyncpg.Record) -> 
         ON CONFLICT (market_id, block_number) DO UPDATE
         SET normalization_factor = $4, total_debt = $5
     """, market, row["block_number"], row["block_timestamp"],
-        norm / 1e18, debt / 1e18)
+        norm / 1e18, debt / 1e6)
 
     # Update markets table (latest snapshot, raw value)
     await conn.execute("""
         UPDATE markets SET normalization_factor = $1, total_debt_raw = $2 WHERE market_id = $3
     """, norm, debt, market)
     log.info("[proc] MarketStateUpdated market=%s nf=%d totalDebt=%d", market[:18] if market else "", norm, debt)
+
+
+async def handle_rate_updated(conn: asyncpg.Connection, row: asyncpg.Record) -> None:
+    """RateUpdated(uint256 rate, uint256 timestamp)"""
+    data = row["data"]
+    rate = decode_uint256(slice_data(data, 0))
+    timestamp = decode_uint256(slice_data(data, 1))
+    
+    market = await conn.fetchval("SELECT market_id FROM markets LIMIT 1")
+    if not market:
+        return
+        
+    index_price = rate / 1e18
+
+    # Update block_states (historical)
+    await conn.execute("""
+        INSERT INTO block_states (market_id, block_number, block_timestamp, index_price)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (market_id, block_number) DO UPDATE
+        SET index_price = $4
+    """, market, row["block_number"], row["block_timestamp"], index_price)
+
+    log.info("[proc] RateUpdated market=%s index_price=%f", market[:18], index_price)
+
+
+async def handle_aave_reserve(conn: asyncpg.Connection, row: asyncpg.Record) -> None:
+    """Aave_ReserveDataUpdated(address indexed reserve, uint256 liqRate, uint256 stableRate, uint256 variableRate, ...)"""
+    data = row["data"]
+    if len(data) < 5 * 64:
+        return
+        
+    topic1 = row.get("topic1")
+    # You could filter by USDC here, but assuming it's the only asset we care about
+    
+    # data[2] is variableBorrowRate (RAY)
+    var_borrow_rate_ray = decode_uint256(slice_data(data, 2))
+    
+    # RLDAaveOracle formula (K=100)
+    capped_ray = min(var_borrow_rate_ray, 10**27) # RATE_CAP
+    calculated_price_wad = (capped_ray * 100) // (10**9)
+    index_price_wad = max(calculated_price_wad, 10**14) # MIN_PRICE
+    index_price = index_price_wad / 1e18
+
+    market = await conn.fetchval("SELECT market_id FROM markets LIMIT 1")
+    if not market:
+        return
+
+    # Update block_states (historical)
+    await conn.execute("""
+        INSERT INTO block_states (market_id, block_number, block_timestamp, index_price)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (market_id, block_number) DO UPDATE
+        SET index_price = $4
+    """, market, row["block_number"], row["block_timestamp"], index_price)
+
+    log.info("[proc] Aave Reserve updated market=%s index_price=%f", market[:18], index_price)
 
 
 # ── LP Lifecycle ─────────────────────────────────────────────────────────────
@@ -446,6 +521,8 @@ HANDLERS = {
     "V4_Swap":              handle_swap,
     "FundingApplied":       handle_funding,
     "MarketStateUpdated":   handle_market_state,
+    "RateUpdated":          handle_rate_updated, # Added
+    "Aave_ReserveDataUpdated": handle_aave_reserve, # Added Oracle integration
     "LiquidityAdded":       handle_liquidity_added,
     "LiquidityRemoved":     handle_liquidity_removed,
     "ActivePositionChanged": handle_active_position_changed,

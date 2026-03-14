@@ -40,6 +40,7 @@ EVENTS = {
     "Supply(address,address,address,uint256,uint16)":           "Aave_Supply",
     "Mint(address,address,uint256,uint256,uint256)":            "aToken_Mint",
     "BalanceTransfer(address,address,uint256,uint256)":         "aToken_BalanceTransfer",
+    "ReserveDataUpdated(address,uint256,uint256,uint256,uint256,uint256)": "Aave_ReserveDataUpdated",
 
     # ── ROUTER ──────────────────────────────────────────────────
     "Deposited(address,uint256,uint256)":                       "Router_Deposited",

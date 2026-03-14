@@ -737,25 +737,99 @@
         );
 
         const loadLatest = useCallback(() => {
-          fetch("/api/latest")
-            .then((r) => {
-              if (!r.ok) throw new Error(`HTTP ${r.status}`);
-              return r.json();
-            })
-            .then((d) => {
-              // Check for simulation restart (block number decreased)
-              if (detectRestart(d)) {
-                setSimRestarted(true);
-                setChartData(null);
-                setEvents([]);
-                // Clear the restart banner after 30s
-                setTimeout(() => setSimRestarted(false), 30000);
+          fetch("/graphql?ts=" + Date.now(), {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              "Accept": "application/json"
+            },
+            body: JSON.stringify({ query: `
+              query {
+                markets { marketId normalizationFactor totalDebtRaw }
               }
-              setLastBlock(d.block_number || null);
-              setLatest(d);
-              setErr(null);
-              setErrCount(0);
-              setDisconnected(false);
+            `})
+          })
+            .then(r => r.json())
+            .then(res => {
+              if (res.errors) throw new Error(res.errors[0].message);
+              if (!res.data.markets.length) throw new Error("No markets found");
+              const m = res.data.markets[0];
+              const mId = m.marketId;
+              
+              return fetch("/graphql?ts=" + Date.now(), {
+                method: "POST",
+                headers: { 
+                  "Content-Type": "application/json",
+                  "Accept": "application/json"
+                },
+                body: JSON.stringify({ query: `
+                  query {
+                    poolSnapshot(marketId: "${mId}") {
+                      blockNumber markPrice indexPrice tick
+                    }
+                    brokers(marketId: "${mId}") {
+                      address wausdcBalance debtPrincipal
+                    }
+                  }
+                `})
+              }).then(r => r.json()).then(res2 => {
+                 if (res2.errors) throw new Error(res2.errors[0].message);
+                 const ps = res2.data.poolSnapshot || {};
+                 const br = res2.data.brokers || [];
+                 const nfRaw = m.normalizationFactor || "1000000000000000000";
+                 const nfFloat = parseFloat(nfRaw) / 1e18;
+                 
+                 const pMarkPrice = ps.markPrice || 0;
+
+                 
+                 const d = {
+                   block_number: ps.blockNumber || 0,
+                   market_states: [{
+                     index_price: (ps.indexPrice || 0).toString(),
+                     normalization_factor: nfRaw,
+                     total_debt: m.totalDebtRaw || "0"
+                   }],
+                   pool_states: [{
+                     mark_price: ps.markPrice || 0,
+                     tick: ps.tick || 0
+                   }],
+                    broker_positions: br.map(b => {
+                      const collRaw = b.wausdcBalance || "0";
+                      const debtPrin = parseFloat(b.debtPrincipal || "0");
+                      const debtRaw = debtPrin * nfFloat;
+                      const debt6 = Math.floor(debtRaw);
+
+                      const collVal6 = parseInt(collRaw, 10);
+                      const debtValFloat = (debtRaw / 1e6) * pMarkPrice;
+                      const debtVal6 = Math.floor(debtValFloat * 1e6);
+
+                      let hf = 100;
+                      if (debtValFloat > 0) {
+                        hf = parseFloat(collRaw) / 1e6 / debtValFloat;
+                      }
+                      return {
+                        broker_address: b.address,
+                        collateral: collRaw,
+                        debt: debt6.toString(),
+                        collateral_value: collVal6.toString(),
+                        debt_value: debtVal6.toString(),
+                        health_factor: hf,
+                      };
+                    })
+                 };
+                 
+                 if (detectRestart(d)) {
+                   setSimRestarted(true);
+                   setChartData(null);
+                   setEvents([]);
+                   setTimeout(() => setSimRestarted(false), 30000);
+                 }
+                 setLastBlock(d.block_number || null);
+                 setLatest(d);
+                 setErr(null);
+                 setErrCount(0);
+                 setDisconnected(false);
+              });
             })
             .catch((e) => {
               setErr(e.message);
@@ -765,27 +839,75 @@
         }, [detectRestart, errCount]);
 
         const loadChart = useCallback(() => {
-          fetch("/api/chart/price?limit=1000")
-            .then((r) => {
-              if (!r.ok) throw new Error(`HTTP ${r.status}`);
-              return r.json();
-            })
-            .then((d) => {
-              if (d && d.data) setChartData(d.data);
-            })
-            .catch(() => {});
+          fetch("/graphql?ts=" + Date.now(), {
+            method: "POST", 
+            headers: { 
+              "Content-Type": "application/json",
+              "Accept": "application/json" 
+            },
+            body: JSON.stringify({ query: `
+              query {
+                markets { marketId }
+              }
+            `})
+          }).then(r => r.json()).then(res => {
+             if (!res.data.markets.length) return;
+             const mId = res.data.markets[0].marketId;
+             return fetch("/graphql?ts=" + Date.now(), {
+               method: "POST", 
+               headers: { 
+                 "Content-Type": "application/json",
+                 "Accept": "application/json"
+               },
+               body: JSON.stringify({ query: `
+                 query {
+                   candles(marketId: "${mId}", resolution: "1m", limit: 1000) {
+                     bucket indexClose markClose
+                   }
+                 }
+               `})
+             }).then(r => r.json()).then(res2 => {
+               if (res2.data && res2.data.candles) {
+                 const data = res2.data.candles.map(c => ({
+                   timestamp: c.bucket,
+                   mark_price: c.markClose,
+                   index_price: c.indexClose
+                 })).reverse();
+                 setChartData(data);
+               }
+             });
+          }).catch(() => {});
         }, []);
 
         const loadEvents = useCallback(() => {
-          fetch("/api/events?limit=1000")
-            .then((r) => {
-              if (!r.ok) throw new Error(`HTTP ${r.status}`);
-              return r.json();
-            })
-            .then((d) => {
-              if (Array.isArray(d)) setEvents(d);
-            })
-            .catch(() => {});
+          fetch("/graphql?ts=" + Date.now(), {
+            method: "POST", 
+            headers: { 
+              "Content-Type": "application/json",
+              "Accept": "application/json"
+            },
+            body: JSON.stringify({ query: `
+              query {
+                events(limit: 100) {
+                  eventName blockTimestamp blockNumber data
+                }
+              }
+            `})
+          }).then(r => r.json()).then(res => {
+            if (res.data && res.data.events) {
+               const evs = res.data.events.map(e => {
+                  let parsed = {};
+                  try { parsed = JSON.parse(e.data); } catch(err) {}
+                  return {
+                     event_name: e.eventName,
+                     block_timestamp: e.blockTimestamp,
+                     block_number: e.blockNumber,
+                     event_data: parsed
+                  };
+               });
+               setEvents(evs);
+            }
+          }).catch(() => {});
         }, []);
 
         useEffect(() => {
@@ -796,9 +918,9 @@
           const iv2 = setInterval(loadChart, 60000);
           const iv3 = setInterval(loadEvents, 30000);
           return () => {
-            clearInterval(iv1);
-            clearInterval(iv2);
-            clearInterval(iv3);
+             clearInterval(iv1);
+             clearInterval(iv2);
+             clearInterval(iv3);
           };
         }, [loadLatest, loadChart, loadEvents]);
 
@@ -859,7 +981,7 @@
         const bps = latest.broker_positions || [];
 
         const markPrice = ps.mark_price || 0;
-        const indexPrice = ms.index_price ? fromRaw(ms.index_price, 18) : 0;
+        const indexPrice = ms.index_price ? Number(ms.index_price) : 0;
         const normFactor = ms.normalization_factor
           ? Number(ms.normalization_factor) / 1e18
           : 1;

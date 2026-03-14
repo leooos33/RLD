@@ -93,13 +93,11 @@ services:
       dockerfile: docker/daemons/Dockerfile
     command: ["python", "services/combined_daemon.py"]
     depends_on:
-      deployer:
-        condition: service_completed_successfully
-    volumes:
-      - ./deployment.json:/config/deployment.json:ro
+      indexer:
+        condition: service_healthy
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
-      - CONFIG_FILE=/config/deployment.json
+      - INDEXER_URL=http://indexer:8080
       - PRIVATE_KEY=${MM_KEY}
       - MM_KEY=${MM_KEY}
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
@@ -126,13 +124,11 @@ services:
       dockerfile: docker/daemons/Dockerfile
     command: ["python", "tools/chaos_daemon.py"]
     depends_on:
-      deployer:
-        condition: service_completed_successfully
-    volumes:
-      - ./deployment.json:/config/deployment.json:ro
+      indexer:
+        condition: service_healthy
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
-      - CONFIG_FILE=/config/deployment.json
+      - INDEXER_URL=http://indexer:8080
       - PRIVATE_KEY=${CHAOS_KEY}
       - CHAOS_KEY=${CHAOS_KEY}
     extra_hosts:

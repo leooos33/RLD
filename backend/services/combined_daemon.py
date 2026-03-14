@@ -73,23 +73,62 @@ logger.setLevel(logging.INFO)
 load_dotenv("../contracts/.env")
 load_dotenv("../.env")
 
-# Configuration
+# Configuration — keys from env, contract addresses from indexer API
 RPC_URL = os.getenv("RPC_URL", "http://localhost:8545")
-API_URL = os.getenv("API_URL", "https://rate-dashboard.onrender.com")
+API_URL = os.getenv("API_URL", "http://rates-indexer:8080")
+INDEXER_URL = os.getenv("INDEXER_URL", "http://indexer:8080")
 API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")  # MM user key for swaps
 ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY", PRIVATE_KEY)  # Deployer key for oracle updates
-MOCK_ORACLE_ADDR = os.getenv("MOCK_ORACLE_ADDR")
-WAUSDC = os.getenv("WAUSDC")
-POSITION_TOKEN = os.getenv("POSITION_TOKEN")
-TWAMM_HOOK = os.getenv("TWAMM_HOOK")
-RLD_CORE = os.getenv("RLD_CORE")
-MARKET_ID = os.getenv("MARKET_ID")
+
+# These will be set by load_config_from_indexer()
+MOCK_ORACLE_ADDR = None
+WAUSDC = None
+POSITION_TOKEN = None
+TWAMM_HOOK = None
+RLD_CORE = None
+MARKET_ID = None
+SWAP_ROUTER = None
+AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"       # Mainnet Aave V3 Pool (fork constant)
+UNDERLYING_TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # Mainnet USDC (fork constant)
+
+
+def load_config_from_indexer():
+    """Poll GET /config on the indexer until deployer has seeded the market."""
+    global MOCK_ORACLE_ADDR, WAUSDC, POSITION_TOKEN, TWAMM_HOOK
+    global RLD_CORE, MARKET_ID, SWAP_ROUTER, AAVE_POOL, UNDERLYING_TOKEN
+
+    logger.info("⏳ Waiting for deployment config from indexer at %s/config ...", INDEXER_URL)
+    while True:
+        try:
+            resp = requests.get(f"{INDEXER_URL}/config", timeout=5)
+            if resp.status_code == 200:
+                cfg = resp.json()
+                MOCK_ORACLE_ADDR = cfg.get("mock_oracle")
+                WAUSDC = cfg.get("wausdc")
+                POSITION_TOKEN = cfg.get("position_token") or cfg.get("wrlp")
+                TWAMM_HOOK = cfg.get("twamm_hook")
+                RLD_CORE = cfg.get("rld_core")
+                MARKET_ID = cfg.get("market_id")
+                SWAP_ROUTER = cfg.get("swap_router")
+                ext = cfg.get("external_contracts", {})
+                AAVE_POOL = ext.get("aave_pool")
+                UNDERLYING_TOKEN = ext.get("usdc")
+                logger.info("✅ Config loaded from indexer:")
+                logger.info("   MARKET_ID=%s", MARKET_ID)
+                logger.info("   MOCK_ORACLE=%s", MOCK_ORACLE_ADDR)
+                logger.info("   WAUSDC=%s  POSITION_TOKEN=%s", WAUSDC, POSITION_TOKEN)
+                logger.info("   TWAMM_HOOK=%s  SWAP_ROUTER=%s", TWAMM_HOOK, SWAP_ROUTER)
+                return cfg
+            else:
+                logger.info("   Indexer returned %d — deployer not done yet, retrying...", resp.status_code)
+        except Exception as e:
+            logger.info("   Indexer not reachable (%s), retrying in 5s...", e)
+        time.sleep(5)
 
 FAST_INTERVAL = 2    # seconds — timestamp sync + clear auctions
 SLOW_INTERVAL = 12   # seconds — rate sync + MM arb
 MM_THRESHOLD = 0.01  # 1% = 100 basis points
-SWAP_ROUTER = os.getenv("SWAP_ROUTER")
 
 # Clear auction config
 MIN_CLEAR_USD = 0.001  # minimum $ value to clear
@@ -272,14 +311,14 @@ class CombinedDaemon:
         # V4 pool reader (replaces forge script GetMarkPrice + CalculateSwapAmount)
         self.pool_reader = V4PoolReader(
             self.w3, self.token0, self.token1,
-            os.getenv("TWAMM_HOOK"), WAUSDC
+            TWAMM_HOOK, WAUSDC
         )
         
         # V4 swap executor (replaces forge script LifecycleSwap)
         if SWAP_ROUTER:
             self.swap_executor = V4SwapExecutor(
                 self.w3, self.token0, self.token1,
-                os.getenv("TWAMM_HOOK"), SWAP_ROUTER
+                TWAMM_HOOK, SWAP_ROUTER
             )
         else:
             self.swap_executor = None
@@ -461,12 +500,12 @@ class CombinedDaemon:
     def get_index_price(self) -> float:
         """Get index price from oracle (WAD format)."""
         try:
-            price = self.oracle.functions.getIndexPrice(
-                Web3.to_checksum_address("0x0000000000000000000000000000000000000000"),
-                Web3.to_checksum_address("0x0000000000000000000000000000000000000000")
-            ).call()
+            pool = Web3.to_checksum_address(AAVE_POOL) if AAVE_POOL else Web3.to_checksum_address("0x0000000000000000000000000000000000000000")
+            underlying = Web3.to_checksum_address(UNDERLYING_TOKEN) if UNDERLYING_TOKEN else Web3.to_checksum_address("0x0000000000000000000000000000000000000000")
+            price = self.oracle.functions.getIndexPrice(pool, underlying).call()
             return price / 1e18
-        except:
+        except Exception as e:
+            logger.warning(f"Index price fetch failed: {e}")
             return None
     
     def get_mark_price(self) -> float:
@@ -531,7 +570,7 @@ class CombinedDaemon:
         self.mark_price = mark_price or 0.0
         
         if index_price is None or mark_price is None:
-            logger.warning("⚠️  Could not fetch prices")
+            logger.warning("⚠️  Could not fetch prices (index=%s, mark=%s)", index_price, mark_price)
             return
         
         # Get normalization factor from RLDCore market state
@@ -623,20 +662,20 @@ class CombinedDaemon:
 
 
 def main():
-    required = ["MOCK_ORACLE_ADDR", "WAUSDC", "POSITION_TOKEN", "TWAMM_HOOK", "PRIVATE_KEY"]
-    missing = [v for v in required if not os.getenv(v)]
-    
-    if missing:
-        print(f"❌ Missing: {missing}")
+    if not PRIVATE_KEY:
+        print("❌ PRIVATE_KEY not set")
         sys.exit(1)
-    
+
+    # Poll indexer for deployment config (blocks until deployer has run)
+    load_config_from_indexer()
+
     w3 = Web3(Web3.HTTPProvider(RPC_URL))
     if not w3.is_connected():
         print(f"❌ Cannot connect to {RPC_URL}")
         sys.exit(1)
-    
+
     print(f"✅ Connected to {RPC_URL}")
-    
+
     daemon = CombinedDaemon()
     daemon.run()
 
