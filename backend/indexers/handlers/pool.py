@@ -28,6 +28,13 @@ RESOLUTIONS = {
     "1d":  86400,
 }
 
+# ── Carry-forward subselect helpers ────────────────────────────────────────
+# Each returns the last known non-null value for a column in block_states.
+_CF = "(SELECT {col} FROM block_states WHERE market_id=$1 AND {col} IS NOT NULL ORDER BY block_number DESC LIMIT 1)"
+
+def _cf(col: str) -> str:
+    return _CF.format(col=col)
+
 
 def sqrt_price_x96_to_price(sqrt_price_x96: int, wausdc: str, wrlp: str) -> float:
     """
@@ -71,18 +78,24 @@ async def handle_swap(
     # Volume: absolute value of the USDC side (amount1 for wRLP/waUSDC pools where token1=waUSDC)
     volume_usd = abs(amount1) / 1e6
 
-    # Upsert block_states (pool fields only — other fields may have been set by market handler)
-    await conn.execute("""
+    # Upsert block_states — carry forward columns this handler doesn't natively set
+    await conn.execute(f"""
         INSERT INTO block_states
-          (market_id, block_number, block_timestamp, sqrt_price_x96, tick, mark_price, liquidity, index_price)
+          (market_id, block_number, block_timestamp,
+           sqrt_price_x96, tick, mark_price, liquidity,
+           index_price, normalization_factor, total_debt)
         VALUES ($1, $2, $3, $4, $5, $6, $7,
-                (SELECT index_price FROM block_states WHERE market_id=$1 AND index_price IS NOT NULL ORDER BY block_number DESC LIMIT 1))
+                {_cf('index_price')},
+                {_cf('normalization_factor')},
+                {_cf('total_debt')})
         ON CONFLICT (market_id, block_number) DO UPDATE SET
-          sqrt_price_x96 = EXCLUDED.sqrt_price_x96,
-          tick           = EXCLUDED.tick,
-          mark_price     = EXCLUDED.mark_price,
-          liquidity      = EXCLUDED.liquidity,
-          index_price    = COALESCE(block_states.index_price, EXCLUDED.index_price)
+          sqrt_price_x96      = EXCLUDED.sqrt_price_x96,
+          tick                = EXCLUDED.tick,
+          mark_price          = EXCLUDED.mark_price,
+          liquidity           = EXCLUDED.liquidity,
+          index_price         = COALESCE(block_states.index_price,         EXCLUDED.index_price),
+          normalization_factor = COALESCE(block_states.normalization_factor, EXCLUDED.normalization_factor),
+          total_debt          = COALESCE(block_states.total_debt,          EXCLUDED.total_debt)
     """, market_id, block_number, block_timestamp,
          str(sqrt_price_x96), tick, mark_price, str(liquidity))
 
@@ -131,16 +144,26 @@ async def handle_modify_liquidity(
     wausdc: str,
     wrlp: str,
 ) -> None:
-    # Update block_states liquidity snapshot
-    await conn.execute("""
+    # Update block_states liquidity snapshot — carry forward all columns
+    await conn.execute(f"""
         INSERT INTO block_states
-          (market_id, block_number, block_timestamp, tick, mark_price, index_price)
+          (market_id, block_number, block_timestamp,
+           tick, mark_price,
+           index_price, sqrt_price_x96, liquidity, normalization_factor, total_debt)
         VALUES ($1, $2, $3, $4, $5,
-                (SELECT index_price FROM block_states WHERE market_id=$1 AND index_price IS NOT NULL ORDER BY block_number DESC LIMIT 1))
+                {_cf('index_price')},
+                {_cf('sqrt_price_x96')},
+                {_cf('liquidity')},
+                {_cf('normalization_factor')},
+                {_cf('total_debt')})
         ON CONFLICT (market_id, block_number) DO UPDATE SET
-          tick        = COALESCE(block_states.tick,       EXCLUDED.tick),
-          mark_price  = COALESCE(block_states.mark_price, EXCLUDED.mark_price),
-          index_price = COALESCE(block_states.index_price, EXCLUDED.index_price)
+          tick                = COALESCE(block_states.tick,                EXCLUDED.tick),
+          mark_price          = COALESCE(block_states.mark_price,          EXCLUDED.mark_price),
+          index_price         = COALESCE(block_states.index_price,         EXCLUDED.index_price),
+          sqrt_price_x96      = COALESCE(block_states.sqrt_price_x96,      EXCLUDED.sqrt_price_x96),
+          liquidity           = COALESCE(block_states.liquidity,           EXCLUDED.liquidity),
+          normalization_factor = COALESCE(block_states.normalization_factor, EXCLUDED.normalization_factor),
+          total_debt          = COALESCE(block_states.total_debt,          EXCLUDED.total_debt)
     """, market_id, block_number, block_timestamp,
          None, sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else None)
 
