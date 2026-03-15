@@ -303,7 +303,8 @@ async def dispatch(
                 conn, real_market_id, block_number, block_timestamp,
                 tick_lower=decoded[0], tick_upper=decoded[1],
                 liquidity_delta=decoded[2], sqrt_price_x96=0,
-                wausdc=wausdc, wrlp=wrlp
+                wausdc=wausdc, wrlp=wrlp,
+                w3=w3, pool_manager=global_cfg.get("v4_pool_manager", "")
             )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
