@@ -8,11 +8,20 @@ and stores the pre-built JSON in markets.snapshot.
 Design: Every GraphQL read of "snapshot" is a single-row SELECT — zero computation.
 """
 import asyncpg
+import decimal
 import json
 import logging
 import math
 
 log = logging.getLogger(__name__)
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    """Encode Decimal values from asyncpg as floats."""
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            return float(o)
+        return super().default(o)
 
 
 async def materialize_snapshot(
@@ -118,6 +127,13 @@ async def materialize_snapshot(
     system_health = "SAFE" if over_collat > 200 else ("WATCH" if over_collat > 120 else "DANGER")
 
     # ── Build JSON blob ──
+    # All values are human-readable (DB already stores them that way).
+    # NF, index_price, mark_price, total_debt, broker balances — all floats.
+    # Token balances in block_states are raw 6-dec — divide by 1e6 for display.
+    pool_id = await conn.fetchval(
+        "SELECT pool_id FROM markets WHERE market_id = $1", market_id
+    ) or ""
+
     snapshot = {
         "blockNumber": block_number,
         "blockTimestamp": block_timestamp,
@@ -125,20 +141,20 @@ async def materialize_snapshot(
             "marketId": market_id,
             "blockNumber": block_number,
             "blockTimestamp": block_timestamp,
-            "normalizationFactor": str(int(nf * 1e18)),
-            "totalDebt": str(int(total_debt * 1e6)),
-            "indexPrice": str(int(index_price * 1e18)),
+            "normalizationFactor": nf,
+            "totalDebt": total_debt,
+            "indexPrice": index_price,
+            "markPrice": mark_price,
             "lastUpdateTimestamp": block_timestamp,
         },
         "pool": {
-            "poolId": (market_row["funding_period_sec"] if False else  # placeholder
-                       (await conn.fetchval("SELECT pool_id FROM markets WHERE market_id = $1", market_id)) or ""),
+            "poolId": pool_id,
             "markPrice": mark_price,
             "tick": tick,
             "liquidity": liquidity,
             "sqrtPriceX96": sqrt_price_x96,
-            "token0Balance": str(int(t0_balance)),
-            "token1Balance": str(int(t1_balance)),
+            "token0Balance": t0_human,
+            "token1Balance": t1_human,
             "tvlUsd": round(tvl, 2),
             "feeGrowthGlobal0": fg0,
             "feeGrowthGlobal1": fg1,
@@ -159,10 +175,10 @@ async def materialize_snapshot(
             {
                 "address": b["address"],
                 "owner": b["owner"],
-                "collateral": str(int(float(b["wausdc_balance"] or 0) * 1e6)),
-                "debt": str(int(float(b["debt_principal"] or 0) * 1e6)),
-                "collateralValue": str(int(float(b["wausdc_value"] or 0) * 1e6)),
-                "debtValue": str(int(float(b["debt_principal"] or 0) * index_price * 1e6)),
+                "collateral": float(b["wausdc_balance"] or 0),
+                "debt": float(b["debt_principal"] or 0),
+                "collateralValue": float(b["wausdc_value"] or 0),
+                "debtValue": round(float(b["debt_principal"] or 0) * index_price, 2),
                 "healthFactor": str(b["health_factor"] or "0"),
             }
             for b in brokers
@@ -171,7 +187,7 @@ async def materialize_snapshot(
 
     await conn.execute(
         "UPDATE markets SET snapshot = $1 WHERE market_id = $2",
-        json.dumps(snapshot), market_id
+        json.dumps(snapshot, cls=_DecimalEncoder), market_id
     )
     log.debug("[snapshot] Materialized for market=%s block=%d (vol24h=%.0f, %d brokers)",
               market_id[:16], block_number, volume_24h, len(brokers))
