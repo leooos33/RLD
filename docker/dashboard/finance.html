@@ -787,32 +787,31 @@
                    market_states: [{
                      index_price: (ps.indexPrice || 0).toString(),
                      normalization_factor: nfRaw,
-                     total_debt: (ps.totalDebt != null ? Math.floor(ps.totalDebt).toString() : m.totalDebtRaw) || "0"
+                      total_debt: ps.totalDebt != null ? ps.totalDebt : Number(m.totalDebtRaw || 0)
                    }],
                    pool_states: [{
                      mark_price: ps.markPrice || 0,
                      tick: ps.tick || 0
                    }],
                     broker_positions: br.map(b => {
-                      const collRaw = b.wausdcBalance || "0";
+                      // DB stores values already in human USDC (divided by 1e6 in handlers)
+                      const collateral = parseFloat(b.wausdcBalance || "0");
                       const debtPrin = parseFloat(b.debtPrincipal || "0");
-                      const debtRaw = debtPrin * nfFloat;
-                      const debt6 = Math.floor(debtRaw);
+                      const debt = debtPrin * nfFloat;
 
-                      const collVal6 = parseInt(collRaw, 10);
-                      const debtValFloat = (debtRaw / 1e6) * pMarkPrice;
-                      const debtVal6 = Math.floor(debtValFloat * 1e6);
+                      const collateralValue = collateral;  // waUSDC ~ USDC 1:1
+                      const debtValue = debt * pMarkPrice;
 
                       let hf = 100;
-                      if (debtValFloat > 0) {
-                        hf = parseFloat(collRaw) / 1e6 / debtValFloat;
+                      if (debtValue > 0) {
+                        hf = collateralValue / debtValue;
                       }
                       return {
                         broker_address: b.address,
-                        collateral: collRaw,
-                        debt: debt6.toString(),
-                        collateral_value: collVal6.toString(),
-                        debt_value: debtVal6.toString(),
+                        collateral: collateral,
+                        debt: debt,
+                        collateral_value: collateralValue,
+                        debt_value: debtValue,
                         health_factor: hf,
                       };
                     })
@@ -985,19 +984,19 @@
         const normFactor = ms.normalization_factor
           ? Number(ms.normalization_factor) / 1e18
           : 1;
-        const totalDebt = fromRaw(ms.total_debt, 6);
+        const totalDebt = Number(ms.total_debt || 0);
 
         const totalCollateral = bps.reduce(
-          (a, b) => a + fromRaw(b.collateral, 6),
+          (a, b) => a + Number(b.collateral || 0),
           0,
         );
-        const totalBrokerDebt = bps.reduce((a, b) => a + fromRaw(b.debt, 6), 0);
+        const totalBrokerDebt = bps.reduce((a, b) => a + Number(b.debt || 0), 0);
         const totalCollateralValue = bps.reduce(
-          (a, b) => a + fromRaw(b.collateral_value, 6),
+          (a, b) => a + Number(b.collateral_value || 0),
           0,
         );
         const totalDebtValue = bps.reduce(
-          (a, b) => a + fromRaw(b.debt_value, 6),
+          (a, b) => a + Number(b.debt_value || 0),
           0,
         );
 
@@ -1205,9 +1204,9 @@
                   </thead>
                   <tbody>
                     {bps.map((b, i) => {
-                      const coll = fromRaw(b.collateral, 6);
-                      const debt = fromRaw(b.debt, 6);
-                      const debtVal = fromRaw(b.debt_value, 6);
+                      const coll = Number(b.collateral || 0);
+                      const debt = Number(b.debt || 0);
+                      const debtVal = Number(b.debt_value || 0);
                       const hf = b.health_factor;
                       const hasDebt = debt > 0 || debtVal > 0;
                       const status = !hasDebt
