@@ -25,6 +25,7 @@ from handlers import broker as broker_handler
 from handlers import pool as pool_handler
 from handlers import twamm as twamm_handler
 from handlers import lp as lp_handler
+from handlers import bond as bond_handler
 from handlers import snapshot as snapshot_handler
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,16 @@ TOPICS = {
     # waUSDC / wRLP — ERC20 Transfer events track collateral deposits/withdrawals
     Web3.keccak(text="Transfer(address,address,uint256)").hex():
         "ERC20Transfer",
+    # BondFactory
+    Web3.keccak(text="BondMinted(address,address,uint256,uint256,uint256)").hex():
+        "BondMinted",
+    Web3.keccak(text="BondClosed(address,address,uint256,uint256)").hex():
+        "BondClosed",
+    # BasisTradeFactory
+    Web3.keccak(text="BasisTradeOpened(address,address,uint256,uint256,uint256)").hex():
+        "BasisTradeOpened",
+    Web3.keccak(text="BasisTradeClosed(address,address,uint256)").hex():
+        "BasisTradeClosed",
 }
 
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
@@ -92,10 +103,10 @@ async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str
         addr = global_cfg.get(key)
         if addr:
             watched.add(addr.lower())
-    # Per-market addresses from DB — broker_factory, oracle, twamm hook
+    # Per-market addresses from DB — broker_factory, oracle, twamm hook, bond_factory, basis_trade_factory
     for m in markets:
-        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp"):
-            if m[col]:
+        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp", "bond_factory", "basis_trade_factory"):
+            if m.get(col):
                 watched.add(m[col].lower())
     for b in brokers:
         watched.add(b["address"].lower())
@@ -108,7 +119,7 @@ async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str
 async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     """Map contract address → market_id for routing logs."""
     rows = await conn.fetch("""
-        SELECT market_id, broker_factory, mock_oracle, twamm_hook
+        SELECT market_id, broker_factory, mock_oracle, twamm_hook, bond_factory, basis_trade_factory
         FROM markets
     """)
     mapping = {}
@@ -116,6 +127,10 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
         mapping[r["broker_factory"].lower()] = r["market_id"]
         mapping[r["mock_oracle"].lower()] = r["market_id"]
         mapping[r["twamm_hook"].lower()] = r["market_id"]
+        if r.get("bond_factory"):
+            mapping[r["bond_factory"].lower()] = r["market_id"]
+        if r.get("basis_trade_factory"):
+            mapping[r["basis_trade_factory"].lower()] = r["market_id"]
 
     # Broker → market_id
     broker_rows = await conn.fetch("SELECT address, market_id FROM brokers")
@@ -425,6 +440,31 @@ async def dispatch(
                       contract[:10], from_addr[:10], to_addr[:10], amount, col, delta)
         except Exception as e:
             log.warning("[dispatch] ERC20Transfer decode failed: %s", e)
+
+    elif event_name in ("BondMinted", "BasisTradeOpened") and market_id:
+        # topics: [sig, user, broker]  data: (notional uint256, hedge uint256, duration uint256)
+        try:
+            user   = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
+            broker = "0x" + (topics[2][-20:].hex() if isinstance(topics[2], bytes) else topics[2][-40:])
+            decoded = w3.eth.codec.decode(["uint256", "uint256", "uint256"], data_bytes)
+            await bond_handler.handle_bond_minted(
+                conn, market_id, user, broker,
+                notional=decoded[0], hedge=decoded[1], duration=decoded[2],
+                block_number=block_number, tx_hash=tx_hash,
+                factory_address=contract,
+            )
+        except Exception as e:
+            log.warning("[dispatch] %s decode failed block=%d: %s", event_name, block_number, e)
+
+    elif event_name in ("BondClosed", "BasisTradeClosed"):
+        # topics: [sig, user, broker]  data: ...
+        try:
+            broker = "0x" + (topics[2][-20:].hex() if isinstance(topics[2], bytes) else topics[2][-40:])
+            await bond_handler.handle_bond_closed(
+                conn, broker, block_number, tx_hash,
+            )
+        except Exception as e:
+            log.warning("[dispatch] BondClosed decode failed block=%d: %s", block_number, e)
 
 
 # ── Stats update ───────────────────────────────────────────────────────────

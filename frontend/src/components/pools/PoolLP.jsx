@@ -78,8 +78,12 @@ function ComboChart({ bins, currentPrice }) {
     const minP = bins[0].priceFrom;
     const maxP = bins[bins.length - 1].priceTo;
     if (currentPrice >= minP && currentPrice <= maxP) {
-      curPriceX = MARGIN.left + ((currentPrice - minP) / (maxP - minP)) * plotW;
+      // Use bin-based interpolation (bars are evenly spaced by index, not by price)
       curBinIdx = bins.findIndex(b => currentPrice >= b.priceFrom && currentPrice < b.priceTo);
+      if (curBinIdx < 0) curBinIdx = bins.length - 1; // edge: price == last priceTo
+      const bin = bins[curBinIdx];
+      const fracInBin = (currentPrice - bin.priceFrom) / (bin.priceTo - bin.priceFrom);
+      curPriceX = MARGIN.left + (curBinIdx + fracInBin) * barW;
     }
   }
 
@@ -397,7 +401,7 @@ export default function PoolLP() {
   useEffect(() => {
     let cancelled = false;
     const GQL_URL = `/graphql`;
-    const LIQ_QUERY = `query { liquidityBins(numBins: 60) { price priceFrom priceTo liquidity amount0 amount1 } }`;
+    const LIQ_QUERY = `query { liquidityDistribution }`;
 
     async function fetchDistribution() {
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -409,8 +413,31 @@ export default function PoolLP() {
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const json = await res.json();
-          const bins = json?.data?.liquidityBins;
-          if (!cancelled && bins?.length) {
+          const rawBins = json?.data?.liquidityDistribution;
+          if (!cancelled && rawBins?.length) {
+            // Transform indexer bins to ComboChart format
+            const curPrice = pool?.markPrice || 1;
+            const bins = rawBins
+              .filter((b) => b.priceHigh >= 1 && b.priceLow <= 10) // Display range: 1-10
+              .map((b) => {
+              const priceFrom = b.priceLow;
+              const priceTo = b.priceHigh;
+              const midPrice = (priceFrom + priceTo) / 2;
+              const liq = b.liquidity || 0;
+              // Compute token amounts using Uni V3 concentrated liquidity math
+              const sa = Math.sqrt(priceFrom), sb = Math.sqrt(priceTo);
+              const sp = Math.max(sa, Math.min(Math.sqrt(curPrice), sb));
+              const a0 = sp < sb ? liq * (1 / sp - 1 / sb) / 1e6 : 0;
+              const a1 = sp > sa ? liq * (sp - sa) / 1e6 : 0;
+              return {
+                price: midPrice.toFixed(3),
+                priceFrom,
+                priceTo,
+                liquidity: liq,
+                amount0: Math.max(0, a0),
+                amount1: Math.max(0, a1),
+              };
+            });
             setLiquidityBins(bins);
             const priceFromMid = bins[Math.floor(bins.length / 2)]?.price;
             if (priceFromMid) setLiqDistPrice(parseFloat(priceFromMid));
@@ -421,7 +448,7 @@ export default function PoolLP() {
             await new Promise(r => setTimeout(r, 2000));
             continue;
           }
-          console.warn("[LP] GQL liquidityBins unavailable after retries, using local fallback:", err.message);
+          console.warn("[LP] GQL liquidityDistribution unavailable after retries, using local fallback:", err.message);
         }
       }
       // Fallback: build from local positions

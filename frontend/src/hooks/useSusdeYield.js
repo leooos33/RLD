@@ -1,28 +1,39 @@
 import useSWR from "swr";
-import { API_URL } from "../utils/helpers";
 
-const SUSDE_YIELD_URL = `${API_URL}/yields/susde`;
+const RATES_GQL_URL = "/rates-graphql";
 
-const fetcher = (url) => fetch(url).then((r) => r.json());
+const SUSDE_QUERY = `{ latestRates { susde } }`;
+
+const gqlFetcher = async (url) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: SUSDE_QUERY }),
+  });
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0].message);
+  return json.data;
+};
 
 /**
- * Fetches real-time sUSDe staking yield from the backend.
- * The rates daemon polls Ethena hourly and stores in DB.
+ * Fetches real-time sUSDe staking yield from the rates-indexer GraphQL API.
  * Returns { stakingYield, protocolYield, avg30d, avg90d, isLoading, error }
  */
 export function useSusdeYield() {
-  const { data, error, isLoading } = useSWR(SUSDE_YIELD_URL, fetcher, {
-    refreshInterval: 60000, // refresh every 60s
-    dedupingInterval: 30000, // dedupe within 30s
+  const { data, error, isLoading } = useSWR(RATES_GQL_URL, gqlFetcher, {
+    refreshInterval: 60000,
+    dedupingInterval: 30000,
     revalidateOnFocus: false,
   });
 
+  const yieldPct = data?.latestRates?.susde ?? null;
+
   return {
-    stakingYield: data?.stakingYield ?? null,
-    protocolYield: data?.protocolYield ?? null,
-    avg30d: data?.avg30d ?? null,
-    avg90d: data?.avg90d ?? null,
-    lastUpdated: data?.lastUpdated ?? null,
+    stakingYield: yieldPct,
+    protocolYield: yieldPct,
+    avg30d: yieldPct, // single latest value used as fallback
+    avg90d: yieldPct,
+    lastUpdated: null,
     isLoading,
     error,
   };

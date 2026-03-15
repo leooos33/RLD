@@ -7,7 +7,7 @@ import { SimulationProvider } from "./context/SimulationContext.jsx";
 import Layout from "./components/layout/Layout";
 
 // Lazy Load All Pages
-const App = lazy(() => import("./App"));
+
 const Homepage = lazy(() => import("./components/landing/Homepage"));
 const Bonds = lazy(() => import("./components/bonds/Bonds"));
 const BondsDirectory = lazy(() => import("./components/bonds/BondsDirectory"));
@@ -74,14 +74,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               }
             />
             <Route element={<Layout />}>
-              <Route
-                path="/app"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <App />
-                  </Suspense>
-                }
-              />
+
               <Route
                 path="/bonds"
                 element={

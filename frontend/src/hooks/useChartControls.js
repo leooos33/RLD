@@ -14,9 +14,10 @@ export function useChartControls({
   defaultRange = "ALL",
   defaultDays = 9999,
   defaultResolution = "1D",
+  deploymentDate = DEPLOYMENT_DATE,  // allow override for rates-indexer (older data)
 } = {}) {
   const clampedDefault = defaultDays >= 9999
-    ? DEPLOYMENT_DATE
+    ? deploymentDate
     : getPastDate(defaultDays);
 
   const [tempStart, setTempStart] = useState(clampedDefault);
@@ -45,7 +46,7 @@ export function useChartControls({
     const startStr = start.toISOString().split("T")[0];
     const endStr = end.toISOString().split("T")[0];
     // Clamp start to deployment date so we never request before indexer data exists
-    const clampedStart = startStr < DEPLOYMENT_DATE ? DEPLOYMENT_DATE : startStr;
+    const clampedStart = startStr < deploymentDate ? deploymentDate : startStr;
 
     setTempStart(clampedStart);
     setTempEnd(endStr);

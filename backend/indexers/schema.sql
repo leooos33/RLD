@@ -208,6 +208,26 @@ CREATE TABLE IF NOT EXISTS twamm_orders (
 CREATE INDEX IF NOT EXISTS idx_twamm_market_owner ON twamm_orders(market_id, owner);
 CREATE INDEX IF NOT EXISTS idx_twamm_broker ON twamm_orders(broker_address);
 
+-- ── BONDS ────────────────────────────────────────────────────────────────────
+-- One row per bond. Broker address is unique (each bond = frozen broker clone).
+
+CREATE TABLE IF NOT EXISTS bonds (
+  broker_address  TEXT PRIMARY KEY,
+  market_id       TEXT NOT NULL REFERENCES markets(market_id),
+  owner           TEXT NOT NULL,
+  notional        NUMERIC NOT NULL,
+  hedge           NUMERIC NOT NULL,
+  duration        BIGINT NOT NULL,
+  mint_block      BIGINT NOT NULL,
+  mint_tx         TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'active',
+  factory_address TEXT,
+  close_block     BIGINT,
+  close_tx        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bonds_owner ON bonds(owner);
+CREATE INDEX IF NOT EXISTS idx_bonds_market ON bonds(market_id);
+
 -- ── RAW EVENT QUEUE (ingestor → processor) ──────────────────────────────────
 -- Ingestor writes here. Processor polls status='pending', decodes & updates
 -- domain tables, then marks status='done'. Decouples ingestion from processing.

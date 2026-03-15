@@ -26,76 +26,49 @@ const gqlFetcher = ([url, query, variables]) => {
     });
 };
 
-// ── Single GraphQL query that replaces 7 REST calls ──────────
+// ── Single GraphQL query — indexer returns JSON scalars ───────
 const SIM_QUERY = `
   query SimSnapshot {
-    latest {
-      blockNumber
-      market {
-        blockNumber
-        blockTimestamp
-        marketId
-        normalizationFactor
-        totalDebt
-        lastUpdateTimestamp
-        indexPrice
-      }
-      pool {
-        poolId
-        tick
-        markPrice
-        liquidity
-        sqrtPriceX96
-        token0Balance
-        token1Balance
-        feeGrowthGlobal0
-        feeGrowthGlobal1
-      }
-      brokers {
-        address
-        collateral
-        debt
-        collateralValue
-        debtValue
-        healthFactor
-      }
-    }
-    volume { volumeUsd swapCount }
-    volumeHistory(hours: 168, bucketHours: 1) { timestamp volumeUsd swapCount }
-    events(limit: 20, eventName: "Swap") {
-      id blockNumber txHash eventName timestamp data
-    }
-    marketInfo {
-      collateral { name symbol address }
-      positionToken { name symbol address }
-      brokerFactory
-      infrastructure {
-        brokerRouter brokerExecutor twammHook bondFactory basisTradeFactory
-        poolFee tickSpacing poolManager v4Quoter
-        v4PositionManager v4PositionDescriptor v4StateView
-        universalRouter permit2
-      }
-      riskParams {
-        minColRatio maintenanceMargin liqCloseFactor
-        fundingPeriodSec debtCap
-      }
-      externalContracts {
-        usdc ausdc aavePool susde usdcWhale
-      }
-    }
-    status { totalBlockStates totalEvents lastIndexedBlock }
+    snapshot
+    events(limit: 20) { blockNumber eventName data }
+    marketInfo
+    indexerStatus { lastIndexedBlock lastIndexedAt totalEvents }
   }
 `;
 
-// ── Rates query (isolated — rates-indexer may be slow/cold) ─────────
-const RATES_QUERY = `
-  query Rates {
-    rates(symbols: ["USDC"], resolution: "1H", limit: 1) {
-      symbol
-      data { timestamp apy }
-    }
-  }
-`;
+// ── Helper: remap flat marketInfo JSON to nested format components expect ──
+function _remapMarketInfo(mi) {
+  if (!mi) return null;
+  return {
+    collateral: mi.collateral || { name: mi.wausdc ? "waUSDC" : "Unknown", symbol: "waUSDC", address: mi.wausdc || "" },
+    position_token: mi.positionToken || mi.position_token || { name: "wRLP", symbol: "wRLP", address: mi.wrlp || "" },
+    broker_factory: mi.brokerFactory || mi.broker_factory || "",
+    infrastructure: {
+      broker_router: mi.infrastructure?.brokerRouter || mi.infrastructure?.broker_router || mi.swapRouter || "",
+      broker_executor: mi.infrastructure?.brokerExecutor || mi.infrastructure?.broker_executor || mi.brokerExecutor || "",
+      twamm_hook: mi.infrastructure?.twammHook || mi.infrastructure?.twamm_hook || mi.twammHook || "",
+      bond_factory: mi.infrastructure?.bondFactory || mi.infrastructure?.bond_factory || mi.bondFactory || "",
+      basis_trade_factory: mi.infrastructure?.basisTradeFactory || mi.infrastructure?.basis_trade_factory || mi.basisTradeFactory || "",
+      pool_fee: mi.infrastructure?.poolFee || mi.poolFee || 0,
+      tick_spacing: mi.infrastructure?.tickSpacing || mi.tickSpacing || 0,
+      pool_manager: mi.infrastructure?.poolManager || mi.poolManager || "",
+      v4_quoter: mi.infrastructure?.v4Quoter || mi.v4Quoter || "",
+      v4_position_manager: mi.infrastructure?.v4PositionManager || mi.v4PositionManager || "",
+      v4_position_descriptor: mi.infrastructure?.v4PositionDescriptor || mi.v4PositionDescriptor || "",
+      v4_state_view: mi.infrastructure?.v4StateView || mi.v4StateView || "",
+      universal_router: mi.infrastructure?.universalRouter || mi.universalRouter || "",
+      permit2: mi.infrastructure?.permit2 || mi.permit2 || "",
+    },
+    risk_params: mi.riskParams || {
+      min_col_ratio: mi.minColRatio || 0,
+      maintenance_margin: mi.maintenanceMargin || 0,
+      liq_close_factor: mi.liqCloseFactor || 0,
+      funding_period_sec: mi.fundingPeriodSec || 0,
+      debt_cap: mi.debtCap || 0,
+    },
+    external_contracts: mi.externalContracts || null,
+  };
+}
 
 // ── Account-specific GraphQL query (bonds, balances) ──────────
 const ACCOUNT_QUERY = `
@@ -114,12 +87,12 @@ const ACCOUNT_QUERY = `
 
 // ── Chart-specific GraphQL query (candles) ────────────────────
 const CHART_QUERY = `
-  query ChartCandles($resolution: String!, $limit: Int, $startTime: Int, $endTime: Int) {
-    chart(resolution: $resolution, limit: $limit, startTime: $startTime, endTime: $endTime) {
-      timestamp
+  query ChartCandles($marketId: String!, $resolution: String!, $limit: Int, $fromBucket: Int, $toBucket: Int) {
+    candles(marketId: $marketId, resolution: $resolution, limit: $limit, fromBucket: $fromBucket, toBucket: $toBucket) {
+      bucket
       indexOpen indexClose indexHigh indexLow
       markOpen markClose markHigh markLow
-      volume swapCount
+      volumeUsd swapCount
     }
   }
 `;
@@ -170,29 +143,22 @@ export function useSimulation({
     },
   );
 
-  // ── Rates SWR (isolated — separate from core SIM_QUERY) ────────
-  const { data: ratesGqlData } = useSWR(
-    [GQL_URL, RATES_QUERY, null],
-    gqlFetcher,
-    {
-      refreshInterval: 60000,   // rates change slowly
-      revalidateOnFocus: false,
-      dedupingInterval: 30000,
-      keepPreviousData: true,
-      onError: () => {},        // silent — non-critical
-    },
-  );
+  // ── Rates: fetched separately by useMarketData.js via rates-indexer ──
+  const ratesGqlData = null;
 
   // ── Tier 3: Chart SWR (GQL, resolution-specific, 30s poll) ──────
+  // marketId from snapshot (needed for candles resolver)
+  const snapshotMarketId = gqlData?.snapshot?.market?.marketId || gqlData?.marketInfo?.marketId || null;
   const chartVars = useMemo(() => ({
-    resolution: chartResolution,
+    marketId: snapshotMarketId,
+    resolution: chartResolution.toLowerCase(),
     limit: 1000,
-    startTime: chartStartTime || null,
-    endTime: chartEndTime || null,
-  }), [chartResolution, chartStartTime, chartEndTime]);
+    fromBucket: chartStartTime || null,
+    toBucket: chartEndTime || null,
+  }), [chartResolution, chartStartTime, chartEndTime, snapshotMarketId]);
 
   const { data: chartGqlData, error: chartError } = useSWR(
-    [GQL_URL, CHART_QUERY, chartVars],
+    snapshotMarketId ? [GQL_URL, CHART_QUERY, chartVars] : null, // wait for marketId
     gqlFetcher,
     {
       refreshInterval: 30000,
@@ -201,107 +167,62 @@ export function useSimulation({
     },
   );
 
-  // ── Extract data from GraphQL response ──────────────────────
-  const latest = gqlData?.latest;
-  const volumeRaw = gqlData?.volume;
-  const volumeHistoryRaw = gqlData?.volumeHistory;
+  // ── Extract data from indexer's JSON scalar response ────────
+  const snapshot = gqlData?.snapshot;
   const eventsRaw = gqlData?.events;
-  const marketInfo = useMemo(() => {
-    if (!gqlData?.marketInfo) return null;
-    const mi = gqlData.marketInfo;
-    return {
-      collateral: mi.collateral,
-      position_token: mi.positionToken,
-      broker_factory: mi.brokerFactory,
-      infrastructure: mi.infrastructure
-        ? {
-            broker_router: mi.infrastructure.brokerRouter,
-            broker_executor: mi.infrastructure.brokerExecutor,
-            twamm_hook: mi.infrastructure.twammHook,
-            bond_factory: mi.infrastructure.bondFactory,
-            basis_trade_factory: mi.infrastructure.basisTradeFactory,
-            pool_fee: mi.infrastructure.poolFee,
-            tick_spacing: mi.infrastructure.tickSpacing,
-            pool_manager: mi.infrastructure.poolManager,
-            v4_quoter: mi.infrastructure.v4Quoter,
-            v4_position_manager: mi.infrastructure.v4PositionManager,
-            v4_position_descriptor: mi.infrastructure.v4PositionDescriptor,
-            v4_state_view: mi.infrastructure.v4StateView,
-            universal_router: mi.infrastructure.universalRouter,
-            permit2: mi.infrastructure.permit2,
-          }
-        : null,
-      risk_params: mi.riskParams
-        ? {
-            min_col_ratio: mi.riskParams.minColRatio,
-            maintenance_margin: mi.riskParams.maintenanceMargin,
-            liq_close_factor: mi.riskParams.liqCloseFactor,
-            funding_period_sec: mi.riskParams.fundingPeriodSec,
-            debt_cap: mi.riskParams.debtCap,
-          }
-        : null,
-      external_contracts: mi.externalContracts
-        ? {
-            usdc: mi.externalContracts.usdc,
-            ausdc: mi.externalContracts.ausdc,
-            aave_pool: mi.externalContracts.aavePool,
-            susde: mi.externalContracts.susde,
-            usdc_whale: mi.externalContracts.usdcWhale,
-          }
-        : null,
-    };
-  }, [gqlData?.marketInfo]);
+  const volumeRaw = snapshot?.derived ? { volumeUsd: snapshot.derived.volume24hUsd || 0, swapCount: snapshot.derived.swapCount24h || 0 } : null;
+  const volumeHistoryRaw = null; // volume history not available from snapshot scalar
+  const marketInfo = useMemo(() => _remapMarketInfo(gqlData?.marketInfo), [gqlData?.marketInfo]);
 
   const statusData = useMemo(() => {
-    if (!gqlData?.status) return null;
-    const s = gqlData.status;
+    const s = gqlData?.indexerStatus;
+    if (!s) return null;
     return {
-      total_block_states: s.totalBlockStates,
+      total_block_states: 0,
       total_events: s.totalEvents,
       last_indexed_block: s.lastIndexedBlock,
     };
   }, [gqlData]);
 
-  // ── Derived: market state ───────────────────────────────────
+  // ── Derived: market state (indexer returns pre-computed floats) ──
   const market = useMemo(() => {
-    if (!latest?.market) return null;
-    const ms = latest.market;
+    if (!snapshot?.market) return null;
+    const ms = snapshot.market;
     return {
       marketId: ms.marketId,
       blockNumber: ms.blockNumber,
       blockTimestamp: ms.blockTimestamp,
-      normalizationFactor: parseInt(ms.normalizationFactor) / 1e18,
-      totalDebt: parseInt(ms.totalDebt) / 1e6,
-      indexPrice: parseInt(ms.indexPrice) / 1e18,
+      normalizationFactor: ms.normalizationFactor,
+      totalDebt: ms.totalDebt,
+      indexPrice: ms.indexPrice,
       lastUpdateTimestamp: ms.lastUpdateTimestamp,
     };
-  }, [latest]);
+  }, [snapshot]);
 
-  // ── Derived: pool state ─────────────────────────────────────
+  // ── Derived: pool state (indexer returns pre-computed floats) ──
   const pool = useMemo(() => {
-    if (!latest?.pool) return null;
-    const ps = latest.pool;
+    if (!snapshot?.pool) return null;
+    const ps = snapshot.pool;
     return {
       poolId: ps.poolId,
       markPrice: ps.markPrice,
       tick: ps.tick,
       liquidity: ps.liquidity,
       sqrtPriceX96: ps.sqrtPriceX96,
-      token0Balance: parseInt(ps.token0Balance || "0"),
-      token1Balance: parseInt(ps.token1Balance || "0"),
+      token0Balance: ps.token0Balance,
+      token1Balance: ps.token1Balance,
       feeGrowthGlobal0: ps.feeGrowthGlobal0,
       feeGrowthGlobal1: ps.feeGrowthGlobal1,
     };
-  }, [latest]);
+  }, [snapshot]);
 
-  // ── Derived: pool TVL ───────────────────────────────────────
+  // ── Derived: pool TVL (indexer provides tvlUsd directly) ────
   const poolTVL = useMemo(() => {
+    if (snapshot?.pool?.tvlUsd) return snapshot.pool.tvlUsd;
     if (!pool) return 0;
-    const t0 = pool.token0Balance / 1e6;
-    const t1 = pool.token1Balance / 1e6;
     const price = pool.markPrice || 1;
-    return t0 * price + t1;
-  }, [pool]);
+    return pool.token0Balance * price + pool.token1Balance;
+  }, [pool, snapshot]);
 
   // ── Derived: funding spread + annualized rate ────────────────
   // Contract formula: NF *= exp(-fundingRate × dt / fundingPeriod)
@@ -343,19 +264,21 @@ export function useSimulation({
     };
   }, [market, pool, marketInfo]);
 
-  // ── Derived: broker positions ───────────────────────────────
+  // ── Derived: broker positions (indexer returns pre-computed values) ──
   const brokers = useMemo(() => {
-    if (!latest?.brokers?.length) return [];
-    return latest.brokers.map((bp, i) => ({
+    if (!snapshot?.brokers?.length) return [];
+    return snapshot.brokers.map((bp, i) => ({
       address: bp.address,
+      owner: bp.owner,
       label: BROKER_LABELS[i] || bp.address.slice(0, 8) + "...",
-      collateral: parseInt(bp.collateral) / 1e6,
-      debt: parseInt(bp.debt) / 1e6,
-      collateralValue: parseInt(bp.collateralValue) / 1e6,
-      debtValue: parseInt(bp.debtValue) / 1e6,
+      collateral: bp.collateral,
+      debt: bp.debt,
+      collateralValue: bp.collateralValue,
+      debtValue: bp.debtValue,
+      wrlpBalance: bp.wrlpBalance || 0,
       healthFactor: bp.healthFactor,
     }));
-  }, [latest]);
+  }, [snapshot]);
 
   // ── Derived: protocol-level stats ──────────────────────────
   const protocolStats = useMemo(() => {
@@ -370,33 +293,23 @@ export function useSimulation({
 
   // ── Derived: chart data (from GQL candles) ────────────────────
   const chartData = useMemo(() => {
-    const candles = chartGqlData?.chart;
+    const candles = chartGqlData?.candles;
     if (!candles?.length) return [];
 
-    const volBars = volumeHistoryRaw || [];
-    const volMap = new Map();
-    for (const bar of volBars) {
-      volMap.set(bar.timestamp, bar.volumeUsd);
-    }
-    const bucketSec = 3600;
-
-    return candles.map((c) => {
-      const bucketTs = Math.floor((c.timestamp || 0) / bucketSec) * bucketSec;
-      return {
-        timestamp: c.timestamp,
-        indexPrice: c.indexClose,
-        markPrice: c.markClose,
-        indexOpen: c.indexOpen, indexHigh: c.indexHigh, indexLow: c.indexLow,
-        markOpen: c.markOpen,  markHigh: c.markHigh,  markLow: c.markLow,
-        normalizationFactor: 0,  // not in candles; use market.normalizationFactor
-        totalDebt: 0,            // not in candles; use market.totalDebt
-        tick: 0,
-        liquidity: 0,
-        volume: c.volume || volMap.get(bucketTs) || 0,
-        swapCount: c.swapCount,
-      };
-    });
-  }, [chartGqlData, volumeHistoryRaw]);
+    return candles.map((c) => ({
+      timestamp: c.bucket,
+      indexPrice: c.indexClose,
+      markPrice: c.markClose,
+      indexOpen: c.indexOpen, indexHigh: c.indexHigh, indexLow: c.indexLow,
+      markOpen: c.markOpen,  markHigh: c.markHigh,  markLow: c.markLow,
+      normalizationFactor: 0,
+      totalDebt: 0,
+      tick: 0,
+      liquidity: 0,
+      volume: c.volumeUsd || 0,
+      swapCount: c.swapCount,
+    }));
+  }, [chartGqlData]);
 
   // ── Derived: observed funding from NF change ────────────────
   // This measures the actual cumulative NF drift and annualizes it
@@ -465,22 +378,22 @@ export function useSimulation({
   // ── Block change detection ──────────────────────────────────
   const [blockChanged, setBlockChanged] = useState(false);
   useEffect(() => {
-    if (!latest?.blockNumber) return;
+    if (!snapshot?.blockNumber) return;
     if (
       prevBlock.current !== null &&
-      latest.blockNumber !== prevBlock.current
+      snapshot.blockNumber !== prevBlock.current
     ) {
       setBlockChanged(true); // eslint-disable-line react-hooks/set-state-in-effect
       const timer = setTimeout(() => setBlockChanged(false), 300);
       return () => clearTimeout(timer);
     }
-    prevBlock.current = latest.blockNumber;
-  }, [latest?.blockNumber]);
+    prevBlock.current = snapshot.blockNumber;
+  }, [snapshot?.blockNumber]);
 
-  // ── Derived: USDC borrow rate (isolated SWR — won't block market data) ──
+  // ── Derived: USDC borrow rate (rates fetched separately) ──
   const latestRate = useMemo(() => {
-    const series = ratesGqlData?.rates?.find((s) => s.symbol === "USDC");
-    return series?.data?.[0] ?? null;  // { timestamp, apy }
+    // ratesGqlData is null — rates handled by useMarketData.js
+    return null;
   }, [ratesGqlData]);
 
   // ── Derived: account bonds (from Tier 2 ACCOUNT_QUERY) ──────────
@@ -516,40 +429,40 @@ export function useSimulation({
     loading: gqlLoading && !gqlData,
     error: gqlError || chartError,
 
-    // Raw (for backward compat with components that access latest directly)
-    latest: latest
+    // Raw (for backward compat with components that access snapshot directly)
+    latest: snapshot
       ? {
-          block_number: latest.blockNumber,
-          market: latest.market,       // GQL shape (camelCase)
-          pool: latest.pool,           // GQL shape (camelCase)
-          market_states: latest.market
+          block_number: snapshot.blockNumber,
+          market: snapshot.market,
+          pool: snapshot.pool,
+          market_states: snapshot.market
             ? [{
-                block_number: latest.market.blockNumber,
-                block_timestamp: latest.market.blockTimestamp,
-                market_id: latest.market.marketId,
-                normalization_factor: parseInt(latest.market.normalizationFactor),
-                total_debt: parseInt(latest.market.totalDebt),
-                index_price: parseInt(latest.market.indexPrice),
-                last_update_timestamp: latest.market.lastUpdateTimestamp,
+                block_number: snapshot.market.blockNumber,
+                block_timestamp: snapshot.market.blockTimestamp,
+                market_id: snapshot.market.marketId,
+                normalization_factor: snapshot.market.normalizationFactor,
+                total_debt: snapshot.market.totalDebt,
+                index_price: snapshot.market.indexPrice,
+                last_update_timestamp: snapshot.market.lastUpdateTimestamp,
               }]
             : [],
-          pool_states: latest.pool
+          pool_states: snapshot.pool
             ? [{
-                pool_id: latest.pool.poolId,
-                tick: latest.pool.tick,
-                mark_price: latest.pool.markPrice,
-                liquidity: latest.pool.liquidity,
-                sqrt_price_x96: latest.pool.sqrtPriceX96,
-                token0_balance: latest.pool.token0Balance,
-                token1_balance: latest.pool.token1Balance,
+                pool_id: snapshot.pool.poolId,
+                tick: snapshot.pool.tick,
+                mark_price: snapshot.pool.markPrice,
+                liquidity: snapshot.pool.liquidity,
+                sqrt_price_x96: snapshot.pool.sqrtPriceX96,
+                token0_balance: snapshot.pool.token0Balance,
+                token1_balance: snapshot.pool.token1Balance,
               }]
             : [],
-          broker_positions: (latest.brokers || []).map((b) => ({
+          broker_positions: (snapshot.brokers || []).map((b) => ({
             broker_address: b.address,
-            collateral: parseInt(b.collateral),
-            debt: parseInt(b.debt),
-            collateral_value: parseInt(b.collateralValue),
-            debt_value: parseInt(b.debtValue),
+            collateral: b.collateral,
+            debt: b.debt,
+            collateral_value: b.collateralValue,
+            debt_value: b.debtValue,
             health_factor: b.healthFactor,
           })),
         }
@@ -568,10 +481,10 @@ export function useSimulation({
     marketInfo,
     brokers,
     chartData,
-    volumeHistory: (volumeHistoryRaw || []).map((b) => ({
-      timestamp: b.timestamp,
-      volume: b.volumeUsd,
-      swapCount: b.swapCount,
+    volumeHistory: chartData.map((c) => ({
+      timestamp: c.timestamp,
+      volume: c.volume,
+      swapCount: c.swapCount,
     })),
     events,
     blockChanged,
@@ -582,7 +495,7 @@ export function useSimulation({
     latestRate,
 
     // Meta
-    blockNumber: latest?.blockNumber || null,
+    blockNumber: snapshot?.blockNumber || null,
     totalBlocks: statusData?.total_block_states || 0,
     totalEvents: statusData?.total_events || 0,
   };

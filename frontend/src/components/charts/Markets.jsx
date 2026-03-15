@@ -256,6 +256,7 @@ export default function Markets() {
     defaultRange: "1Y",
     defaultDays: 365,
     defaultResolution: "1D",
+    deploymentDate: "2023-03-01",  // rates-indexer has data from March 2023
   });
   const { appliedStart, appliedEnd, resolution } = controls;
 
@@ -295,24 +296,26 @@ export default function Markets() {
         const provider = new JsonRpcProvider(rpcUrl);
         const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
-        // Batch all APYs via single GraphQL query
-        const symbols = ASSETS.map((a) => a.symbol);
-        let apyMap = {};
-        try {
-          const gqlRes = await fetch("/graphql", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query: `{ rates(symbols: ${JSON.stringify(symbols)}, limit: 1) { symbol data { apy } } }`,
-            }),
-          });
-          const gqlData = await gqlRes.json();
-          (gqlData?.data?.rates || []).forEach((s) => {
-            apyMap[s.symbol] = s.data?.[0]?.apy || 0;
-          });
-        } catch (e) {
-          console.error("GraphQL rates fetch failed:", e);
-        }
+        // Fetch latest APY per asset via separate GraphQL queries
+        const apyMap = {};
+        await Promise.all(
+          ASSETS.map(async (asset) => {
+            try {
+              const gqlRes = await fetch("/rates-graphql", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  query: `{ rates(symbol: "${asset.symbol}", limit: 1) { apy } }`,
+                }),
+              });
+              const gqlData = await gqlRes.json();
+              const latest = gqlData?.data?.rates?.[0];
+              apyMap[asset.symbol] = latest?.apy || 0;
+            } catch (e) {
+              console.error(`GraphQL rates fetch failed for ${asset.symbol}:`, e);
+            }
+          })
+        );
 
         // Batch all debt totalSupply calls in parallel
         const promises = ASSETS.map(async (asset) => {
@@ -353,23 +356,29 @@ export default function Markets() {
   const { data: chartGqlData } = useSWR(
     chartGqlKey,
     async () => {
-      const gqlRes = await fetch("/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: `{
-            rates(symbols: ["USDC","DAI","USDT","SOFR"], resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") {
-              symbol
-              data { timestamp apy ethPrice }
-            }
-            ethPrices(resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") {
-              timestamp price
-            }
-          }`,
-        }),
-      });
-      const json = await gqlRes.json();
-      return json?.data || null;
+      const symbols = ["USDC", "DAI", "USDT", "SOFR"];
+      // Fetch each symbol's rates in parallel + ethPrices
+      const [ratesResults, ethRes] = await Promise.all([
+        Promise.all(symbols.map(async (sym) => {
+          const res = await fetch("/rates-graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: `{ rates(symbol: "${sym}", resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") { timestamp apy } }`,
+            }),
+          });
+          const json = await res.json();
+          return { symbol: sym, data: json?.data?.rates || [] };
+        })),
+        fetch("/rates-graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `{ ethPrices(resolution: "${resolution}") { timestamp price } }`,
+          }),
+        }).then(r => r.json()).then(j => j?.data?.ethPrices || []),
+      ]);
+      return { rates: ratesResults, ethPrices: ethRes };
     },
     { revalidateOnFocus: false },
   );
@@ -406,13 +415,14 @@ export default function Markets() {
     (ratesMap["USDT"] || []).forEach((r) => mergePoint(r.timestamp, "apy_usdt", r.apy));
     (ratesMap["SOFR"] || []).forEach((r) => mergePoint(r.timestamp, "apy_sofr", r.apy));
 
-    const ethPrices = chartGqlData.ethPrices || [];
+    // Filter ethPrices to selected date range (API has no date params)
+    const startTs = appliedStart ? Math.floor(new Date(appliedStart).getTime() / 1000) : 0;
+    const endTs = appliedEnd ? Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000) : Infinity;
+    const ethPrices = (chartGqlData.ethPrices || []).filter(
+      (p) => p.timestamp >= startTs && p.timestamp <= endTs
+    );
     if (ethPrices.length) {
       ethPrices.forEach((p) => mergePoint(p.timestamp, "ethPrice", p.price));
-    } else {
-      usdcHistory.forEach((r) => {
-        if (r.ethPrice) mergePoint(r.timestamp, "ethPrice", r.ethPrice);
-      });
     }
 
     const sortedData = Array.from(merged.values()).sort(
@@ -429,7 +439,7 @@ export default function Markets() {
       }
       return point;
     });
-  }, [chartGqlData, resolution]);
+  }, [chartGqlData, resolution, appliedStart, appliedEnd]);
 
   // --- Stats ---
   const stats = useMemo(() => {

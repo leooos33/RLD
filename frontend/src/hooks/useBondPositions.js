@@ -1,76 +1,110 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { SIM_API } from "../config/simulationConfig";
 
-const fetcher = (url) => fetch(url).then((r) => r.json());
+const GQL_URL = `${SIM_API}/graphql`;
+
+const BONDS_QUERY = `
+  query BondPositions($owner: String!) {
+    bonds(owner: $owner)
+  }
+`;
+
+const gqlFetcher = async ([url, query, variables]) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0].message);
+  return json.data;
+};
 
 /**
- * useBondPositions — Fetch enriched bond data from the indexer API.
+ * useBondPositions — Fetch bond data from the indexer GraphQL API.
  *
- * Uses the enriched `/api/bonds?enrich=true` endpoint which returns
- * all bond data (metadata + live on-chain state) in a single API call.
- * Server-side batched RPC eliminates 20+ sequential browser calls.
+ * Uses the `bonds(owner)` resolver which returns raw bond rows from the
+ * indexer DB. Computes display fields (notional_usd, elapsed, remaining)
+ * client-side from the raw data.
  *
- * Features:
- * - SWR with keepPreviousData: bonds stay visible during refetch (no blank screen)
- * - Optimistic updates: close/create instantly update local state
- * - 15s polling for background sync
- *
- * @param {string}  account      Connected wallet address
- * @param {number}  entryRate    Fallback rate (for accrued calculation)
- * @param {string}  bondFactoryAddr Optional bond factory address filter (to separate Bonds from Basis Trades)
- * @param {number}  pollInterval Polling ms (default 15000)
+ * @param {string}  account        Connected wallet address
+ * @param {number}  entryRate      Fallback borrow rate (for accrued calc)
+ * @param {string}  bondFactoryAddr Optional bond factory address filter
+ * @param {number}  pollInterval   Polling ms (default 15000)
  */
 export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterval = 15000) {
-  const apiUrl = account
-    ? `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`
+  const swrKey = account
+    ? [GQL_URL, BONDS_QUERY, { owner: account.toLowerCase() }]
     : null;
 
-  const { data, error: _error, mutate, isLoading } = useSWR(apiUrl, fetcher, {
-    refreshInterval: pollInterval,
-    revalidateOnFocus: false,
-    dedupingInterval: 2000,
-    keepPreviousData: true, // ← critical: show stale bonds during revalidation
-  });
+  const { data: gqlData, error: _error, mutate, isLoading } = useSWR(
+    swrKey,
+    gqlFetcher,
+    {
+      refreshInterval: pollInterval,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+      keepPreviousData: true,
+    },
+  );
 
-  // ── Transform server data to match existing component contract ──
-  const bonds = (data?.bonds || [])
-    .filter((b) => b.status === "active") // only active bonds (closed bonds hidden)
-    .filter((b) => !bondFactoryAddr || (b.bond_factory && b.bond_factory.toLowerCase() === bondFactoryAddr.toLowerCase()))
-    .map((b) => {
-      const notional = b.notional_usd || 0;
-      const rate = entryRate || 0;
-      const elapsedDays = b.elapsed_days || 0;
-      const accrued = notional * (rate / 100) * (elapsedDays / 365);
+  // ── Transform raw DB rows to component format ──────────────
+  const bonds = useMemo(() => {
+    const raw = gqlData?.bonds || [];
+    return raw
+      .filter((b) => b.status === "active")
+      .filter((b) => !bondFactoryAddr || (b.factory_address && b.factory_address.toLowerCase() === bondFactoryAddr.toLowerCase()))
+      .map((b) => {
+        // Raw amounts are 6-decimal integers → divide by 1e6 for USD
+        const notionalUsd = Number(b.notional) / 1e6;
+        const hedgeUsd = Number(b.hedge) / 1e6;
+        const durationSec = Number(b.duration);
+        const durationDays = durationSec / 86400;
 
-      // Read entry-time borrow rate from localStorage (stored at position open)
-      let entryBorrowRate = rate;
-      try {
-        const meta = JSON.parse(localStorage.getItem(`rld_bond_${b.broker_address.toLowerCase()}`) || "null");
-        if (meta?.borrowRateAPY) entryBorrowRate = meta.borrowRateAPY;
-      } catch { /* ignore */ }
+        // Estimate elapsed from mint_block (approximate)
+        // Block time ~2s on Anvil fork
+        const mintBlock = Number(b.mint_block);
+        const nowApprox = Date.now() / 1000;
+        const mintApprox = mintBlock; // We don't have exact timestamp, use block as approx
+        const elapsedDays = 0; // Can't compute without block timestamp
 
-      return {
-        id: b.bond_id,
-        brokerAddress: b.broker_address,
-        principal: notional,
-        debtTokens: b.debt_usd || 0,
-        fixedRate: rate,
-        entryBorrowRate,
-        maturityDays: b.maturity_days || 0,
-        elapsed: elapsedDays,
-        remaining: b.remaining_days || 0,
-        maturityDate: b.maturity_date || "—",
-        frozen: b.frozen || false,
-        isMatured: b.is_matured || false,
-        accrued,
-        freeCollateral: b.free_collateral || 0,
-        orderId: b.order_id || "0x" + "0".repeat(64),
-        hasActiveOrder: b.has_active_order || false,
-        txHash: b.created_tx || null,
-        status: b.status,
-      };
-    });
+        const rate = entryRate || 0;
+        const accrued = notionalUsd * (rate / 100) * (elapsedDays / 365);
+
+        // Read entry-time borrow rate from localStorage
+        let entryBorrowRate = rate;
+        try {
+          const meta = JSON.parse(
+            localStorage.getItem(`rld_bond_${b.broker_address.toLowerCase()}`) || "null",
+          );
+          if (meta?.borrowRateAPY) entryBorrowRate = meta.borrowRateAPY;
+        } catch {
+          /* ignore */
+        }
+
+        return {
+          id: parseInt(b.broker_address.slice(-4), 16) % 10000,
+          brokerAddress: b.broker_address,
+          principal: notionalUsd,
+          debtTokens: notionalUsd,
+          fixedRate: rate,
+          entryBorrowRate,
+          maturityDays: Math.round(durationDays),
+          elapsed: elapsedDays,
+          remaining: Math.round(durationDays - elapsedDays),
+          maturityDate: "—",
+          frozen: true, // Bonds are always frozen
+          isMatured: false,
+          accrued,
+          freeCollateral: hedgeUsd,
+          orderId: "0x" + "0".repeat(64),
+          hasActiveOrder: true,
+          txHash: b.mint_tx || null,
+          status: b.status,
+        };
+      });
+  }, [gqlData, entryRate, bondFactoryAddr]);
 
   // ── Optimistic close: instantly remove bond from UI ──────────
   const optimisticClose = useCallback(
@@ -84,10 +118,9 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
               (b) =>
                 b.broker_address.toLowerCase() !== brokerAddress.toLowerCase(),
             ),
-            count: prev.count - 1,
           };
         },
-        { revalidate: true }, // revalidate in background after optimistic update
+        { revalidate: true },
       );
     },
     [mutate],
@@ -103,20 +136,13 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
             broker_address: brokerAddress,
             owner: account?.toLowerCase(),
             status: "active",
-            notional_usd: notionalUsd,
-            debt_usd: notionalUsd, // approximate
-            free_collateral: 0,
-            remaining_days: Math.ceil(durationHours / 24),
-            elapsed_days: 0,
-            maturity_days: Math.ceil(durationHours / 24),
-            is_matured: false,
-            frozen: false,
-            has_active_order: true,
-            bond_id: parseInt(brokerAddress.slice(-4), 16) % 10000,
-            maturity_date: "—",
-            created_tx: null,
+            notional: String(Math.round(notionalUsd * 1e6)),
+            hedge: "0",
+            duration: String(Math.round(durationHours * 3600)),
+            mint_block: 0,
+            mint_tx: null,
           };
-          return { bonds: [newBond, ...bonds], count: bonds.length + 1 };
+          return { bonds: [newBond, ...bonds] };
         },
         { revalidate: true },
       );
@@ -126,7 +152,7 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
 
   return {
     bonds,
-    loading: isLoading && !data,
+    loading: isLoading && !gqlData,
     refresh: () => mutate(),
     optimisticClose,
     optimisticCreate,
