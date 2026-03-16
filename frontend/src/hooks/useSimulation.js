@@ -40,6 +40,7 @@ const SIM_QUERY = `
 function _remapMarketInfo(mi) {
   if (!mi) return null;
   return {
+    marketId: mi.marketId || null,
     collateral: mi.collateral || { name: mi.wausdc ? "waUSDC" : "Unknown", symbol: "waUSDC", address: mi.wausdc || "" },
     position_token: mi.positionToken || mi.position_token || { name: "wRLP", symbol: "wRLP", address: mi.wrlp || "" },
     broker_factory: mi.brokerFactory || mi.broker_factory || "",
