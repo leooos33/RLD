@@ -1319,7 +1319,7 @@ export default function SimulationTerminal() {
                                       )}
                                     </div>
                                     <div className="flex items-center gap-1">
-                                      <span className="text-sm font-mono text-gray-400">${lp.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                      <span className="text-sm font-mono text-gray-400">${(lp.valueUsd || lp.value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                                       <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === lpKey ? "rotate-180" : ""}`} />
                                     </div>
                                   </button>
