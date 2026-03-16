@@ -432,8 +432,10 @@ export function useBrokerData(account, marketInfo) {
           // LP positions (client-computed amounts + values)
           lpPositions: enrichedLps,
 
-          // TWAMM orders (GQL + RPC-enriched)
-          twammOrders: enrichedOrders,
+          // TWAMM orders: preserve previous data during transient empty states
+          // (e.g. RPC enrichment lag after a TX, indexer hasn't caught up)
+          twammOrders: enrichedOrders.length > 0 || rawTwamm.length === 0
+            ? enrichedOrders : prev?.twammOrders ?? [],
 
           // Operations (from indexed BrokerRouter events)
           operations,
