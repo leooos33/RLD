@@ -138,7 +138,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 broker_factory, mock_oracle, twamm_hook,
                 wausdc, wausdc_symbol, wrlp, wrlp_symbol,
                 pool_id, pool_fee, tick_spacing,
-                swap_router, bond_factory, basis_trade_factory, broker_executor,
+                swap_router, bond_factory, basis_trade_factory, broker_executor, v4_quoter,
                 min_col_ratio, maintenance_margin, liq_close_factor,
                 funding_period_sec, debt_cap, created_at
             ) VALUES (
@@ -146,7 +146,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 $4, $5, $6,
                 $7, 'waUSDC', $8, 'wRLP',
                 $9, 500, 5,
-                $10, $11, $12, $13,
+                $10, $11, $12, $13, $14,
                 '1500000000000000000', '1250000000000000000', '500000000000000000',
                 2592000, '1000000000000000000000000', NOW()
             )
@@ -160,7 +160,8 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 swap_router         = COALESCE(NULLIF(EXCLUDED.swap_router, ''),         markets.swap_router),
                 bond_factory        = COALESCE(NULLIF(EXCLUDED.bond_factory, ''),        markets.bond_factory),
                 basis_trade_factory = COALESCE(NULLIF(EXCLUDED.basis_trade_factory, ''), markets.basis_trade_factory),
-                broker_executor     = COALESCE(NULLIF(EXCLUDED.broker_executor, ''),     markets.broker_executor)
+                broker_executor     = COALESCE(NULLIF(EXCLUDED.broker_executor, ''),     markets.broker_executor),
+                v4_quoter           = COALESCE(NULLIF(EXCLUDED.v4_quoter, ''),           markets.v4_quoter)
         """,
             market_id,
             cfg.get("deploy_block", 0),
@@ -175,6 +176,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
             cfg.get("bond_factory", ""),
             cfg.get("basis_trade_factory", ""),
             cfg.get("broker_executor", ""),
+            cfg.get("v4_quoter", ""),
         )
         # Also seed indexer_state so the polling loop knows where to start
         await conn.execute("""

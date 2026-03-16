@@ -527,7 +527,7 @@ class Query:
                        wausdc, wrlp, pool_id, pool_fee, tick_spacing,
                        min_col_ratio, maintenance_margin, debt_cap,
                        swap_router, bond_factory, basis_trade_factory, broker_executor,
-                       funding_period_sec
+                       funding_period_sec, v4_quoter
                 FROM markets LIMIT 1
             """)
         if not row:
@@ -550,6 +550,7 @@ class Query:
             "basisTradeFactory": row["basis_trade_factory"],
             "brokerExecutor": row["broker_executor"],
             "fundingPeriodSec": row["funding_period_sec"],
+            "v4Quoter": row["v4_quoter"] or "",
         }
 
 
