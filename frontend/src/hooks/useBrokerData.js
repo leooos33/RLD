@@ -349,12 +349,26 @@ export function useBrokerData(account, marketInfo) {
         const inRange = lp.tickLower != null && lp.tickUpper != null
           ? lp.tickLower <= currentTick && currentTick < lp.tickUpper
           : false;
+
+        // Compute human-readable prices from ticks
+        // price = 1.0001^tick  (token0 = wRLP, token1 = waUSDC, same decimals)
+        const priceLower = lp.tickLower != null
+          ? (1.0001 ** lp.tickLower).toFixed(4)
+          : null;
+        const priceUpper = lp.tickUpper != null
+          ? (1.0001 ** lp.tickUpper).toFixed(4)
+          : null;
+        const currentPrice = (1.0001 ** currentTick).toFixed(4);
+
         return {
           ...lp,
           amount0: Math.round(amount0 * 1e4) / 1e4,
           amount1: Math.round(amount1 * 1e4) / 1e4,
           valueUsd: Math.round(valueUsd * 100) / 100,
           inRange,
+          priceLower,
+          priceUpper,
+          currentPrice,
         };
       });
 
