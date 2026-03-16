@@ -86,6 +86,17 @@ TOPICS = {
         "BasisTradeOpened",
     Web3.keccak(text="BasisTradeClosed(address,address,uint256)").hex():
         "BasisTradeClosed",
+    # BrokerRouter — trade execution events
+    Web3.keccak(text="LongExecuted(address,uint256,uint256)").hex():
+        "LongExecuted",
+    Web3.keccak(text="LongClosed(address,uint256,uint256)").hex():
+        "LongClosed",
+    Web3.keccak(text="ShortExecuted(address,uint256,uint256)").hex():
+        "ShortExecuted",
+    Web3.keccak(text="ShortClosed(address,uint256,uint256)").hex():
+        "ShortClosed",
+    Web3.keccak(text="Deposited(address,uint256,uint256)").hex():
+        "Deposited",
 }
 
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
@@ -107,7 +118,8 @@ async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str
             watched.add(addr.lower())
     # Per-market addresses from DB — broker_factory, oracle, twamm hook, bond_factory, basis_trade_factory
     for m in markets:
-        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp", "bond_factory", "basis_trade_factory"):
+        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp",
+                     "bond_factory", "basis_trade_factory", "broker_router"):
             if m.get(col):
                 watched.add(m[col].lower())
     for b in brokers:

@@ -379,6 +379,70 @@ class Query:
             data=r["data"]
         ) for r in rows]
 
+    @strawberry.field
+    async def broker_operations(self, owner: str, limit: int = 50) -> Optional[JSON]:
+        """Trade operations for a broker, queried by owner address.
+        
+        Reads BrokerRouter events (LongExecuted, LongClosed, etc.) from the
+        events table. Broker address is in topics[1] (indexed param).
+        Returns decoded operations with human-readable amounts.
+        """
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Find broker by owner
+            broker = await conn.fetchrow(
+                "SELECT address FROM brokers WHERE owner = $1",
+                owner.lower()
+            )
+            if not broker:
+                return []
+
+            broker_addr = broker["address"].lower()
+            # Pad to 32-byte topic format: 0x000...address
+            broker_topic = "0x" + broker_addr[2:].zfill(64)
+
+            rows = await conn.fetch("""
+                SELECT event_name, block_timestamp, block_number, tx_hash, data
+                FROM events
+                WHERE event_name IN (
+                    'LongExecuted', 'LongClosed',
+                    'ShortExecuted', 'ShortClosed', 'Deposited'
+                )
+                AND data::jsonb->'topics'->>1 = $1
+                ORDER BY block_number DESC, log_index DESC
+                LIMIT $2
+            """, broker_topic, limit)
+
+        ops = []
+        OP_META = {
+            "LongExecuted":  "OPEN_LONG",
+            "LongClosed":    "CLOSE_LONG",
+            "ShortExecuted": "OPEN_SHORT",
+            "ShortClosed":   "CLOSE_SHORT",
+            "Deposited":     "DEPOSIT",
+        }
+        for r in rows:
+            raw_hex = r["data"].get("raw", "") if isinstance(r["data"], dict) else ""
+            raw_hex = json.loads(r["data"]).get("raw", "") if isinstance(r["data"], str) else raw_hex
+            # Decode (uint256, uint256) from data
+            amount1 = 0
+            amount2 = 0
+            if raw_hex and len(raw_hex) >= 130:  # 0x + 64 + 64
+                try:
+                    amount1 = int(raw_hex[2:66], 16)
+                    amount2 = int(raw_hex[66:130], 16)
+                except ValueError:
+                    pass
+            ops.append({
+                "type": OP_META.get(r["event_name"], r["event_name"]),
+                "amount1": amount1 / 1e6,
+                "amount2": amount2 / 1e6,
+                "blockNumber": r["block_number"],
+                "timestamp": r["block_timestamp"],
+                "txHash": r["tx_hash"],
+            })
+        return ops
+
     # ── NEW: Precomputed data resolvers ─────────────────────────────
 
     @strawberry.field
@@ -516,12 +580,14 @@ class Query:
                 "address": broker["address"],
                 "owner": broker["owner"],
                 "collateral": float(broker["wausdc_balance"] or 0),
+                "wrlpBalance": float(broker["wrlp_balance"] or 0),
                 "debt": debt_principal,
                 "collateralValue": collateral_value,
                 "debtValue": round(debt_value, 2),
                 "healthFactor": str(broker["health_factor"] or "0"),
                 "netEquityUsd": round(collateral_value - debt_value, 2),
                 "lpPositions": lp_data,
+                "activeTokenId": int(broker["active_lp_token_id"] or 0),
             }
 
     @strawberry.field

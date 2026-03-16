@@ -23,15 +23,17 @@ import { useSim } from "../../context/SimulationContext";
 import { useChartControls } from "../../hooks/useChartControls";
 import { useWallet } from "../../context/WalletContext";
 
-import { useBrokerAccount } from "../../hooks/useBrokerAccount";
 import { useSwapQuote } from "../../hooks/useSwapQuote";
 import { useSwapExecution } from "../../hooks/useSwapExecution";
-import { useOperations, formatOpAmount } from "../../hooks/useOperations";
-import { useTwammPositions } from "../../hooks/useTwammPositions";
+import { formatOpAmount } from "../../hooks/useOperations";
+import { useBrokerData } from "../../hooks/useBrokerData";
+import { useBrokerAccount } from "../../hooks/useBrokerAccount";
 import { useTwammOrder } from "../../hooks/useTwammOrder";
-import { useBrokerState } from "../../hooks/useBrokerState";
+import { usePoolLiquidity } from "../../hooks/usePoolLiquidity";
 import AccountModal from "../modals/AccountModal";
 import SwapConfirmModal from "../modals/SwapConfirmModal";
+import ClaimFeesModal from "../modals/ClaimFeesModal";
+import WithdrawModal from "../modals/WithdrawModal";
 import { ToastContainer } from "../common/Toast";
 import { useToast } from "../../hooks/useToast";
 import RLDPerformanceChart from "../charts/RLDChart";
@@ -183,12 +185,24 @@ export default function SimulationTerminal() {
 
   // Wallet & Faucet
   const { account, connectWallet } = useWallet();
-  // Broker account
+
+  // ── Broker Data (single GQL + minimal RPC) ─────────────────
+  // ONE hook for ALL data. Returns null until first fetch completes.
+  const { data, refresh } = useBrokerData(account, marketInfo);
+
+  // Convenience aliases from the data object
+  const hasBroker = data?.hasBroker ?? null;
+  const brokerAddress = data?.brokerAddress ?? null;
+  const brokerBalance = data?.brokerBalance ?? 0;
+  const operations = data?.operations ?? [];
+  const twammOrders = data?.twammOrders ?? [];
+  const brokerState = data; // data IS the broker state now
+
+  // ── Action hooks (TX execution only — no data fetching) ─────
   const {
-    hasBroker,
-    brokerAddress,
-    brokerBalance,
-    creating: _brokerCreating,
+    creating: brokerCreating,
+    createBroker,
+    depositFunds,
     fetchBrokerBalance,
     checkBroker,
   } = useBrokerAccount(
@@ -197,21 +211,6 @@ export default function SimulationTerminal() {
     marketInfo?.collateral?.address,
   );
 
-  // User operations (on-chain events from BrokerRouter)
-  const { operations, loading: opsLoading } = useOperations(
-    enrichedMarketInfo?.infrastructure?.broker_router,
-    brokerAddress,
-  );
-
-  // TWAMM positions (on-chain orders from JTM hook)
-  const { orders: twammOrders, refresh: refreshTwamm } = useTwammPositions(
-    brokerAddress,
-    marketInfo,
-    30000,
-    market?.indexPrice,
-  );
-
-  // TWAMM order actions (cancel + claim + track/untrack)
   const {
     cancelOrder: cancelTwammOrder,
     claimExpiredOrder: claimTwammOrder,
@@ -226,11 +225,14 @@ export default function SimulationTerminal() {
     marketInfo?.position_token?.address,
   );
 
-  // Broker full state (NAV, debt, health, balances)
-  const { brokerState, refresh: refreshBrokerState } = useBrokerState(
-    brokerAddress,
-    marketInfo,
-  );
+  const {
+    executeCollectFees,
+    executeRemoveLiquidity,
+    executing: lpExecuting,
+    executionStep: lpStep,
+    executionError: lpError,
+    clearError: clearLpError,
+  } = usePoolLiquidity(brokerAddress, marketInfo);
 
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
@@ -239,6 +241,10 @@ export default function SimulationTerminal() {
   // Collateral registration confirmation modal
   const [collateralConfirm, setCollateralConfirm] = useState(null);
   // { type: 'track-lp'|'untrack-lp'|'track-twamm'|'untrack-twamm', label, data }
+
+  // LP fee claim / withdraw modals (use same components as Pool page)
+  const [claimFeesLp, setClaimFeesLp] = useState(null);
+  const [withdrawLp, setWithdrawLp] = useState(null);
   const [actionsHeight, setActionsHeight] = useState(null);
   const actionsRef = useRef(null);
 
@@ -497,13 +503,13 @@ export default function SimulationTerminal() {
     );
   }
 
-  if (loading || !market) {
+  if (!data) {
     return (
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
           <span className="text-sm uppercase tracking-widest text-gray-500">
-            Connecting to simulation...
+            {!connected ? "Connecting to simulation..." : "Loading positions..."}
           </span>
         </div>
       </div>
@@ -1199,16 +1205,13 @@ export default function SimulationTerminal() {
                   <>
                     {/* Top metrics row */}
                     {(() => {
-                      // Collateral = contract's netAccountValue (on-chain recognized: tracked LP, TWAMM, tokens - debt)
-                      const collateral = brokerState ? brokerState.nav : null;
+                      // totalAssets = all tracked and untracked assets in the broker
+                      const totalAssets = brokerState ? brokerState.nav : null;
 
-                      // NAV = true net value = all assets (collateral + untracked) - debt
-                      const untrackedLPValue = (brokerState?.lpPositions || [])
-                        .filter(lp => !lp.isActive)
-                        .reduce((sum, lp) => sum + (lp.value || 0), 0);
-                      const totalNav = collateral !== null ? collateral + untrackedLPValue - brokerState.debtValue : null;
+                      // NAV = true net value = totalAssets - debt
+                      const netWorth = totalAssets !== null ? totalAssets - (brokerState.debtValue || 0) : null;
 
-                      // Col. ratio uses on-chain collateral (what protocol sees for risk)
+                      // Col. ratio uses totalAssets / debtValue
                       const totalColRatio = brokerState && brokerState.debtValue > 0
                         ? brokerState.colRatio
                         : Infinity;
@@ -1216,8 +1219,8 @@ export default function SimulationTerminal() {
                       return (
                         <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
                           {[
-                            { label: "NAV", value: totalNav !== null ? `$${totalNav.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
-                            { label: "Collateral", value: collateral !== null ? `$${collateral.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                            { label: "NAV", value: netWorth !== null ? `$${netWorth.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                            { label: "Assets", value: totalAssets !== null ? `$${totalAssets.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
                             { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
                             { label: "Col. Ratio", value: totalColRatio === Infinity ? "∞" : `${totalColRatio.toFixed(0)}%`, color: totalColRatio < 150 ? "text-red-400" : totalColRatio < 200 ? "text-yellow-400" : "text-green-400" },
                           ].map((m) => (
@@ -1343,6 +1346,23 @@ export default function SimulationTerminal() {
                                           <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
                                         )}
                                       </div>
+                                      {/* Claim Fees */}
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          setClaimFeesLp({
+                                            id: lp.tokenId?.toString(),
+                                            tokenId: lp.tokenId,
+                                            priceLower: parseFloat(lp.priceLower),
+                                            priceUpper: parseFloat(lp.priceUpper),
+                                            feesEarned0: "0.00",
+                                            feesEarned1: "0.00",
+                                          });
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-green-500/5 transition-colors border-t border-white/5"
+                                      >
+                                        Claim Fees
+                                      </button>
                                       {/* Track / Untrack as collateral */}
                                       {!lp.isActive ? (
                                         <button
@@ -1375,6 +1395,26 @@ export default function SimulationTerminal() {
                                           Untrack from Collateral
                                         </button>
                                       )}
+                                      {/* Withdraw (Remove Liquidity) */}
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          setWithdrawLp({
+                                            id: lp.tokenId?.toString(),
+                                            tokenId: lp.tokenId,
+                                            priceLower: parseFloat(lp.priceLower),
+                                            priceUpper: parseFloat(lp.priceUpper),
+                                            token0Amount: lp.amount0?.toFixed(2) || "0",
+                                            token1Amount: lp.amount1?.toFixed(2) || "0",
+                                            feesEarned0: "0.00",
+                                            feesEarned1: "0.00",
+                                            value: lp.value,
+                                          });
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-red-500/5 transition-colors border-t border-white/5"
+                                      >
+                                        Withdraw Liquidity
+                                      </button>
                                     </div>
                                   )}
                                 </div>
@@ -1434,9 +1474,9 @@ export default function SimulationTerminal() {
                                         onClick={() => {
                                           setPositionDropdown(null);
                                           cancelTwammOrder(() => {
-                                            refreshTwamm();
+                                            refresh();
                                             addToast({ type: "success", title: "Order Cancelled" });
-                                            refreshBrokerState?.();
+                                            refresh();
                                           });
                                         }}
                                         disabled={cancellingTwamm}
@@ -1483,8 +1523,8 @@ export default function SimulationTerminal() {
                                         onClick={() => {
                                           setPositionDropdown(null);
                                           claimTwammOrder(() => {
-                                            refreshTwamm();
-                                            refreshBrokerState?.();
+                                            refresh();
+                                            refresh();
                                             addToast({ type: "success", title: "Tokens Claimed", message: "Expired order tokens returned to broker" });
                                           });
                                         }}
@@ -1605,8 +1645,8 @@ export default function SimulationTerminal() {
                         account={account}
                         addToast={addToast}
                         marketInfo={marketInfo}
-                        onStateChange={refreshBrokerState}
-                        onTwammRefresh={refreshTwamm}
+                        onStateChange={refresh}
+                        onTwammRefresh={refresh}
                       />
                     )}
                     </React.Fragment>
@@ -1654,7 +1694,7 @@ export default function SimulationTerminal() {
               <div className="p-6 flex-1 overflow-y-auto">
                 <OperationsFeed
                   operations={operations}
-                  loading={opsLoading}
+                  loading={false}
                   connected={!!account}
                 />
               </div>
@@ -1674,8 +1714,7 @@ export default function SimulationTerminal() {
           checkBroker();
           // Refresh broker state & show toast
           if (addr) {
-            fetchBrokerBalance(addr);
-            refreshBrokerState?.();
+                        refresh();
             addToast({
               type: "success",
               title: "Account Created",
@@ -1704,10 +1743,7 @@ export default function SimulationTerminal() {
             // Close Long flow
             executeCloseLong(parseFloat(closeAmount), () => {
               setShowSwapConfirm(false);
-              if (fetchBrokerBalance && brokerAddress) {
-                fetchBrokerBalance(brokerAddress);
-              }
-              refreshBrokerState?.();
+                            refresh();
               addToast({
                 type: "success",
                 title: "Long Closed",
@@ -1722,10 +1758,7 @@ export default function SimulationTerminal() {
               // Direct repay: burn wRLP to reduce debt
               executeRepayDebt(parseFloat(closeShortDebt), () => {
                 setShowSwapConfirm(false);
-                if (fetchBrokerBalance && brokerAddress) {
-                  fetchBrokerBalance(brokerAddress);
-                }
-                refreshBrokerState?.();
+                                refresh();
                 addToast({
                   type: "success",
                   title: "Debt Repaid",
@@ -1739,10 +1772,7 @@ export default function SimulationTerminal() {
               // waUSDC mode: spend waUSDC to buy wRLP and repay debt
               executeCloseShort(parseFloat(closeShortAmount), () => {
                 setShowSwapConfirm(false);
-                if (fetchBrokerBalance && brokerAddress) {
-                  fetchBrokerBalance(brokerAddress);
-                }
-                refreshBrokerState?.();
+                                refresh();
                 addToast({
                   type: "success",
                   title: "Short Closed",
@@ -1756,10 +1786,7 @@ export default function SimulationTerminal() {
             // Open Short flow — shortAmount is already in wRLP
             executeShort(collateral, shortAmount, () => {
               setShowSwapConfirm(false);
-              if (fetchBrokerBalance && brokerAddress) {
-                fetchBrokerBalance(brokerAddress);
-              }
-              refreshBrokerState?.();
+                            refresh();
               addToast({
                 type: "success",
                 title: "Short Opened",
@@ -1771,10 +1798,7 @@ export default function SimulationTerminal() {
             // Open Long flow
             executeLong(collateral, () => {
               setShowSwapConfirm(false);
-              if (fetchBrokerBalance && brokerAddress) {
-                fetchBrokerBalance(brokerAddress);
-              }
-              refreshBrokerState?.();
+                            refresh();
               addToast({
                 type: "success",
                 title: "Long Opened",
@@ -1824,14 +1848,14 @@ export default function SimulationTerminal() {
 
             if (type === 'track-twamm') {
               trackTwammOrder(data, () => {
-                refreshTwamm();
-                refreshBrokerState?.();
+                refresh();
+                refresh();
                 addToast({ type: 'success', title: 'Order tracked as collateral' });
               });
             } else if (type === 'untrack-twamm') {
               untrackTwammOrder(() => {
-                refreshTwamm();
-                refreshBrokerState?.();
+                refresh();
+                refresh();
                 addToast({ type: 'success', title: 'Order untracked from collateral' });
               });
             } else if (type === 'track-lp') {
@@ -1842,7 +1866,7 @@ export default function SimulationTerminal() {
                 ], signer);
                 const tx = await broker.setActiveV4Position(data.tokenId, { gasLimit: 300_000n });
                 await tx.wait();
-                refreshBrokerState?.();
+                refresh();
                 addToast({ type: 'success', title: 'LP tracked as collateral' });
               } catch (e) {
                 console.error('[LP] track failed:', e);
@@ -1858,7 +1882,7 @@ export default function SimulationTerminal() {
                 ], signer);
                 const tx = await broker.setActiveV4Position(0, { gasLimit: 300_000n });
                 await tx.wait();
-                refreshBrokerState?.();
+                refresh();
                 addToast({ type: 'success', title: 'LP untracked from collateral' });
               } catch (e) {
                 console.error('[LP] untrack failed:', e);
@@ -1866,10 +1890,72 @@ export default function SimulationTerminal() {
               } finally {
                 await restoreAnvilChainId();
               }
+            } else if (type === 'claim-fees') {
+              // handled by ClaimFeesModal now
+            } else if (type === 'withdraw-lp') {
+              // handled by WithdrawModal now
             }
           }}
         />
       )}
+
+      {/* Claim Fees Modal (same design as Pool page) */}
+      <ClaimFeesModal
+        isOpen={!!claimFeesLp}
+        onClose={() => {
+          if (!lpExecuting) {
+            setClaimFeesLp(null);
+            clearLpError();
+          }
+        }}
+        onConfirm={() => {
+          if (!claimFeesLp?.tokenId) return;
+          executeCollectFees(
+            claimFeesLp.tokenId,
+            () => {
+              setClaimFeesLp(null);
+              refresh();
+              addToast({ type: "success", title: "Fees Collected", message: `Collected fees from LP #${claimFeesLp.id}` });
+            },
+          );
+        }}
+        position={claimFeesLp}
+        token0={{ symbol: "wRLP" }}
+        token1={{ symbol: "waUSDC" }}
+        executing={lpExecuting}
+        executionStep={lpStep}
+        executionError={lpError}
+      />
+
+      {/* Withdraw Modal (same design as Pool page) */}
+      <WithdrawModal
+        isOpen={!!withdrawLp}
+        onClose={() => {
+          if (!lpExecuting) {
+            setWithdrawLp(null);
+            clearLpError();
+          }
+        }}
+        onConfirm={(percent) => {
+          if (!withdrawLp?.tokenId) return;
+          executeRemoveLiquidity(
+            withdrawLp.tokenId,
+            percent,
+            () => {
+              const posId = withdrawLp.id;
+              setWithdrawLp(null);
+              refresh();
+              addToast({ type: "success", title: "Liquidity Removed", message: `Removed ${percent}% from LP #${posId}` });
+            },
+          );
+        }}
+        position={withdrawLp}
+        token0={{ symbol: "wRLP" }}
+        token1={{ symbol: "waUSDC" }}
+        executing={lpExecuting}
+        executionStep={lpStep}
+        executionError={lpError}
+      />
     </>
   );
 }
