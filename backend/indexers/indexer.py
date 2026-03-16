@@ -48,32 +48,40 @@ TOPICS = {
     # BrokerFactory
     Web3.keccak(text="BrokerCreated(address,address,uint256)").hex():
         "BrokerCreated",
-    # PrimeBroker
-    Web3.keccak(text="CollateralDeposited(address,uint256)").hex():
-        "CollateralDeposited",
-    Web3.keccak(text="CollateralWithdrawn(address,uint256)").hex():
-        "CollateralWithdrawn",
-    Web3.keccak(text="PositionMinted(uint256)").hex():
-        "PositionMinted",
-    Web3.keccak(text="PositionBurned(uint256)").hex():
-        "PositionBurned",
-    Web3.keccak(text="ActiveTokenSet(uint256)").hex():
-        "ActiveTokenSet",
-    Web3.keccak(text="V4LiquidityAdded(uint256,int24,int24,uint128)").hex():
-        "V4LiquidityAdded",
-    Web3.keccak(text="V4LiquidityRemoved(uint256,uint128,bool)").hex():
-        "V4LiquidityRemoved",
+    # PrimeBroker — LP position events
+    Web3.keccak(text="LiquidityAdded(uint256,uint128)").hex():
+        "LiquidityAdded",
+    Web3.keccak(text="LiquidityRemoved(uint256,uint128,bool)").hex():
+        "LiquidityRemoved",
+    Web3.keccak(text="ActivePositionChanged(uint256,uint256)").hex():
+        "ActivePositionChanged",
+    # PrimeBroker — TWAMM order events
+    Web3.keccak(text="TwammOrderSubmitted(bytes32,bool,uint256,uint256)").hex():
+        "TwammOrderSubmitted",
+    Web3.keccak(text="TwammOrderCancelled(bytes32,uint256,uint256)").hex():
+        "TwammOrderCancelled",
+    Web3.keccak(text="TwammOrderClaimed(bytes32,uint256,uint256)").hex():
+        "TwammOrderClaimed",
+    Web3.keccak(text="ActiveTwammOrderChanged(bytes32,bytes32)").hex():
+        "ActiveTwammOrderChanged",
+    # PrimeBroker — lifecycle events
+    Web3.keccak(text="BrokerFrozen(address)").hex():
+        "BrokerFrozen",
+    Web3.keccak(text="BrokerUnfrozen(address)").hex():
+        "BrokerUnfrozen",
+    Web3.keccak(text="OperatorUpdated(address,bool)").hex():
+        "OperatorUpdated",
     # V4 PoolManager
     Web3.keccak(text="Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)").hex():
         "Swap",
     Web3.keccak(text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)").hex():
         "ModifyLiquidity",
-    # TWAMM Hook
+    # TWAMM Hook (JTM)
     Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256)").hex():
         "SubmitOrder",
     Web3.keccak(text="CancelOrder(bytes32,bytes32,address,uint256)").hex():
         "CancelOrder",
-    # waUSDC / wRLP — ERC20 Transfer events track collateral deposits/withdrawals
+    # waUSDC / wRLP — ERC20 Transfer events track token balances
     Web3.keccak(text="Transfer(address,address,uint256)").hex():
         "ERC20Transfer",
     # BondFactory
@@ -336,80 +344,156 @@ async def dispatch(
                 wausdc=wausdc, wrlp=wrlp,
                 w3=w3, pool_manager=global_cfg.get("v4_pool_manager", "")
             )
+            # Enrich LP position tick range from ModifyLiquidity salt = bytes32(tokenId)
+            salt = decoded[3]
+            token_id = int.from_bytes(salt, 'big')
+            if token_id > 0:
+                await lp_handler.enrich_tick_range(
+                    conn, token_id, decoded[0], decoded[1], pool_id=pool_id
+                )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
 
-    elif event_name == "V4LiquidityAdded" and market_id:
+    elif event_name == "LiquidityAdded":
+        # LiquidityAdded(uint256 indexed tokenId, uint128 liquidity)
+        # Emitted at broker address. tokenId is indexed (topics[1]).
         try:
-            decoded = w3.eth.codec.decode(
-                ["uint256", "int24", "int24", "uint128"],
-                data_bytes
+            token_id_raw = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            token_id = int.from_bytes(token_id_raw, 'big')
+            decoded = w3.eth.codec.decode(["uint128"], data_bytes)
+            await lp_handler.handle_liquidity_added(
+                conn, contract, token_id, decoded[0], block_number
             )
-            await lp_handler.handle_v4_liquidity_added(
-                conn, market_id, contract,
-                token_id=decoded[0], tick_lower=decoded[1], tick_upper=decoded[2],
-                liquidity=decoded[3], block_number=block_number
+        except Exception as e:
+            log.warning("[dispatch] LiquidityAdded decode failed: %s", e)
+
+    elif event_name == "LiquidityRemoved":
+        # LiquidityRemoved(uint256 indexed tokenId, uint128 liquidity, bool burned)
+        try:
+            token_id_raw = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            token_id = int.from_bytes(token_id_raw, 'big')
+            decoded = w3.eth.codec.decode(["uint128", "bool"], data_bytes)
+            await lp_handler.handle_liquidity_removed(conn, token_id, decoded[0], decoded[1])
+        except Exception as e:
+            log.warning("[dispatch] LiquidityRemoved decode failed: %s", e)
+
+    elif event_name == "ActivePositionChanged":
+        # ActivePositionChanged(uint256 oldTokenId, uint256 newTokenId) — non-indexed
+        try:
+            decoded = w3.eth.codec.decode(["uint256", "uint256"], data_bytes)
+            await broker_handler.handle_active_position_changed(
+                conn, contract, decoded[0], decoded[1]
             )
         except Exception as e:
-            log.warning("[dispatch] V4LiquidityAdded decode failed: %s", e)
+            log.warning("[dispatch] ActivePositionChanged decode failed: %s", e)
 
-    elif event_name == "V4LiquidityRemoved":
+    elif event_name == "TwammOrderSubmitted":
+        # TwammOrderSubmitted(bytes32 indexed orderId, bool zeroForOne, uint256 amountIn, uint256 expiration)
         try:
-            decoded = w3.eth.codec.decode(["uint256", "uint128", "bool"], data_bytes)
-            await lp_handler.handle_v4_liquidity_removed(conn, decoded[0], decoded[1])
+            order_id_bytes = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            order_id = "0x" + order_id_bytes.hex()
+            decoded = w3.eth.codec.decode(["bool", "uint256", "uint256"], data_bytes)
+            await twamm_handler.handle_twamm_order_submitted(
+                conn, contract, order_id,
+                zero_for_one=decoded[0], amount_in=decoded[1],
+                expiration=decoded[2], block_number=block_number, tx_hash=tx_hash
+            )
         except Exception as e:
-            log.warning("[dispatch] V4LiquidityRemoved decode failed: %s", e)
+            log.warning("[dispatch] TwammOrderSubmitted decode failed: %s", e)
 
-    elif event_name == "ActiveTokenSet":
+    elif event_name == "TwammOrderCancelled":
+        # TwammOrderCancelled(bytes32 indexed orderId, uint256 buyTokensOut, uint256 sellTokensRefund)
         try:
-            decoded = w3.eth.codec.decode(["uint256"], data_bytes)
-            await broker_handler.handle_active_token_set(conn, contract, decoded[0])
+            order_id_bytes = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            order_id = "0x" + order_id_bytes.hex()
+            decoded = w3.eth.codec.decode(["uint256", "uint256"], data_bytes)
+            await twamm_handler.handle_twamm_order_cancelled(
+                conn, order_id, decoded[0], decoded[1]
+            )
         except Exception as e:
-            log.warning("[dispatch] ActiveTokenSet decode failed: %s", e)
+            log.warning("[dispatch] TwammOrderCancelled decode failed: %s", e)
+
+    elif event_name == "TwammOrderClaimed":
+        # TwammOrderClaimed(bytes32 indexed orderId, uint256 claimed0, uint256 claimed1)
+        try:
+            order_id_bytes = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            order_id = "0x" + order_id_bytes.hex()
+            decoded = w3.eth.codec.decode(["uint256", "uint256"], data_bytes)
+            await twamm_handler.handle_twamm_order_claimed(
+                conn, order_id, decoded[0], decoded[1]
+            )
+        except Exception as e:
+            log.warning("[dispatch] TwammOrderClaimed decode failed: %s", e)
+
+    elif event_name == "ActiveTwammOrderChanged":
+        # ActiveTwammOrderChanged(bytes32 oldOrderId, bytes32 newOrderId) — non-indexed
+        try:
+            decoded = w3.eth.codec.decode(["bytes32", "bytes32"], data_bytes)
+            old_id = "0x" + decoded[0].hex()
+            new_id = "0x" + decoded[1].hex()
+            await broker_handler.handle_active_twamm_order_changed(
+                conn, contract, old_id, new_id
+            )
+        except Exception as e:
+            log.warning("[dispatch] ActiveTwammOrderChanged decode failed: %s", e)
+
+    elif event_name == "BrokerFrozen":
+        await broker_handler.handle_broker_frozen(conn, contract)
+
+    elif event_name == "BrokerUnfrozen":
+        await broker_handler.handle_broker_unfrozen(conn, contract)
+
+    elif event_name == "OperatorUpdated":
+        # OperatorUpdated(address indexed operator, bool active)
+        try:
+            operator_raw = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            operator = "0x" + operator_raw[-20:].hex()
+            decoded = w3.eth.codec.decode(["bool"], data_bytes)
+            await broker_handler.handle_operator_updated(
+                conn, contract, operator, decoded[0]
+            )
+        except Exception as e:
+            log.warning("[dispatch] OperatorUpdated decode failed: %s", e)
 
     elif event_name == "SubmitOrder" and market_id:
-        # SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
+        # JTM Hook: SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
         #             uint256 amountIn, uint160 expiration, bool zeroForOne,
         #             uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
-        # topics: [sig, poolId, orderId]  data: (owner, amountIn, expiration, zeroForOne, sellRate, earningsFactorLast, startEpoch)
         try:
+            pool_id_bytes = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
+            order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace('0x', ''))
+            pool_id = "0x" + pool_id_bytes.hex()
+            order_id = "0x" + order_id_bytes.hex()
             decoded = w3.eth.codec.decode(
                 ["address", "uint256", "uint160", "bool", "uint256", "uint256", "uint256"],
                 data_bytes
             )
-            owner = decoded[0]
-            amount_in = decoded[1]
-            expiration = decoded[2]
-            zero_for_one = decoded[3]
-            start_epoch = decoded[6]  # startEpoch is the last field
             await twamm_handler.handle_submit_order(
-                conn, market_id, owner,
-                expiration=expiration, start_epoch=start_epoch,
-                zero_for_one=zero_for_one, amount_in=amount_in,
+                conn, pool_id=pool_id, order_id=order_id, owner=decoded[0],
+                amount_in=decoded[1], expiration=decoded[2],
+                zero_for_one=decoded[3], sell_rate=decoded[4],
+                start_epoch=decoded[6],
                 block_number=block_number, tx_hash=tx_hash
             )
         except Exception as e:
             log.warning("[dispatch] SubmitOrder decode failed: %s", e)
 
     elif event_name == "CancelOrder":
-        # CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
+        # JTM Hook: CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
         try:
-            decoded = w3.eth.codec.decode(["address", "uint256"], data_bytes)
-            owner = decoded[0]
-            # We need expiration + zeroForOne to build order_id, but CancelOrder doesn't have them
-            # Instead use the indexed orderId from topics[2]
             order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace('0x', ''))
             order_id = "0x" + order_id_bytes.hex()
-            await conn.execute("UPDATE twamm_orders SET is_cancelled = TRUE WHERE order_id = $1", order_id)
-            log.info("[twamm] CancelOrder orderId=%s", order_id)
+            decoded = w3.eth.codec.decode(["address", "uint256"], data_bytes)
+            await twamm_handler.handle_cancel_order_hook(
+                conn, order_id, decoded[1]
+            )
         except Exception as e:
             log.warning("[dispatch] CancelOrder decode failed: %s", e)
 
     elif event_name == "ERC20Transfer":
         # Transfer(address indexed from, address indexed to, uint256 amount)
         # Emitted by waUSDC and wRLP contracts.
-        # Update wausdc_balance or wrlp_balance for any broker that is the sender or recipient.
-        # Also maintain running counters on markets table for O(1) total collateral.
+        # Update wausdc_balance or wrlp_balance as raw uint256 strings.
         try:
             from_addr = ("0x" + topics[1][-20:].hex()) if isinstance(topics[1], bytes) else ("0x" + topics[1][-40:])
             to_addr   = ("0x" + topics[2][-20:].hex()) if isinstance(topics[2], bytes) else ("0x" + topics[2][-40:])
@@ -428,6 +512,16 @@ async def dispatch(
             wausdc = (m["wausdc"] or "").lower()
             wrlp   = (m["wrlp"]   or "").lower()
 
+            # Also check if this is an ERC721 Transfer on V4 PositionManager
+            v4_posm = (global_cfg.get("v4_position_manager") or "").lower()
+            if contract_lower == v4_posm:
+                # ERC721 Transfer — route to LP handler
+                token_id = amount  # For ERC721, the uint256 IS the tokenId
+                await lp_handler.handle_lp_nft_transfer(
+                    conn, from_addr, to_addr, token_id, block_number
+                )
+                return
+
             # Broker-level column
             col = "wausdc_balance" if contract_lower == wausdc else (
                   "wrlp_balance"   if contract_lower == wrlp   else None)
@@ -437,28 +531,38 @@ async def dispatch(
             # Market-level counter column
             mkt_col = "total_broker_wausdc" if contract_lower == wausdc else "total_broker_wrlp"
 
-            divisor = 1e6  # waUSDC and wRLP are 6-decimal
-            human_amount = amount / divisor
-
-            # Update sender balance (subtract) — returns row count
-            from_result = await conn.execute(
-                f"UPDATE brokers SET {col} = COALESCE({col}, 0) - $1 WHERE address = $2",
-                human_amount, from_addr
+            # Raw uint256 arithmetic: read current, add/subtract, write back
+            # Update sender balance (subtract)
+            from_row = await conn.fetchrow(
+                f"SELECT {col} FROM brokers WHERE address = $1", from_addr
             )
-            from_is_broker = from_result.split(" ")[-1] != "0"
+            if from_row:
+                current = int(from_row[col] or "0")
+                new_val = max(0, current - amount)
+                await conn.execute(
+                    f"UPDATE brokers SET {col} = $1 WHERE address = $2",
+                    str(new_val), from_addr
+                )
 
             # Update recipient balance (add)
-            to_result = await conn.execute(
-                f"UPDATE brokers SET {col} = COALESCE({col}, 0) + $1 WHERE address = $2",
-                human_amount, to_addr
+            to_row = await conn.fetchrow(
+                f"SELECT {col} FROM brokers WHERE address = $1", to_addr
             )
-            to_is_broker = to_result.split(" ")[-1] != "0"
+            if to_row:
+                current = int(to_row[col] or "0")
+                new_val = current + amount
+                await conn.execute(
+                    f"UPDATE brokers SET {col} = $1 WHERE address = $2",
+                    str(new_val), to_addr
+                )
 
-            # Update market-level running counter (only for known broker addresses)
+            # Update market-level running counter
+            divisor = 1e6  # for human-readable counter
+            human_amount = amount / divisor
             delta = 0.0
-            if to_is_broker:
+            if to_row:
                 delta += human_amount
-            if from_is_broker:
+            if from_row:
                 delta -= human_amount
             if delta != 0:
                 await conn.execute(
@@ -466,8 +570,8 @@ async def dispatch(
                     delta, mkt_id
                 )
 
-            log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s delta=%.2f",
-                      contract[:10], from_addr[:10], to_addr[:10], amount, col, delta)
+            log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s",
+                      contract[:10], from_addr[:10], to_addr[:10], amount, col)
         except Exception as e:
             log.warning("[dispatch] ERC20Transfer decode failed: %s", e)
 

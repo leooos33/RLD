@@ -88,6 +88,7 @@ export function useBasisTradeExecution(
   collateralAddr,
   positionAddr,
   externalContracts,
+  { onRefreshComplete = [] } = {},
 ) {
   const SUSDE_ADDRESS = externalContracts?.susde || "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
   const USDC_ADDRESS = externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -96,6 +97,13 @@ export function useBasisTradeExecution(
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
+
+  const _syncAndNotify = async (successStep, onSuccess, result) => {
+    setStep("Syncing...");
+    await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
+    setStep(successStep);
+    if (onSuccess) onSuccess(result);
+  };
 
   /**
    * Open a basis trade in a single atomic transaction (flash loan).
@@ -278,8 +286,7 @@ export function useBasisTradeExecution(
           }
 
           // Fire success immediately so toast shows before localStorage writes
-          setStep("Position Opened ✓");
-          if (onSuccess) onSuccess({ ...receipt, brokerAddress });
+          await _syncAndNotify("Position Opened ✓", onSuccess, { ...receipt, brokerAddress });
 
           // Save trade metadata to localStorage (non-blocking)
           if (brokerAddress) {
@@ -442,8 +449,7 @@ export function useBasisTradeExecution(
             localStorage.removeItem(`rld_bond_${brokerAddress.toLowerCase()}`);
           } catch { /* ignore localStorage errors */ }
 
-          setStep("Position Closed ✓");
-          if (onSuccess) onSuccess({ brokerAddress });
+          await _syncAndNotify("Position Closed ✓", onSuccess, { brokerAddress });
         } else {
           setError("Transaction reverted");
           setStep("");

@@ -1,65 +1,128 @@
 """
-handlers/twamm.py — Handles TWAMM hook SubmitOrder / CancelOrder events.
+handlers/twamm.py — Handles JTM hook + PrimeBroker TWAMM order events.
 
-Events (watched at twamm_hook address per market):
-  JIT Taker Market (JTM) hook events:
-  - SubmitOrder(address indexed owner, uint160 expiration, bool zeroForOne, uint256 amountIn)
-  - CancelOrder(address indexed owner, uint160 expiration, bool zeroForOne)
+JTM Hook events (watched at twamm_hook address):
+  - SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
+                uint256 amountIn, uint160 expiration, bool zeroForOne,
+                uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
+  - CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
 
-order_id = keccak256(abi.encode(owner, expiration, zeroForOne)) — matches the hook's key scheme.
+PrimeBroker events (watched at broker address):
+  - TwammOrderSubmitted(bytes32 indexed orderId, bool zeroForOne, uint256 amountIn, uint256 expiration)
+  - TwammOrderCancelled(bytes32 indexed orderId, uint256 buyTokensOut, uint256 sellTokensRefund)
+  - TwammOrderClaimed(bytes32 indexed orderId, uint256 claimed0, uint256 claimed1)
+
+All values stored as raw uint256 strings. Frontend handles decimal conversion.
 """
 import asyncpg
 import logging
-from eth_abi import encode
-from eth_utils import keccak
 
 log = logging.getLogger(__name__)
 
 
-def make_order_id(owner: str, expiration: int, zero_for_one: bool) -> str:
-    """Deterministic order ID matching the hook's internal key scheme."""
-    packed = encode(
-        ["address", "uint160", "bool"],
-        [owner, expiration, zero_for_one]
-    )
-    return "0x" + keccak(packed).hex()
-
-
 async def handle_submit_order(
     conn: asyncpg.Connection,
-    market_id: str,
+    pool_id: str | None,
+    order_id: str,
     owner: str,
-    expiration: int,
-    start_epoch: int,
-    zero_for_one: bool,
     amount_in: int,
+    expiration: int,
+    zero_for_one: bool,
+    sell_rate: int | None,
+    start_epoch: int | None,
     block_number: int,
     tx_hash: str,
-    broker_address: str | None = None,
 ) -> None:
-    order_id = make_order_id(owner, expiration, zero_for_one)
+    """
+    JTM hook SubmitOrder — primary source for order creation.
+    Has all fields including sell_rate and start_epoch.
+    """
     await conn.execute("""
         INSERT INTO twamm_orders
-          (order_id, market_id, owner, broker_address, amount_in,
-           expiration, start_epoch, zero_for_one, block_number, tx_hash, is_cancelled)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE)
-        ON CONFLICT (order_id) DO NOTHING
-    """, order_id, market_id, owner.lower(),
-         broker_address.lower() if broker_address else None,
-         str(amount_in), expiration, start_epoch, zero_for_one,
-         block_number, tx_hash)
-    log.info("[twamm] SubmitOrder market=%s owner=%s orderId=%s expiry=%d",
-             market_id, owner, order_id, expiration)
+          (order_id, pool_id, owner, amount_in, expiration, start_epoch,
+           sell_rate, zero_for_one, block_number, tx_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (order_id) DO UPDATE SET
+          sell_rate = COALESCE(EXCLUDED.sell_rate, twamm_orders.sell_rate),
+          start_epoch = COALESCE(EXCLUDED.start_epoch, twamm_orders.start_epoch),
+          pool_id = COALESCE(EXCLUDED.pool_id, twamm_orders.pool_id)
+    """, order_id, pool_id, owner.lower(),
+         str(amount_in), expiration, start_epoch,
+         str(sell_rate) if sell_rate else None,
+         zero_for_one, block_number, tx_hash)
+    log.info("[twamm] SubmitOrder orderId=%s owner=%s amount=%d expiry=%d",
+             order_id[:18], owner, amount_in, expiration)
 
 
-async def handle_cancel_order(
+async def handle_twamm_order_submitted(
     conn: asyncpg.Connection,
-    owner: str,
-    expiration: int,
+    broker_address: str,
+    order_id: str,
     zero_for_one: bool,
+    amount_in: int,
+    expiration: int,
+    block_number: int,
+    tx_hash: str,
 ) -> None:
-    order_id = make_order_id(owner, expiration, zero_for_one)
+    """
+    PrimeBroker TwammOrderSubmitted — emitted at broker address.
+    May fire before or after the JTM hook SubmitOrder in the same tx.
+    UPSERT to merge with hook-level data.
+    """
     await conn.execute("""
-        UPDATE twamm_orders SET is_cancelled = TRUE WHERE order_id = $1
-    """, order_id)
-    log.info("[twamm] CancelOrder orderId=%s", order_id)
+        INSERT INTO twamm_orders
+          (order_id, owner, amount_in, expiration, zero_for_one, block_number, tx_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (order_id) DO UPDATE SET
+          owner = COALESCE(EXCLUDED.owner, twamm_orders.owner)
+    """, order_id, broker_address.lower(),
+         str(amount_in), expiration, zero_for_one,
+         block_number, tx_hash)
+    log.info("[twamm] TwammOrderSubmitted broker=%s orderId=%s",
+             broker_address, order_id[:18])
+
+
+async def handle_twamm_order_cancelled(
+    conn: asyncpg.Connection,
+    order_id: str,
+    buy_tokens_out: int,
+    sell_tokens_refund: int,
+) -> None:
+    """TwammOrderCancelled(bytes32 indexed orderId, uint256 buyTokensOut, uint256 sellTokensRefund)"""
+    await conn.execute("""
+        UPDATE twamm_orders
+        SET status = 'cancelled', buy_tokens_out = $1, sell_tokens_refund = $2
+        WHERE order_id = $3
+    """, str(buy_tokens_out), str(sell_tokens_refund), order_id)
+    log.info("[twamm] TwammOrderCancelled orderId=%s buyOut=%d refund=%d",
+             order_id[:18], buy_tokens_out, sell_tokens_refund)
+
+
+async def handle_twamm_order_claimed(
+    conn: asyncpg.Connection,
+    order_id: str,
+    claimed0: int,
+    claimed1: int,
+) -> None:
+    """TwammOrderClaimed(bytes32 indexed orderId, uint256 claimed0, uint256 claimed1)"""
+    await conn.execute("""
+        UPDATE twamm_orders
+        SET status = 'claimed', buy_tokens_out = $1
+        WHERE order_id = $2
+    """, str(max(claimed0, claimed1)), order_id)
+    log.info("[twamm] TwammOrderClaimed orderId=%s claimed0=%d claimed1=%d",
+             order_id[:18], claimed0, claimed1)
+
+
+async def handle_cancel_order_hook(
+    conn: asyncpg.Connection,
+    order_id: str,
+    sell_tokens_refund: int,
+) -> None:
+    """CancelOrder from JTM hook — fallback if PrimeBroker event wasn't caught."""
+    await conn.execute("""
+        UPDATE twamm_orders
+        SET status = 'cancelled', sell_tokens_refund = $1
+        WHERE order_id = $2 AND status = 'active'
+    """, str(sell_tokens_refund), order_id)
+    log.info("[twamm] CancelOrder(hook) orderId=%s refund=%d", order_id[:18], sell_tokens_refund)

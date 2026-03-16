@@ -1,12 +1,17 @@
 """
 handlers/lp.py — Handles V4 LP position lifecycle events.
 
-Sources:
-  - PrimeBroker emits: V4LiquidityAdded(uint256 tokenId, int24 tickLower, int24 tickUpper, uint128 liquidity)
-  - PrimeBroker emits: V4LiquidityRemoved(uint256 tokenId, uint128 liquidityRemoved)
-  - V4 PositionManager emits: Transfer(address from, address to, uint256 tokenId)
-    Used to detect broker receiving an NFT (mint to broker = new LP position)
-  - PrimeBroker emits: ActiveTokenSet(uint256 tokenId)  [handled in broker.py]
+PrimeBroker events (emitted at broker address):
+  - LiquidityAdded(uint256 indexed tokenId, uint128 liquidity)
+  - LiquidityRemoved(uint256 indexed tokenId, uint128 liquidity, bool burned)
+
+V4 PositionManager events:
+  - Transfer(address from, address to, uint256 tokenId) — ERC721 ownership change
+
+ModifyLiquidity from PoolManager provides tick range data (decoded in indexer.py).
+
+LP positions are stored in a normalized `lp_positions` table keyed by token_id.
+The broker just holds a foreign key via `active_lp_token_id`.
 """
 import asyncpg
 import logging
@@ -14,60 +19,95 @@ import logging
 log = logging.getLogger(__name__)
 
 
-async def handle_v4_liquidity_added(
+async def handle_liquidity_added(
     conn: asyncpg.Connection,
-    market_id: str,
     broker_address: str,
     token_id: int,
-    tick_lower: int,
-    tick_upper: int,
     liquidity: int,
     block_number: int,
 ) -> None:
     """
-    Called when a broker mints a new V4 LP position.
-    entry_price is enriched later from block_states at mint_block.
+    LiquidityAdded(uint256 indexed tokenId, uint128 liquidity)
+    Emitted by PrimeBroker when adding liquidity through the broker.
+    UPSERT into lp_positions — tick range comes separately from ModifyLiquidity.
     """
-    # Resolve entry_price from block_states at this block (best effort)
-    row = await conn.fetchrow("""
-        SELECT mark_price FROM block_states
-        WHERE market_id = $1 AND block_number <= $2 AND mark_price IS NOT NULL
-        ORDER BY block_number DESC LIMIT 1
-    """, market_id, block_number)
-    entry_price = float(row["mark_price"]) if row else None
-
-    # entry_tick from entry_price
-    import math
-    entry_tick = round(math.log(entry_price) / math.log(1.0001)) if entry_price else None
-
     await conn.execute("""
-        INSERT INTO lp_positions
-          (token_id, market_id, broker_address, liquidity, tick_lower, tick_upper,
-           entry_price, entry_tick, mint_block, is_active, is_burned)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, FALSE)
+        INSERT INTO lp_positions (token_id, owner, liquidity, mint_block)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (token_id) DO UPDATE SET
-          liquidity = EXCLUDED.liquidity
-    """, token_id, market_id, broker_address.lower(), str(liquidity),
-         tick_lower, tick_upper, entry_price, entry_tick, block_number)
+          liquidity = EXCLUDED.liquidity,
+          owner = EXCLUDED.owner
+    """, str(token_id), broker_address.lower(), str(liquidity), block_number)
+    log.info("[lp] LiquidityAdded broker=%s tokenId=%d liq=%d block=%d",
+             broker_address, token_id, liquidity, block_number)
 
-    log.info("[lp] LiquidityAdded market=%s broker=%s tokenId=%d ticks=[%d,%d] liq=%d",
-             market_id, broker_address, token_id, tick_lower, tick_upper, liquidity)
 
-
-async def handle_v4_liquidity_removed(
+async def handle_liquidity_removed(
     conn: asyncpg.Connection,
     token_id: int,
-    liquidity_remaining: int,
+    liquidity: int,
+    burned: bool,
 ) -> None:
     """
-    Update liquidity and mark as burned if fully removed (liquidity=0).
+    LiquidityRemoved(uint256 indexed tokenId, uint128 liquidity, bool burned)
+    Update liquidity; mark as burned if fully removed.
     """
-    is_burned = liquidity_remaining == 0
     await conn.execute("""
         UPDATE lp_positions
         SET liquidity = $1, is_burned = $2
         WHERE token_id = $3
-    """, str(liquidity_remaining), is_burned, token_id)
+    """, str(liquidity), burned, str(token_id))
+    log.info("[lp] LiquidityRemoved tokenId=%d liq=%d burned=%s",
+             token_id, liquidity, burned)
 
-    log.info("[lp] LiquidityRemoved tokenId=%d remaining=%d burned=%s",
-             token_id, liquidity_remaining, is_burned)
+
+async def handle_lp_nft_transfer(
+    conn: asyncpg.Connection,
+    from_addr: str,
+    to_addr: str,
+    token_id: int,
+    block_number: int,
+) -> None:
+    """
+    ERC721 Transfer on V4 PositionManager.
+    - from=0x0 → mint (INSERT new position with owner=to)
+    - Otherwise → transfer (UPDATE owner)
+    """
+    zero_addr = "0x" + "00" * 20
+    if from_addr == zero_addr:
+        # Mint — create position stub. Tick range enriched by ModifyLiquidity.
+        await conn.execute("""
+            INSERT INTO lp_positions (token_id, owner, liquidity, mint_block)
+            VALUES ($1, $2, '0', $3)
+            ON CONFLICT (token_id) DO UPDATE SET owner = EXCLUDED.owner
+        """, str(token_id), to_addr.lower(), block_number)
+        log.info("[lp] NFT Mint tokenId=%d to=%s", token_id, to_addr)
+    else:
+        # Transfer — update owner
+        await conn.execute(
+            "UPDATE lp_positions SET owner = $1 WHERE token_id = $2",
+            to_addr.lower(), str(token_id)
+        )
+        log.info("[lp] NFT Transfer tokenId=%d from=%s to=%s",
+                 token_id, from_addr, to_addr)
+
+
+async def enrich_tick_range(
+    conn: asyncpg.Connection,
+    token_id: int,
+    tick_lower: int,
+    tick_upper: int,
+    pool_id: str | None = None,
+) -> None:
+    """
+    Called from ModifyLiquidity dispatch to fill in tick range and pool_id
+    for an LP position that was just created.
+    The salt field of ModifyLiquidity = bytes32(tokenId).
+    """
+    await conn.execute("""
+        UPDATE lp_positions
+        SET tick_lower = $1, tick_upper = $2, pool_id = COALESCE($3, pool_id)
+        WHERE token_id = $4
+    """, tick_lower, tick_upper, pool_id, str(token_id))
+    log.debug("[lp] Enriched tick range tokenId=%d ticks=[%d,%d] pool=%s",
+              token_id, tick_lower, tick_upper, pool_id)

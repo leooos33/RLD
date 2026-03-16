@@ -131,11 +131,19 @@ export function useTwammOrder(
   infrastructure,
   collateralAddr,
   positionAddr,
+  { onRefreshComplete = [] } = {},
 ) {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
+
+  const _syncAndNotify = async (successStep, onSuccess, receipt) => {
+    setStep("Syncing...");
+    await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
+    setStep(successStep);
+    if (onSuccess) onSuccess(receipt);
+  };
 
   /**
    * Submit a TWAMM streaming order via PrimeBroker.
@@ -214,8 +222,7 @@ export function useTwammOrder(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Order submitted ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Order submitted ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -280,8 +287,7 @@ export function useTwammOrder(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Order cancelled ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Order cancelled ✓", onSuccess, receipt);
         } else {
           setError("Cancel reverted");
           setStep("");
@@ -347,8 +353,7 @@ export function useTwammOrder(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Tokens claimed ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Tokens claimed ✓", onSuccess, receipt);
         } else {
           setError("Claim reverted");
           setStep("");
@@ -419,8 +424,7 @@ export function useTwammOrder(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Order tracked ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Order tracked ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -485,8 +489,7 @@ export function useTwammOrder(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Order untracked ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Order untracked ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");

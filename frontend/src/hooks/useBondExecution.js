@@ -50,11 +50,19 @@ export function useBondExecution(
   infrastructure,
   collateralAddr,
   positionAddr,
+  { onRefreshComplete = [] } = {},
 ) {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
+
+  const _syncAndNotify = async (successStep, onSuccess, result) => {
+    setStep("Syncing...");
+    await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
+    setStep(successStep);
+    if (onSuccess) onSuccess(result);
+  };
 
   /**
    * Create a bond in a single transaction.
@@ -253,8 +261,7 @@ export function useBondExecution(
             } catch { /* ignore localStorage errors */ }
           }
 
-          setStep("Bond created ✓");
-          if (onSuccess) onSuccess({ ...receipt, brokerAddress });
+          await _syncAndNotify("Bond created ✓", onSuccess, { ...receipt, brokerAddress });
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -370,8 +377,7 @@ export function useBondExecution(
             localStorage.removeItem(`rld_bond_${brokerAddress.toLowerCase()}`);
           } catch { /* ignore localStorage errors */ }
 
-          setStep("Bond closed ✓");
-          if (onSuccess) onSuccess({ brokerAddress });
+          await _syncAndNotify("Bond closed ✓", onSuccess, { brokerAddress });
         } else {
           setError("Transaction reverted");
           setStep("");

@@ -133,11 +133,20 @@ export function useSwapExecution(
   infrastructure,
   collateralAddr,
   positionAddr,
+  { onRefreshComplete = [] } = {},
 ) {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
+
+  // Atomic refresh: await all data refreshes before firing onSuccess
+  const _syncAndNotify = async (successStep, onSuccess, receipt) => {
+    setStep("Syncing...");
+    await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
+    setStep(successStep);
+    if (onSuccess) onSuccess(receipt);
+  };
 
   const executeLong = useCallback(
     async (amountIn, onSuccess) => {
@@ -192,8 +201,7 @@ export function useSwapExecution(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Swap confirmed ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Swap confirmed ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -251,8 +259,7 @@ export function useSwapExecution(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Position closed ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Position closed ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -324,8 +331,7 @@ export function useSwapExecution(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Short opened ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Short opened ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -391,8 +397,7 @@ export function useSwapExecution(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Short closed ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Short closed ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");
@@ -454,8 +459,7 @@ export function useSwapExecution(
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setStep("Debt repaid ✓");
-          if (onSuccess) onSuccess(receipt);
+          await _syncAndNotify("Debt repaid ✓", onSuccess, receipt);
         } else {
           setError("Transaction reverted");
           setStep("");

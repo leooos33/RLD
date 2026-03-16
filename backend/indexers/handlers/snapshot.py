@@ -124,7 +124,7 @@ async def materialize_snapshot(
     sys_wausdc = float(mkt["total_broker_wausdc"] or 0)
     sys_wrlp = float(mkt["total_broker_wrlp"] or 0)
     total_col_usd = sys_wausdc + sys_wrlp * index_price  # waUSDC=1:1, wRLP=indexed
-    total_debt_usd = sum(float(b["debt_principal"] or 0) * index_price for b in brokers)
+    total_debt_usd = sum(int(b["debt_principal"] or "0") / 1e6 * index_price for b in brokers)
     over_collat = (total_col_usd / total_debt_usd * 100) if total_debt_usd > 0 else 0
 
     def _broker_status(hf):
@@ -189,15 +189,16 @@ async def materialize_snapshot(
             {
                 "address": b["address"],
                 "owner": b["owner"],
-                "collateral": float(b["wausdc_balance"] or 0),
-                "wrlpBalance": float(b.get("wrlp_balance", 0) or 0),
-                "debt": float(b["debt_principal"] or 0),
-                "collateralValue": float(b["wausdc_balance"] or 0) + float(b.get("wrlp_balance", 0) or 0) * index_price,
-                "debtValue": round(float(b["debt_principal"] or 0) * index_price, 2),
+                # Raw uint256 strings → human floats for snapshot JSON
+                "collateral": int(b["wausdc_balance"] or "0") / 1e6,
+                "wrlpBalance": int(b.get("wrlp_balance") or "0") / 1e6,
+                "debt": int(b["debt_principal"] or "0") / 1e6,
+                "collateralValue": int(b["wausdc_balance"] or "0") / 1e6 + int(b.get("wrlp_balance") or "0") / 1e6 * index_price,
+                "debtValue": round(int(b["debt_principal"] or "0") / 1e6 * index_price, 2),
                 "healthFactor": round(
-                    (float(b["wausdc_balance"] or 0) + float(b.get("wrlp_balance", 0) or 0) * index_price)
-                    / (float(b["debt_principal"] or 0) * index_price)
-                    if float(b["debt_principal"] or 0) > 0 else 0, 4
+                    (int(b["wausdc_balance"] or "0") / 1e6 + int(b.get("wrlp_balance") or "0") / 1e6 * index_price)
+                    / (int(b["debt_principal"] or "0") / 1e6 * index_price)
+                    if int(b["debt_principal"] or "0") > 0 else 0, 4
                 ),
             }
             for b in brokers

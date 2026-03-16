@@ -169,12 +169,20 @@ function computeLiquidity(amount0, amount1, tickLower, tickUpper, currentTick) {
  */
 export { liquidityToAmounts, computeLiquidity };
 
-export function usePoolLiquidity(brokerAddress, marketInfo) {
+export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete = [] } = {}) {
   const [executing, setExecuting] = useState(false);
   const [executionStep, setExecutionStep] = useState("");
   const [executionError, setExecutionError] = useState(null);
   const [activePosition, setActivePosition] = useState(null);
   const [allPositions, setAllPositions] = useState([]);
+  const [positionsLoaded, setPositionsLoaded] = useState(false);
+
+  const _syncAndNotify = async (successStep, onSuccess, result) => {
+    setExecutionStep("Syncing...");
+    await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
+    setExecutionStep(successStep);
+    if (onSuccess) onSuccess(result);
+  };
 
   const twammHook = marketInfo?.infrastructure?.twamm_hook;
   const tickSpacing = marketInfo?.infrastructure?.tick_spacing || 5;
@@ -188,6 +196,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
     if (!brokerAddress || !posmAddr) {
       setActivePosition(null);
       setAllPositions([]);
+      setPositionsLoaded(true);
       return;
     }
 
@@ -261,6 +270,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         setAllPositions(mapped);
         const active = mapped.find((p) => p.isActive) || mapped[0] || null;
         setActivePosition(active);
+        setPositionsLoaded(true);
         console.log("[LP] Loaded", mapped.length, "positions via GraphQL");
         return;
       }
@@ -379,10 +389,12 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
       setAllPositions(positions);
       const active = positions.find(p => p.isActive) || positions[0] || null;
       setActivePosition(active || null);
+      setPositionsLoaded(true);
       console.timeEnd("[LP] RPC fallback");
       console.log("[LP] Found", positions.length, "positions via RPC fallback");
     } catch (err) {
       console.warn("[LP] Failed to read positions:", err);
+      setPositionsLoaded(true);
     }
   }, [brokerAddress, posmAddr, stateViewAddr, twammHook, positionToken, collateralToken, tickSpacing]);
 
@@ -496,8 +508,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         // 6. Refresh position
         await refreshPosition();
 
-        setExecutionStep("Liquidity added ✓");
-        if (onSuccess) onSuccess(receipt);
+        await _syncAndNotify("Liquidity added ✓", onSuccess, receipt);
       } catch (err) {
         console.error("[LP] addPoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
@@ -552,8 +563,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         // Refresh position
         await refreshPosition();
 
-        setExecutionStep("Liquidity removed ✓");
-        if (onSuccess) onSuccess(receipt);
+        await _syncAndNotify("Liquidity removed ✓", onSuccess, receipt);
       } catch (err) {
         console.error("[LP] removePoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
@@ -589,9 +599,8 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setExecutionStep("Position tracked ✓");
-          refreshPosition();
-          if (onSuccess) onSuccess(receipt);
+          await refreshPosition();
+          await _syncAndNotify("Position tracked ✓", onSuccess, receipt);
         } else {
           setExecutionError("Transaction reverted");
           setExecutionStep("");
@@ -633,9 +642,8 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         const receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          setExecutionStep("Position untracked ✓");
-          refreshPosition();
-          if (onSuccess) onSuccess(receipt);
+          await refreshPosition();
+          await _syncAndNotify("Position untracked ✓", onSuccess, receipt);
         } else {
           setExecutionError("Transaction reverted");
           setExecutionStep("");
@@ -701,9 +709,8 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
         }
 
         if (receipt.status === 1) {
-          setExecutionStep("Fees collected ✓");
-          refreshPosition();
-          if (onSuccess) onSuccess(receipt);
+          await refreshPosition();
+          await _syncAndNotify("Fees collected ✓", onSuccess, receipt);
         } else {
           setExecutionError("Transaction reverted");
           setExecutionStep("");
@@ -729,6 +736,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
     untrackLpPosition,
     activePosition,
     allPositions,
+    positionsLoaded,
     refreshPosition,
     executing,
     executionStep,

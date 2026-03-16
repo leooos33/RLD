@@ -12,13 +12,10 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { useSim } from "../../context/SimulationContext";
-import { useSimulation } from "../../hooks/useSimulation";
-import { useWallet } from "../../context/WalletContext";
-import { useBrokerAccount } from "../../hooks/useBrokerAccount";
-import { usePoolLiquidity, liquidityToAmounts } from "../../hooks/usePoolLiquidity";
+
+import { usePoolData } from "../../hooks/usePoolData";
+import { liquidityToAmounts } from "../../hooks/usePoolLiquidity";
 import { useToast } from "../../hooks/useToast";
-import { useChartControls } from "../../hooks/useChartControls";
 import TradingTerminal, { InputGroup, SummaryRow } from "../trading/TradingTerminal";
 import StatItem from "../common/StatItem";
 import RLDPerformanceChart from "../charts/RLDChart";
@@ -282,56 +279,9 @@ function ComboChart({ bins, currentPrice }) {
 
 
 export default function PoolLP() {
-  // ── Wallet & broker ─────────────────────────────────────────
-  const { account } = useWallet();
-  const { toasts, addToast, removeToast } = useToast();
-
-  // ── Chart controls (resolution + time range) ───────────────
-  const chartControls = useChartControls({
-    defaultRange: "1W",
-    defaultDays: 7,
-    defaultResolution: "1H",
-  });
-  const { appliedStart, appliedEnd, resolution } = chartControls;
-
-  // ── Simulation data ─────────────────────────────────────────
-  // NOTE: The simulation uses Ethereum fork timestamps (Jan 2025), not
-  // wall-clock time (Mar 2026). We compute the time *range* as a delta
-  // from wall-clock "now", then anchor it to the latest simulation
-  // block timestamp so the filter matches the chain's timeline.
-  const [simBlockTs, setSimBlockTs] = useState(null);
-
-  const chartStartTime = useMemo(() => {
-    if (!simBlockTs || !appliedStart) return null;
-    const wallNow = Math.floor(Date.now() / 1000);
-    const wallStart = Math.floor(new Date(appliedStart).getTime() / 1000);
-    return simBlockTs - (wallNow - wallStart);
-  }, [appliedStart, simBlockTs]);
-
-  const chartEndTime = useMemo(() => {
-    if (!simBlockTs || !appliedEnd) return null;
-    const wallNow = Math.floor(Date.now() / 1000);
-    const wallEnd = Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000);
-    return simBlockTs - (wallNow - wallEnd);
-  }, [appliedEnd, simBlockTs]);
-
-  // Shared data from global context (deduplicated across all pages)
-  const simShared = useSim();
-  // Chart-specific data with custom resolution/time range
-  const simChart = useSimulation({
-    pollInterval: 2000,
-    chartResolution: resolution,
-    chartStartTime,
-    chartEndTime,
-  });
-
-  // Update simBlockTs once when simulation data first arrives
-  useEffect(() => {
-    if (simBlockTs) return; // only set once
-    const ts = simShared?.latest?.market?.blockTimestamp;
-    if (ts) setSimBlockTs(ts);
-  }, [simShared?.latest, simBlockTs]);
+  // ── Coordinator hook: fires all data sources in parallel, provides readiness gate ──
   const {
+    ready,
     connected,
     loading,
     error,
@@ -341,125 +291,42 @@ export default function PoolLP() {
     funding,
     fundingFromNF: _fundingFromNF,
     volumeData,
-    protocolStats: _protocolStats,
     marketInfo,
-  } = simShared;
-  // Chart data uses local sim with custom resolution params
-  const { chartData, volumeHistory } = simChart;
+    simShared,
 
-  const { hasBroker, brokerAddress, checkBroker, fetchBrokerBalance } = useBrokerAccount(
     account,
-    marketInfo?.broker_factory,
-    marketInfo?.collateral?.address,
-  );
 
-  // ── Pool liquidity hook (contract integration) ──────────────
-  const {
+    hasBroker,
+    brokerAddress,
+    checkBroker,
+    fetchBrokerBalance,
+
+    chartControls,
+    chartData,
+    volumeHistory,
+
     executeAddLiquidity,
     executeCollectFees,
     executeRemoveLiquidity,
+    trackLpPosition: _trackLpPosition,
+    untrackLpPosition: _untrackLpPosition,
     activePosition: _activePosition,
     allPositions,
     refreshPosition: _refreshPosition,
-    executing: lpExecuting,
-    executionStep: lpStep,
-    executionError: lpError,
-    clearError: clearLpError,
-  } = usePoolLiquidity(brokerAddress, marketInfo);
+    lpExecuting,
+    lpStep,
+    lpError,
+    clearLpError,
 
-  // ── Pool-wide liquidity distribution (single API call, server-cached) ──
-  const [liquidityBins, setLiquidityBins] = useState([]);
-  const [liqDistPrice, setLiqDistPrice] = useState(null);
+    liquidityBins,
+    liqDistPrice,
+    buildLocalBins,
 
-  // Local fallback: build bins from allPositions when API is unavailable
-  const buildLocalBins = React.useCallback((positions, price) => {
-    if (!positions?.length || !price) return [];
-    const NUM_BINS = 60;
-    // ±100% price range: half to double the current price
-    const minP = price * 0.5, maxP = price * 2.0;
-    const binW = (maxP - minP) / NUM_BINS;
-    return Array.from({ length: NUM_BINS }, (_, i) => {
-      const priceFrom = minP + i * binW;
-      const priceTo = minP + (i + 1) * binW;
-      let liq = 0;
-      for (const p of positions) {
-        const tl = Math.min(p.tickLower ?? 0, p.tickUpper ?? 0);
-        const tu = Math.max(p.tickLower ?? 0, p.tickUpper ?? 0);
-        const pL = Math.pow(1.0001, tl);
-        const pH = Math.pow(1.0001, tu);
-        if (pH > priceFrom && pL < priceTo) liq += Number(p.liquidity || 0);
-      }
-      // Token amounts (Uni V3 math) → divide by 1e6 for 6-decimal tokens
-      const sa = Math.sqrt(priceFrom), sb = Math.sqrt(priceTo);
-      const sp = Math.max(sa, Math.min(Math.sqrt(price), sb));
-      const a0 = sp < sb ? liq * (1 / sp - 1 / sb) / 1e6 : 0;
-      const a1 = sp > sa ? liq * (sp - sa) / 1e6 : 0;
-      return { price: ((priceFrom + priceTo) / 2).toFixed(3), priceFrom, priceTo, liquidity: liq, amount0: Math.max(0, a0), amount1: Math.max(0, a1) };
-    });
-  }, []);
+    refreshAll,
+  } = usePoolData();
 
-  useEffect(() => {
-    let cancelled = false;
-    const GQL_URL = `/graphql`;
-    const LIQ_QUERY = `query { liquidityDistribution }`;
-
-    async function fetchDistribution() {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const res = await fetch(GQL_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: LIQ_QUERY }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const json = await res.json();
-          const rawBins = json?.data?.liquidityDistribution;
-          if (!cancelled && rawBins?.length) {
-            // Transform indexer bins to ComboChart format
-            const curPrice = pool?.markPrice || 1;
-            const bins = rawBins
-              .filter((b) => b.priceHigh >= 1 && b.priceLow <= 10) // Display range: 1-10
-              .map((b) => {
-              const priceFrom = b.priceLow;
-              const priceTo = b.priceHigh;
-              const midPrice = (priceFrom + priceTo) / 2;
-              const liq = b.liquidity || 0;
-              // Compute token amounts using Uni V3 concentrated liquidity math
-              const sa = Math.sqrt(priceFrom), sb = Math.sqrt(priceTo);
-              const sp = Math.max(sa, Math.min(Math.sqrt(curPrice), sb));
-              const a0 = sp < sb ? liq * (1 / sp - 1 / sb) / 1e6 : 0;
-              const a1 = sp > sa ? liq * (sp - sa) / 1e6 : 0;
-              return {
-                price: midPrice.toFixed(3),
-                priceFrom,
-                priceTo,
-                liquidity: liq,
-                amount0: Math.max(0, a0),
-                amount1: Math.max(0, a1),
-              };
-            });
-            setLiquidityBins(bins);
-            const priceFromMid = bins[Math.floor(bins.length / 2)]?.price;
-            if (priceFromMid) setLiqDistPrice(parseFloat(priceFromMid));
-            return;
-          }
-        } catch (err) {
-          if (attempt < 2) {
-            await new Promise(r => setTimeout(r, 2000));
-            continue;
-          }
-          console.warn("[LP] GQL liquidityDistribution unavailable after retries, using local fallback:", err.message);
-        }
-      }
-      // Fallback: build from local positions
-      if (!cancelled && allPositions?.length) {
-        const price = pool?.markPrice || 1;
-        setLiquidityBins(buildLocalBins(allPositions, price));
-      }
-    }
-    fetchDistribution();
-    return () => { cancelled = true; };
-  }, [allPositions, pool?.markPrice, buildLocalBins]);
+  const { toasts, addToast, removeToast } = useToast();
+  const { appliedStart, appliedEnd, resolution } = chartControls;
 
   // ── Local UI state ──────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("ADD");
@@ -759,13 +626,13 @@ export default function PoolLP() {
     );
   }
 
-  if (loading || !poolData) {
+  if (!ready || loading || !poolData) {
     return (
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
           <span className="text-sm uppercase tracking-widest text-gray-500">
-            Connecting to simulation...
+            Loading pool data...
           </span>
         </div>
       </div>

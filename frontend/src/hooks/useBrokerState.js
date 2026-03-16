@@ -73,16 +73,28 @@ function liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick) {
 export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const mountedRef = useRef(true);
+  const initialLoadDone = useRef(false);
+  const fetchingRef = useRef(false);
 
   const fetchState = useCallback(async () => {
     if (!brokerAddress) {
       setState(null);
+      setLoaded(true);
       return;
     }
 
+    // Mutex: skip if a fetch is already running (prevents polls from
+    // reading transient on-chain state during LP operations)
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+
     try {
-      setLoading(true);
+      // Only show loading spinner on initial fetch — subsequent refreshes
+      // keep stale data visible (optimistic caching) to prevent flicker
+      if (!initialLoadDone.current) setLoading(true);
+
       const provider = new ethers.JsonRpcProvider(RPC_URL);
       const broker = new ethers.Contract(brokerAddress, BROKER_STATE_ABI, provider);
 
@@ -260,13 +272,17 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
 
       if (mountedRef.current) {
         setState(parsed);
+        initialLoadDone.current = true;
+        setLoaded(true);
       }
     } catch (e) {
+      // On error, preserve old state instead of clearing — prevents flicker
       console.warn("[BrokerState] fetch failed:", e);
     } finally {
       if (mountedRef.current) {
         setLoading(false);
       }
+      fetchingRef.current = false;
     }
   }, [brokerAddress, marketInfo]);
 
@@ -280,5 +296,5 @@ export function useBrokerState(brokerAddress, marketInfo, pollInterval = 15000) 
     };
   }, [fetchState, pollInterval]);
 
-  return { brokerState: state, loading, refresh: fetchState };
+  return { brokerState: state, loading, loaded, refresh: fetchState };
 }

@@ -64,15 +64,16 @@ CREATE TABLE IF NOT EXISTS brokers (
   address             TEXT PRIMARY KEY,
   market_id           TEXT NOT NULL REFERENCES markets(market_id),
   owner               TEXT NOT NULL,
-  -- State (NULL until first state event arrives)
-  wausdc_balance      NUMERIC,
-  wrlp_balance        NUMERIC,
-  wausdc_value        NUMERIC,
-  wrlp_value          NUMERIC,
-  health_factor       TEXT,
-  active_lp_token_id     BIGINT DEFAULT 0,
+  -- Raw ERC-20 balances (uint256 strings, updated by ERC20Transfer events)
+  wausdc_balance      TEXT DEFAULT '0',
+  wrlp_balance        TEXT DEFAULT '0',
+  -- Debt principal (uint256 string, updated by PositionModified deltaDebt)
+  debt_principal      TEXT DEFAULT '0',
+  -- Active collateral tracking (updated by ActivePositionChanged / ActiveTwammOrderChanged)
+  active_lp_token_id     TEXT DEFAULT '0',
   active_twamm_order_id  TEXT DEFAULT '',
-  debt_principal      NUMERIC DEFAULT 0,
+  -- Lifecycle state
+  is_frozen           BOOLEAN DEFAULT false,
   is_liquidated       BOOLEAN DEFAULT false,
   -- Provenance
   created_block       BIGINT NOT NULL,
@@ -80,6 +81,16 @@ CREATE TABLE IF NOT EXISTS brokers (
 );
 CREATE INDEX IF NOT EXISTS idx_brokers_market ON brokers(market_id);
 CREATE INDEX IF NOT EXISTS idx_brokers_owner  ON brokers(owner);
+
+-- ── BROKER OPERATORS ────────────────────────────────────────────────────────
+-- Tracks operator addresses per broker. Updated by OperatorUpdated events.
+-- INSERT on active=true, DELETE on active=false.
+
+CREATE TABLE IF NOT EXISTS broker_operators (
+  broker_address  TEXT NOT NULL REFERENCES brokers(address) ON DELETE CASCADE,
+  operator        TEXT NOT NULL,
+  PRIMARY KEY (broker_address, operator)
+);
 
 -- ── BLOCK STATE SNAPSHOTS ────────────────────────────────────────────────────
 -- One row per block per market. "latest" = MAX(block_number) for the market.
@@ -174,44 +185,46 @@ CREATE TABLE IF NOT EXISTS tick_liquidity_net (
 );
 
 -- ── V4 LP POSITIONS ──────────────────────────────────────────────────────────
+-- Reference table for all V4 LP NFTs associated with our pool.
+-- Populated by LiquidityAdded/Removed + ERC721 Transfer + ModifyLiquidity.
+-- Decoupled from brokers: owner tracks current NFT holder (user or broker).
 
 CREATE TABLE IF NOT EXISTS lp_positions (
-  token_id        BIGINT PRIMARY KEY,
-  market_id       TEXT NOT NULL REFERENCES markets(market_id),
-  broker_address  TEXT NOT NULL,
-  liquidity       TEXT NOT NULL,
-  tick_lower      INT NOT NULL,
-  tick_upper      INT NOT NULL,
-  entry_price     NUMERIC,        -- NULL until pool price known at mint block
-  entry_tick      INT,
+  token_id        TEXT PRIMARY KEY,       -- uint256 string (V4 PositionManager NFT ID)
+  pool_id         TEXT,                   -- V4 pool ID (from ModifyLiquidity or market config)
+  owner           TEXT NOT NULL,          -- current NFT holder (updated on ERC721 Transfer)
+  liquidity       TEXT NOT NULL DEFAULT '0', -- raw uint128 string
+  tick_lower      INT,                    -- from ModifyLiquidity decode
+  tick_upper      INT,                    -- from ModifyLiquidity decode
   mint_block      BIGINT NOT NULL,
-  is_active       BOOLEAN NOT NULL,
-  is_burned       BOOLEAN NOT NULL,
-  is_registered   BOOLEAN NOT NULL DEFAULT false
+  is_active       BOOLEAN NOT NULL DEFAULT false, -- is this the broker's tracked LP?
+  is_burned       BOOLEAN NOT NULL DEFAULT false
 );
-CREATE INDEX IF NOT EXISTS idx_lp_market_broker ON lp_positions(market_id, broker_address);
+CREATE INDEX IF NOT EXISTS idx_lp_owner ON lp_positions(owner);
+CREATE INDEX IF NOT EXISTS idx_lp_pool  ON lp_positions(pool_id);
 
 -- ── TWAMM ORDERS ─────────────────────────────────────────────────────────────
+-- Reference table for all JTM streaming orders.
+-- Populated by TwammOrderSubmitted (from PrimeBroker) + SubmitOrder (from JTM hook).
 
 CREATE TABLE IF NOT EXISTS twamm_orders (
-  order_id        TEXT PRIMARY KEY,   -- JTM assigned order ID
-  market_id       TEXT NOT NULL REFERENCES markets(market_id),
-  owner           TEXT NOT NULL,
-  broker_address  TEXT,               -- broker that owns this order
-  amount_in       TEXT NOT NULL,      -- raw uint256 string
+  order_id        TEXT PRIMARY KEY,        -- bytes32 JTM assigned order ID
+  pool_id         TEXT,                    -- V4 pool ID (from SubmitOrder topic)
+  owner           TEXT NOT NULL,           -- order owner (broker address or EOA)
+  amount_in       TEXT NOT NULL,           -- raw uint256 string
   expiration      BIGINT NOT NULL,
-  start_epoch     BIGINT NOT NULL,
+  start_epoch     BIGINT,                  -- from JTM SubmitOrder data
+  sell_rate        TEXT,                    -- raw uint256 from JTM SubmitOrder data
   zero_for_one    BOOLEAN NOT NULL,
   block_number    BIGINT NOT NULL,
   tx_hash         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'active',  -- active | cancelled | claimed
-  is_registered   BOOLEAN NOT NULL DEFAULT false,
-  buy_tokens_out  TEXT DEFAULT '0',
-  sell_tokens_refund TEXT DEFAULT '0',
-  is_cancelled    BOOLEAN NOT NULL DEFAULT false
+  is_registered   BOOLEAN NOT NULL DEFAULT false,  -- is this the broker's tracked order?
+  buy_tokens_out  TEXT DEFAULT '0',        -- filled on cancel/claim
+  sell_tokens_refund TEXT DEFAULT '0'       -- filled on cancel
 );
-CREATE INDEX IF NOT EXISTS idx_twamm_market_owner ON twamm_orders(market_id, owner);
-CREATE INDEX IF NOT EXISTS idx_twamm_broker ON twamm_orders(broker_address);
+CREATE INDEX IF NOT EXISTS idx_twamm_owner ON twamm_orders(owner);
+CREATE INDEX IF NOT EXISTS idx_twamm_pool  ON twamm_orders(pool_id);
 
 -- ── BONDS ────────────────────────────────────────────────────────────────────
 -- One row per bond. Broker address is unique (each bond = frozen broker clone).

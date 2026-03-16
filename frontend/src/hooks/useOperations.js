@@ -51,16 +51,19 @@ export function useOperations(
 ) {
   const [operations, setOperations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const mountedRef = useRef(true);
+  const initialLoadDone = useRef(false);
 
   const fetchOps = useCallback(async () => {
     if (!routerAddress) {
       setOperations([]);
+      setLoaded(true);
       return;
     }
 
     try {
-      setLoading(true);
+      if (!initialLoadDone.current) setLoading(true);
       const provider = new ethers.JsonRpcProvider(RPC_URL);
 
       // Build topic filter: any of our 4 event types
@@ -128,6 +131,8 @@ export function useOperations(
 
       if (mountedRef.current) {
         setOperations(allOps);
+        initialLoadDone.current = true;
+        setLoaded(true);
       }
     } catch (e) {
       console.warn("useOperations fetch failed:", e);
@@ -149,7 +154,7 @@ export function useOperations(
     };
   }, [fetchOps, pollInterval]);
 
-  return { operations, loading, refetch: fetchOps };
+  return { operations, loading, loaded, refetch: fetchOps };
 }
 
 /**

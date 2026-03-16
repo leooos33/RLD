@@ -100,7 +100,7 @@ async def reset(pool: asyncpg.Pool) -> None:
     async with pool.acquire() as conn:
         await conn.execute("""
             TRUNCATE events, block_states, candles,
-                     brokers, lp_positions, twamm_orders, liquidations,
+                     broker_operators, brokers, lp_positions, twamm_orders, liquidations,
                      indexer_state, markets
             CASCADE
         """)

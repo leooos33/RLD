@@ -58,12 +58,12 @@ class Broker:
     market_id: str
     owner: str
     created_block: int
-    active_token_id: Optional[int]
+    active_token_id: Optional[str]
     wausdc_balance: Optional[str]
     wrlp_balance: Optional[str]
     debt_principal: Optional[str]
+    is_frozen: Optional[bool]
     is_liquidated: Optional[bool]
-    health_factor: Optional[str]
 
 
 @strawberry.type
@@ -103,14 +103,12 @@ class Candle:
 
 @strawberry.type
 class LpPosition:
-    token_id: int
-    market_id: str
-    broker_address: str
+    token_id: str
+    pool_id: Optional[str]
+    owner: str
     liquidity: str
-    tick_lower: int
-    tick_upper: int
-    entry_price: Optional[float]
-    entry_tick: Optional[int]
+    tick_lower: Optional[int]
+    tick_upper: Optional[int]
     mint_block: int
     is_active: bool
     is_burned: bool
@@ -119,14 +117,16 @@ class LpPosition:
 @strawberry.type
 class TwammOrder:
     order_id: str
-    market_id: str
+    pool_id: Optional[str]
     owner: str
     expiration: int
     zero_for_one: bool
     amount_in: str
-    is_cancelled: bool
+    sell_rate: Optional[str]
+    status: str
+    is_registered: bool
     block_number: int
-    start_epoch: int
+    start_epoch: Optional[int]
     tx_hash: str
 
 
@@ -177,12 +177,11 @@ def _candle(r) -> Candle:
 
 def _lp(r) -> LpPosition:
     return LpPosition(
-        token_id=r["token_id"], market_id=r["market_id"],
-        broker_address=r["broker_address"],
+        token_id=str(r["token_id"]), pool_id=r.get("pool_id"),
+        owner=r["owner"],
         liquidity=str(r["liquidity"]),
         tick_lower=r["tick_lower"], tick_upper=r["tick_upper"],
-        entry_price=float(r["entry_price"]) if r["entry_price"] else None,
-        entry_tick=r["entry_tick"], mint_block=r["mint_block"],
+        mint_block=r["mint_block"],
         is_active=r["is_active"], is_burned=r["is_burned"],
     )
 
@@ -213,8 +212,8 @@ class Query:
             wausdc_balance=str(r["wausdc_balance"]) if r["wausdc_balance"] is not None else None,
             wrlp_balance=str(r["wrlp_balance"]) if r["wrlp_balance"] is not None else None,
             debt_principal=str(r["debt_principal"]) if r["debt_principal"] is not None else None,
+            is_frozen=r.get("is_frozen", False),
             is_liquidated=r["is_liquidated"],
-            health_factor=str(r["health_factor"]) if r["health_factor"] is not None else None,
         ) for r in rows]
 
     @strawberry.field
@@ -309,17 +308,16 @@ class Query:
     @strawberry.field
     async def lp_positions(
         self,
-        market_id: str,
-        broker_address: Optional[str] = None,
+        owner: Optional[str] = None,
         active_only: bool = False,
     ) -> List[LpPosition]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            q = "SELECT * FROM lp_positions WHERE market_id=$1"
-            args: list = [market_id]
-            if broker_address:
-                args.append(broker_address.lower())
-                q += f" AND broker_address=${len(args)}"
+            q = "SELECT * FROM lp_positions WHERE 1=1"
+            args: list = []
+            if owner:
+                args.append(owner.lower())
+                q += f" AND owner=${len(args)}"
             if active_only:
                 q += " AND is_active=TRUE AND is_burned=FALSE"
             q += " ORDER BY mint_block DESC"
@@ -328,26 +326,29 @@ class Query:
 
     @strawberry.field
     async def twamm_orders(
-        self, market_id: str, owner: str | None = None, active_only: bool = True
+        self, owner: str | None = None, active_only: bool = True
     ) -> List[TwammOrder]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            q = "SELECT * FROM twamm_orders WHERE market_id=$1"
-            args: list = [market_id]
+            q = "SELECT * FROM twamm_orders WHERE 1=1"
+            args: list = []
             if owner:
                 args.append(owner.lower())
                 q += f" AND owner=${len(args)}"
             if active_only:
-                q += " AND is_cancelled=FALSE"
+                q += " AND status='active'"
             q += " ORDER BY block_number DESC"
             rows = await conn.fetch(q, *args)
         return [TwammOrder(
-            order_id=r["order_id"], market_id=r["market_id"],
+            order_id=r["order_id"], pool_id=r.get("pool_id"),
             owner=r["owner"], expiration=r["expiration"],
             zero_for_one=r["zero_for_one"],
             amount_in=str(r["amount_in"]),
-            is_cancelled=r["is_cancelled"], block_number=r["block_number"],
-            start_epoch=r["start_epoch"], tx_hash=r["tx_hash"],
+            sell_rate=r.get("sell_rate"),
+            status=r["status"],
+            is_registered=r["is_registered"],
+            block_number=r["block_number"],
+            start_epoch=r.get("start_epoch"), tx_hash=r["tx_hash"],
         ) for r in rows]
 
     @strawberry.field
@@ -525,10 +526,10 @@ class Query:
             fg1 = int(latest["fee_growth_global1"] or "0")
             index_price = float(latest["index_price"] or 0)
 
-            # Get LP positions
+            # Get LP positions (now keyed by owner, not broker_address)
             positions = await conn.fetch("""
                 SELECT * FROM lp_positions
-                WHERE broker_address = $1 AND is_burned = FALSE
+                WHERE owner = $1 AND is_burned = FALSE
                 ORDER BY mint_block DESC
             """, broker["address"])
 
@@ -539,25 +540,27 @@ class Query:
                 tick_upper = pos["tick_upper"]
                 liquidity = int(pos["liquidity"])
 
-                # Compute token amounts from liquidity + current tick
-                amt0, amt1 = _liquidity_to_amounts(
-                    liquidity, tick_lower, tick_upper, current_tick
-                )
-                amt0_human = amt0 / 1e6
-                amt1_human = amt1 / 1e6
-                value_usd = amt0_human * mark_price + amt1_human
+                if tick_lower is not None and tick_upper is not None and liquidity > 0:
+                    # Compute token amounts from liquidity + current tick
+                    amt0, amt1 = _liquidity_to_amounts(
+                        liquidity, tick_lower, tick_upper, current_tick
+                    )
+                    amt0_human = amt0 / 1e6
+                    amt1_human = amt1 / 1e6
+                    value_usd = amt0_human * mark_price + amt1_human
+                    in_range = tick_lower <= current_tick < tick_upper
+                else:
+                    amt0_human = amt1_human = value_usd = 0
+                    in_range = False
 
                 # Fee earnings (simplified: using global fee growth as upper bound)
-                # In production V4, feeGrowthInside requires per-tick tracking
-                fg_inside0 = fg0  # upper bound — TODO: track per-tick
+                fg_inside0 = fg0
                 fg_inside1 = fg1
-                fees0 = liquidity * fg_inside0 / Q128 / 1e6
-                fees1 = liquidity * fg_inside1 / Q128 / 1e6
-
-                in_range = tick_lower <= current_tick < tick_upper
+                fees0 = liquidity * fg_inside0 / Q128 / 1e6 if liquidity > 0 else 0
+                fees1 = liquidity * fg_inside1 / Q128 / 1e6 if liquidity > 0 else 0
 
                 lp_data.append({
-                    "tokenId": int(pos["token_id"]),
+                    "tokenId": str(pos["token_id"]),
                     "tickLower": tick_lower,
                     "tickUpper": tick_upper,
                     "liquidity": str(liquidity),
@@ -569,24 +572,54 @@ class Query:
                     "feesEarned1": round(fees1, 4),
                     "feesUsd": round(fees0 * mark_price + fees1, 2),
                     "inRange": in_range,
-                    "entryPrice": float(pos["entry_price"]) if pos["entry_price"] else None,
+                    "poolId": pos.get("pool_id"),
                 })
 
-            debt_principal = float(broker["debt_principal"] or 0)
-            collateral_value = float(broker["wausdc_value"] or 0)
-            debt_value = debt_principal * index_price
+            # Get TWAMM orders owned by this broker
+            twamm_orders = await conn.fetch("""
+                SELECT * FROM twamm_orders
+                WHERE owner = $1
+                ORDER BY block_number DESC
+            """, broker["address"])
 
+            twamm_data = [
+                {
+                    "orderId": o["order_id"],
+                    "poolId": o.get("pool_id"),
+                    "amountIn": o["amount_in"],
+                    "expiration": o["expiration"],
+                    "startEpoch": o.get("start_epoch"),
+                    "sellRate": o.get("sell_rate"),
+                    "zeroForOne": o["zero_for_one"],
+                    "status": o["status"],
+                    "isRegistered": o["is_registered"],
+                    "buyTokensOut": o.get("buy_tokens_out", "0"),
+                    "sellTokensRefund": o.get("sell_tokens_refund", "0"),
+                }
+                for o in twamm_orders
+            ]
+
+            # Get operators for this broker
+            operators = await conn.fetch(
+                "SELECT operator FROM broker_operators WHERE broker_address = $1",
+                broker["address"]
+            )
+            operator_list = [op["operator"] for op in operators]
+
+            # All values returned as raw strings — frontend handles decimal conversion
             return {
                 "address": broker["address"],
                 "owner": broker["owner"],
-                "collateral": float(broker["wausdc_balance"] or 0),
-                "wrlpBalance": float(broker["wrlp_balance"] or 0),
-                "debt": debt_principal,
-                "collateralValue": collateral_value,
-                "debtValue": round(debt_value, 2),
-                "healthFactor": str(broker["health_factor"] or "0"),
-                "netEquityUsd": round(collateral_value - debt_value, 2),
+                "wausdcBalance": broker["wausdc_balance"] or "0",
+                "wrlpBalance": broker["wrlp_balance"] or "0",
+                "debtPrincipal": broker["debt_principal"] or "0",
+                "activeLpTokenId": broker["active_lp_token_id"] or "0",
+                "activeTwammOrderId": broker["active_twamm_order_id"] or "",
+                "isFrozen": broker["is_frozen"] or False,
+                "isLiquidated": broker["is_liquidated"] or False,
+                "operators": operator_list,
                 "lpPositions": lp_data,
+                "twammOrders": twamm_data,
                 "activeTokenId": int(broker["active_lp_token_id"] or 0),
             }
 

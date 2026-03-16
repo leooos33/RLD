@@ -2,20 +2,21 @@
 handlers/broker.py — Handles BrokerFactory + PrimeBroker events.
 
 BrokerFactory events (watched at factory address):
-  - BrokerCreated(address indexed broker, address indexed owner, bytes32 marketId)
+  - BrokerCreated(address indexed broker, address indexed owner, uint256 marketId)
 
-PrimeBroker events (watched at each broker address, added to watch set after BrokerCreated):
-  - CollateralDeposited(address indexed token, uint256 amount)
-  - CollateralWithdrawn(address indexed token, uint256 amount)
-  - PositionMinted(uint256 amount)
-  - PositionBurned(uint256 amount)
-  - ActiveTokenSet(uint256 tokenId)
+PrimeBroker events (watched at each broker address):
+  - PositionModified(bytes32 indexed marketId, address indexed user, int256 deltaCollateral, int256 deltaDebt)
+  - ActivePositionChanged(uint256 oldTokenId, uint256 newTokenId)
+  - ActiveTwammOrderChanged(bytes32 oldOrderId, bytes32 newOrderId)
+  - BrokerFrozen(address indexed owner)
+  - BrokerUnfrozen(address indexed owner)
+  - OperatorUpdated(address indexed operator, bool active)
 
 All broker state is maintained as a single upserted row in `brokers`.
+All values stored as raw uint256 strings — no decimal conversion.
 """
 import asyncpg
 import logging
-from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +29,6 @@ async def handle_broker_created(
     block_number: int,
     tx_hash: str,
 ) -> None:
-    """
-    Insert new broker. Also inserts a row into indexer_state if not present
-    (the indexer loop will use this to know this broker needs watching).
-    """
     await conn.execute("""
         INSERT INTO brokers (address, market_id, owner, created_block, created_tx)
         VALUES ($1, $2, $3, $4, $5)
@@ -49,84 +46,128 @@ async def handle_position_modified(
     delta_debt: int,
     block_number: int,
 ) -> None:
-    # PositionModified carries (deltaCollateral int256, deltaDebt int256).
-    # deltaCollateral > 0 = deposit, < 0 = withdrawal; raw 6-decimal USDC units.
-    # deltaDebt > 0 = borrow, < 0 = repay.
-    await conn.execute("""
-        UPDATE brokers
-        SET wausdc_balance = COALESCE(wausdc_balance, 0) + $1,
-            debt_principal  = COALESCE(debt_principal, 0) + $2
-        WHERE address = $3
-    """, delta_collateral / 1e6, delta_debt / 1e6, broker_address.lower())
-    log.debug("[broker] PositionModified broker=%s deltaCol=%d deltaDebt=%d block=%d",
-              broker_address, delta_collateral, delta_debt, block_number)
-
-
-async def handle_collateral_deposited(
-    conn: asyncpg.Connection,
-    broker_address: str,
-    token: str,
-    amount: int,
-    block_number: int,
-    tx_hash: str,
-) -> None:
-    # CollateralDeposited doesn't exist as a standalone on-chain event —
-    # collateral changes are tracked via PositionModified. This handler is kept
-    # as a no-op for legacy compatibility.
-    log.debug("[broker] CollateralDeposited (no-op) broker=%s token=%s amount=%d block=%d",
-              broker_address, token, amount, block_number)
-
-
-async def handle_active_token_set(
-    conn: asyncpg.Connection,
-    broker_address: str,
-    token_id: int,
-) -> None:
-    await conn.execute("""
-        UPDATE brokers SET active_lp_token_id = $1 WHERE address = $2
-    """, token_id, broker_address.lower())
-    # Also update lp_positions: the given token_id is now active, all others for this broker are not
-    await conn.execute("""
-        UPDATE lp_positions
-        SET is_active = (token_id = $1)
-        WHERE broker_address = $2
-    """, token_id, broker_address.lower())
-    log.debug("[broker] ActiveTokenSet broker=%s tokenId=%d", broker_address, token_id)
-
-
-async def update_broker_state(
-    conn: asyncpg.Connection,
-    broker_address: str,
-    wausdc_balance: int | None = None,
-    wrlp_balance: int | None = None,
-    wausdc_value: int | None = None,
-    wrlp_value: int | None = None,
-    health_factor: str | None = None,
-) -> None:
     """
-    Partial update of broker state. Called after getFullState() enrichment or
-    from events that carry state diffs.
-    Only non-None fields are written.
+    PositionModified carries (deltaCollateral int256, deltaDebt int256).
+    deltaCollateral is always 0 (known contract behavior — collateral managed by broker).
+    Only deltaDebt matters: raw int256, stored as running sum in debt_principal.
     """
-    fields = {}
-    if wausdc_balance is not None:
-        fields["wausdc_balance"] = wausdc_balance / 1e6
-    if wrlp_balance is not None:
-        fields["wrlp_balance"] = wrlp_balance / 1e6
-    if wausdc_value is not None:
-        fields["wausdc_value"] = wausdc_value / 1e6
-    if wrlp_value is not None:
-        fields["wrlp_value"] = wrlp_value / 1e6
-    if health_factor is not None:
-        fields["health_factor"] = health_factor
+    if delta_debt == 0:
+        return  # Nothing to update
 
-    if not fields:
+    # debt_principal stored as raw uint256 string. We do arithmetic in Python.
+    row = await conn.fetchrow(
+        "SELECT debt_principal FROM brokers WHERE address = $1",
+        broker_address.lower()
+    )
+    if not row:
         return
 
-    set_clause = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(fields))
-    values = [broker_address.lower()] + list(fields.values())
-    await conn.execute(
-        f"UPDATE brokers SET {set_clause} WHERE address = $1",
-        *values
-    )
+    current = int(row["debt_principal"] or "0")
+    new_principal = current + delta_debt
+    if new_principal < 0:
+        new_principal = 0  # safety clamp
 
+    await conn.execute(
+        "UPDATE brokers SET debt_principal = $1 WHERE address = $2",
+        str(new_principal), broker_address.lower()
+    )
+    log.debug("[broker] PositionModified broker=%s deltaDebt=%d newDebt=%s block=%d",
+              broker_address, delta_debt, new_principal, block_number)
+
+
+async def handle_active_position_changed(
+    conn: asyncpg.Connection,
+    broker_address: str,
+    old_token_id: int,
+    new_token_id: int,
+) -> None:
+    """ActivePositionChanged(uint256 oldTokenId, uint256 newTokenId)"""
+    await conn.execute(
+        "UPDATE brokers SET active_lp_token_id = $1 WHERE address = $2",
+        str(new_token_id), broker_address.lower()
+    )
+    # Update lp_positions: new tokenId is active, old is not
+    if old_token_id != 0:
+        await conn.execute(
+            "UPDATE lp_positions SET is_active = FALSE WHERE token_id = $1",
+            str(old_token_id)
+        )
+    if new_token_id != 0:
+        await conn.execute(
+            "UPDATE lp_positions SET is_active = TRUE WHERE token_id = $1",
+            str(new_token_id)
+        )
+    log.debug("[broker] ActivePositionChanged broker=%s old=%d new=%d",
+              broker_address, old_token_id, new_token_id)
+
+
+async def handle_active_twamm_order_changed(
+    conn: asyncpg.Connection,
+    broker_address: str,
+    old_order_id: str,
+    new_order_id: str,
+) -> None:
+    """ActiveTwammOrderChanged(bytes32 oldOrderId, bytes32 newOrderId)"""
+    await conn.execute(
+        "UPDATE brokers SET active_twamm_order_id = $1 WHERE address = $2",
+        new_order_id, broker_address.lower()
+    )
+    # Update twamm_orders: new orderId is registered, old is not
+    if old_order_id and old_order_id != "0x" + "00" * 32:
+        await conn.execute(
+            "UPDATE twamm_orders SET is_registered = FALSE WHERE order_id = $1",
+            old_order_id
+        )
+    if new_order_id and new_order_id != "0x" + "00" * 32:
+        await conn.execute(
+            "UPDATE twamm_orders SET is_registered = TRUE WHERE order_id = $1",
+            new_order_id
+        )
+    log.debug("[broker] ActiveTwammOrderChanged broker=%s old=%s new=%s",
+              broker_address, old_order_id[:18], new_order_id[:18])
+
+
+async def handle_broker_frozen(
+    conn: asyncpg.Connection,
+    broker_address: str,
+) -> None:
+    """BrokerFrozen(address indexed owner) — emitted at broker address."""
+    await conn.execute(
+        "UPDATE brokers SET is_frozen = TRUE WHERE address = $1",
+        broker_address.lower()
+    )
+    log.info("[broker] BrokerFrozen broker=%s", broker_address)
+
+
+async def handle_broker_unfrozen(
+    conn: asyncpg.Connection,
+    broker_address: str,
+) -> None:
+    """BrokerUnfrozen(address indexed owner) — emitted at broker address."""
+    await conn.execute(
+        "UPDATE brokers SET is_frozen = FALSE WHERE address = $1",
+        broker_address.lower()
+    )
+    log.info("[broker] BrokerUnfrozen broker=%s", broker_address)
+
+
+async def handle_operator_updated(
+    conn: asyncpg.Connection,
+    broker_address: str,
+    operator: str,
+    active: bool,
+) -> None:
+    """OperatorUpdated(address indexed operator, bool active)"""
+    if active:
+        await conn.execute("""
+            INSERT INTO broker_operators (broker_address, operator)
+            VALUES ($1, $2)
+            ON CONFLICT (broker_address, operator) DO NOTHING
+        """, broker_address.lower(), operator.lower())
+    else:
+        await conn.execute(
+            "DELETE FROM broker_operators WHERE broker_address = $1 AND operator = $2",
+            broker_address.lower(), operator.lower()
+        )
+    log.debug("[broker] OperatorUpdated broker=%s operator=%s active=%s",
+              broker_address, operator, active)

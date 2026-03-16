@@ -97,7 +97,9 @@ export function useTwammPositions(
 ) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const mountedRef = useRef(true);
+  const initialLoadDone = useRef(false);
 
   const hookAddr = marketInfo?.infrastructure?.twamm_hook;
   const collateralAddr = marketInfo?.collateral?.address;
@@ -131,13 +133,17 @@ export function useTwammPositions(
     }
 
     try {
-      setLoading(true);
+      if (!initialLoadDone.current) setLoading(true);
 
       const rawOrders = gqlData.twammOrders;
       const activeOrders = rawOrders.filter((o) => !o.isCancelled);
 
       if (activeOrders.length === 0) {
-        if (mountedRef.current) setOrders([]);
+        if (mountedRef.current) {
+          setOrders([]);
+          initialLoadDone.current = true;
+          setLoaded(true);
+        }
         return;
       }
 
@@ -284,6 +290,8 @@ export function useTwammPositions(
 
       if (mountedRef.current) {
         setOrders(visibleOrders);
+        initialLoadDone.current = true;
+        setLoaded(true);
       }
     } catch (e) {
       console.warn("[TWAMM] enrichOrders failed:", e);
@@ -311,6 +319,7 @@ export function useTwammPositions(
   return {
     orders,
     loading,
+    loaded,
     refresh: () => {
       refreshGql();
       enrichOrders();
