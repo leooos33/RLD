@@ -1341,7 +1341,7 @@ export default function SimulationTerminal() {
                                         {lp.entryPrice && (
                                           <div className="flex justify-between"><span>Entry Price</span><span>{lp.entryPrice}</span></div>
                                         )}
-                                        <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${lp.value.toFixed(2)}</span></div>
+                                        <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${(lp.valueUsd || 0).toFixed(2)}</span></div>
                                         {lp.isActive && (
                                           <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
                                         )}
@@ -1371,7 +1371,7 @@ export default function SimulationTerminal() {
                                             setCollateralConfirm({
                                               type: 'track-lp',
                                               label: `Track LP #${lp.tokenId?.toString()} as collateral?`,
-                                              sub: `Range: ${lp.priceLower} — ${lp.priceUpper}  •  Value: $${lp.value.toFixed(0)}`,
+                                              sub: `Range: ${lp.priceLower || '?'} — ${lp.priceUpper || '?'}  •  Value: $${(lp.valueUsd || 0).toFixed(0)}`,
                                               data: lp,
                                             });
                                           }}
@@ -1408,7 +1408,7 @@ export default function SimulationTerminal() {
                                             token1Amount: lp.amount1?.toFixed(2) || "0",
                                             feesEarned0: "0.00",
                                             feesEarned1: "0.00",
-                                            value: lp.value,
+                                            value: lp.valueUsd || 0,
                                           });
                                         }}
                                         className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-red-500/5 transition-colors border-t border-white/5"
