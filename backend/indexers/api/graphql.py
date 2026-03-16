@@ -534,7 +534,8 @@ class Query:
                        wausdc, wrlp, pool_id, pool_fee, tick_spacing,
                        min_col_ratio, maintenance_margin, debt_cap,
                        swap_router, bond_factory, basis_trade_factory, broker_executor,
-                       funding_period_sec, v4_quoter, broker_router
+                       funding_period_sec, v4_quoter, broker_router,
+                       v4_position_manager, v4_state_view, pool_manager
                 FROM markets LIMIT 1
             """)
         if not row:
@@ -559,6 +560,9 @@ class Query:
             "fundingPeriodSec": row["funding_period_sec"],
             "v4Quoter": row["v4_quoter"] or "",
             "brokerRouter": row["broker_router"] or "",
+            "v4PositionManager": row["v4_position_manager"] or "",
+            "v4StateView": row["v4_state_view"] or "",
+            "poolManager": row["pool_manager"] or "",
         }
 
 

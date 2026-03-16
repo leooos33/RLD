@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS markets (
   broker_executor     TEXT,
   v4_quoter           TEXT,
   broker_router       TEXT,
+  v4_position_manager TEXT,
+  v4_state_view       TEXT,
+  pool_manager        TEXT,
   -- Tokens
   wausdc              TEXT NOT NULL,
   wausdc_symbol       TEXT NOT NULL,
