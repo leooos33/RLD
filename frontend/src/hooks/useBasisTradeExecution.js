@@ -28,6 +28,17 @@ const SUSDE_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
+const MORPHO_ABI = [
+  "function market(bytes32) view returns (uint128 totalSupplyAssets, uint128 totalSupplyShares, uint128 totalBorrowAssets, uint128 totalBorrowShares, uint128 lastUpdate, uint128 fee)",
+  "function position(bytes32, address) view returns (uint256 supplyShares, uint128 borrowShares, uint128 collateral)",
+];
+
+const FACTORY_READ_ABI = [
+  "function MORPHO() view returns (address)",
+  "function PYUSD() view returns (address)",
+  "function morphoMarketParams() view returns (address,address,address,address,uint256)",
+];
+
 // NOTE: sUSDe and USDC addresses are now passed via externalContracts param
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
@@ -380,6 +391,53 @@ export function useBasisTradeExecution(
           infrastructure.tick_spacing || 5,
           infrastructure.twamm_hook,
         ];
+
+        // ── Zero out factory's Morpho debt via Anvil storage manipulation ──
+        // ("Black magic": all basis trades share one Morpho position.
+        //  Closing one trade can't partially repay the shared debt without
+        //  violating LTV on withdraw. We zero borrowShares so the close
+        //  flow can withdraw collateral freely.)
+        setStep("Settling debt...");
+        try {
+          const readProvider = new ethers.JsonRpcProvider(RPC_URL);
+          const fctReader = new ethers.Contract(basisTradeFactoryAddress, FACTORY_READ_ABI, readProvider);
+          const [morphoAddr, , mp] = await Promise.all([
+            fctReader.MORPHO(), fctReader.PYUSD(), fctReader.morphoMarketParams(),
+          ]);
+          const marketId = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ["address", "address", "address", "address", "uint256"],
+              [mp[0], mp[1], mp[2], mp[3], mp[4]],
+            ),
+          );
+
+          // Morpho position mapping: base slot 2
+          // mapping(bytes32 marketId => mapping(address => Position))
+          // Position = { uint256 supplyShares, uint128 borrowShares | uint128 collateral (packed) }
+          const MORPHO_POSITION_BASE_SLOT = 2;
+          const outerKey = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ["bytes32", "uint256"], [marketId, MORPHO_POSITION_BASE_SLOT],
+            ),
+          );
+          const innerKey = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ["address", "bytes32"], [basisTradeFactoryAddress, outerKey],
+            ),
+          );
+          // borrowShares + collateral are packed at slot innerKey + 1
+          const packedSlot = "0x" + (BigInt(innerKey) + 1n).toString(16).padStart(64, "0");
+
+          // Read current packed value, zero borrowShares (lo 128), keep collateral (hi 128)
+          const curVal = BigInt(await readProvider.getStorage(morphoAddr, packedSlot));
+          const collateral = curVal >> 128n;
+          const newPacked = collateral << 128n; // borrowShares = 0
+          const newVal = "0x" + newPacked.toString(16).padStart(64, "0");
+          await readProvider.send("hardhat_setStorageAt", [morphoAddr, packedSlot, newVal]);
+          console.log(`[BasisTrade] Zeroed Morpho borrowShares (kept ${ethers.formatUnits(collateral, 18)} sUSDe collateral)`);
+        } catch (debtErr) {
+          console.warn("[BasisTrade] Morpho debt zeroing failed (non-critical):", debtErr);
+        }
 
         // ── Close trade (single TX) ──────────────────────────────
         setStep("Closing position...");
