@@ -586,6 +586,7 @@ class Query:
                 {
                     "orderId": o["order_id"],
                     "poolId": o.get("pool_id"),
+                    "owner": o["owner"],
                     "amountIn": o["amount_in"],
                     "expiration": o["expiration"],
                     "startEpoch": o.get("start_epoch"),
@@ -595,6 +596,8 @@ class Query:
                     "isRegistered": o["is_registered"],
                     "buyTokensOut": o.get("buy_tokens_out", "0"),
                     "sellTokensRefund": o.get("sell_tokens_refund", "0"),
+                    "blockNumber": o["block_number"],
+                    "txHash": o["tx_hash"],
                 }
                 for o in twamm_orders
             ]

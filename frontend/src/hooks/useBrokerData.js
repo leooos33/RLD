@@ -49,11 +49,6 @@ function formatTimeLeft(seconds) {
 const BROKER_DATA_QUERY = `
   query BrokerData($owner: String!, $marketId: String!) {
     brokerProfile(owner: $owner)
-    twammOrders(marketId: $marketId, owner: $owner) {
-      orderId owner amountIn
-      expiration startEpoch zeroForOne
-      blockNumber txHash isCancelled
-    }
     poolSnapshot(marketId: $marketId) {
       markPrice indexPrice tick
       normalizationFactor
@@ -116,9 +111,13 @@ export function useBrokerData(account, marketInfo) {
       console.log("[BrokerData] GQL response:", gql);
 
       const profile = gql.brokerProfile; // null if no broker
-      const rawTwamm = gql.twammOrders || [];
+      // TWAMM orders are nested inside brokerProfile (status-based, not isCancelled)
+      const rawTwamm = (profile?.twammOrders || []).map((o) => ({
+        ...o,
+        isCancelled: o.status !== "active",
+      }));
       const snapshot = gql.poolSnapshot;
-      const operations = gql.brokerOperations || []; // TODO: add back once indexer container rebuilt
+      const operations = gql.brokerOperations || [];
 
       // Pool snapshot data for client-side math
       const markPrice = snapshot?.markPrice || 0;
