@@ -44,6 +44,39 @@ function formatTimeLeft(seconds) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+// ── Uniswap V3 concentrated liquidity math ──────────────────────────
+// Given liquidity L, tickLower, tickUpper, and currentTick,
+// compute token amounts. Both tokens are 6 decimals.
+function tickToSqrtPrice(tick) {
+  return Math.sqrt(1.0001 ** tick);
+}
+
+function liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick) {
+  const L = Number(liquidity);
+  if (L === 0 || tickLower == null || tickUpper == null) return { amount0: 0, amount1: 0 };
+
+  const sqrtCur = tickToSqrtPrice(currentTick);
+  const sqrtLo = tickToSqrtPrice(tickLower);
+  const sqrtHi = tickToSqrtPrice(tickUpper);
+
+  let amount0 = 0, amount1 = 0;
+
+  if (currentTick < tickLower) {
+    // All token0
+    amount0 = L * (1 / sqrtLo - 1 / sqrtHi);
+  } else if (currentTick >= tickUpper) {
+    // All token1
+    amount1 = L * (sqrtHi - sqrtLo);
+  } else {
+    // In range — both tokens
+    amount0 = L * (1 / sqrtCur - 1 / sqrtHi);
+    amount1 = L * (sqrtCur - sqrtLo);
+  }
+
+  // Raw amounts → human (6 decimals)
+  return { amount0: amount0 / 1e6, amount1: amount1 / 1e6 };
+}
+
 // ── GQL query: one round-trip for everything ────────────────────────
 
 const BROKER_DATA_QUERY = `
@@ -306,8 +339,27 @@ export function useBrokerData(account, marketInfo) {
       // Position value: wRLP balance × indexPrice (matching contract getNetAccountValue)
       const positionValue = wrlpBalance * indexPrice;
 
-      // LP value: sum of all LP position values (already computed server-side)
-      const lpValue = (profile?.lpPositions || []).reduce(
+      // LP positions: enrich with client-side token amounts and USD value
+      // token0 = wRLP (priced at markPrice), token1 = waUSDC ($1)
+      const enrichedLps = (profile?.lpPositions || []).map((lp) => {
+        const { amount0, amount1 } = liquidityToAmounts(
+          lp.liquidity, lp.tickLower, lp.tickUpper, currentTick
+        );
+        const valueUsd = amount0 * markPrice + amount1;
+        const inRange = lp.tickLower != null && lp.tickUpper != null
+          ? lp.tickLower <= currentTick && currentTick < lp.tickUpper
+          : false;
+        return {
+          ...lp,
+          amount0: Math.round(amount0 * 1e4) / 1e4,
+          amount1: Math.round(amount1 * 1e4) / 1e4,
+          valueUsd: Math.round(valueUsd * 100) / 100,
+          inRange,
+        };
+      });
+
+      // LP value: sum of client-computed values
+      const lpValue = enrichedLps.reduce(
         (sum, lp) => sum + (lp.valueUsd || 0),
         0,
       );
@@ -361,8 +413,8 @@ export function useBrokerData(account, marketInfo) {
           normFactor,
           activeTokenId: profile?.activeTokenId || 0,
 
-          // LP positions (server-computed amounts + fees)
-          lpPositions: profile?.lpPositions || [],
+          // LP positions (client-computed amounts + values)
+          lpPositions: enrichedLps,
 
           // TWAMM orders (GQL + RPC-enriched)
           twammOrders: enrichedOrders,
