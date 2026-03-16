@@ -219,6 +219,16 @@ export default function BasisTradePage() {
     }
   };
 
+  // Use a boosted APY for the basis trade simulation (Latest APY + 4% for carry)
+  const basisApy = (latest?.apy || 0) + 4.2;
+  const tradeLogic = useTradeLogic(basisApy);
+
+  const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
+    account, 
+    basisApy,
+    marketInfo?.infrastructure?.basis_trade_factory
+  );
+
   const {
     createBasisTrade,
     closeBasisTrade,
@@ -232,16 +242,7 @@ export default function BasisTradePage() {
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,
     marketInfo?.external_contracts,
-  );
-  
-  // Use a boosted APY for the basis trade simulation (Latest APY + 4% for carry)
-  const basisApy = (latest?.apy || 0) + 4.2;
-  const tradeLogic = useTradeLogic(basisApy);
-
-  const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
-    account, 
-    basisApy,
-    marketInfo?.infrastructure?.basis_trade_factory
+    { onRefreshComplete: [refreshBonds] },
   );
 
   const {

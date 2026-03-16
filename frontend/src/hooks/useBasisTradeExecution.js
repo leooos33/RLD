@@ -100,6 +100,8 @@ export function useBasisTradeExecution(
 
   const _syncAndNotify = async (successStep, onSuccess, result) => {
     setStep("Syncing...");
+    // Small delay to let indexer process the new block
+    await new Promise((r) => setTimeout(r, 500));
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
     if (onSuccess) onSuccess(result);
