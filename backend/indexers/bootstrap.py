@@ -184,7 +184,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
         await conn.execute("""
             INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
             VALUES ($1, $2, 0)
-            ON CONFLICT (market_id) DO UPDATE SET last_indexed_block = EXCLUDED.last_indexed_block
+            ON CONFLICT (market_id) DO NOTHING
         """, market_id, cfg["session_start_block"])
 
     log.info("Seeded market %s with oracle=%s pool_id=%s",
