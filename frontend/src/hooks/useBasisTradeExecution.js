@@ -426,7 +426,7 @@ export function useBasisTradeExecution(
             const bondMeta = JSON.parse(localStorage.getItem(`rld_bond_${brokerAddress.toLowerCase()}`) || "null");
             if (bondMeta?.levDebt && sUsdeReturnedRaw > 0n) {
               setStep("Settling flash loan...");
-              const sUsde = new ethers.Contract(SUSDE_ADDRESS, SUSDE_ABI, signer);
+              const sUsde = new ethers.Contract(SUSDE_TOKEN_ADDRESS, SUSDE_ABI, signer);
               // Convert levDebt (PYUSD 6 dec) to sUSDe (18 dec)
               // 1 sUSDe is worth convertToAssets(1e18) USDe ≈ PYUSD
               const assetsPerShare = await sUsde.convertToAssets(ethers.parseUnits("1", 18));
@@ -478,7 +478,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS, _syncAndNotify, pauseRef],
+    [account, infrastructure, collateralAddr, positionAddr, SUSDE_TOKEN_ADDRESS, _syncAndNotify, pauseRef],
   );
 
   return {
