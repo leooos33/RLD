@@ -628,7 +628,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       setLpExecuting(false);
       if (txPauseRef) txPauseRef.current = false;
     }
-  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange]);
+  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange, txPauseRef]);
 
   return (
     <div className="flex flex-col gap-4">

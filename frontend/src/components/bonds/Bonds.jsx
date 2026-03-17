@@ -218,7 +218,6 @@ export default function BondsPage() {
   }, [notional, latest.apy, maturityHours]);
 
   const notionalAmount = Number(notional) || 0;
-  const hedgeAmount = hedgeInfo.hedge || 0;
   const totalRequired = notionalAmount;
   const currentAllowance = selectedToken === "USDC" ? usdcAllowance : waUsdcAllowance;
   const needsApproval = currentAllowance < totalRequired;

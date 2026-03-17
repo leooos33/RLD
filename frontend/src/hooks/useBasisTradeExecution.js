@@ -340,7 +340,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS, _syncAndNotify],
+    [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS, _syncAndNotify, pauseRef],
   );
 
   /**
@@ -478,7 +478,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS, _syncAndNotify],
+    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS, _syncAndNotify, pauseRef],
   );
 
   return {

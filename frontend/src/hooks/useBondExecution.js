@@ -290,7 +290,7 @@ export function useBondExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
+    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify, pauseRef],
   );
 
   /**
@@ -407,7 +407,7 @@ export function useBondExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
+    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify, pauseRef],
   );
 
   return {

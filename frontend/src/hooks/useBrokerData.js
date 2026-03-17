@@ -445,7 +445,7 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
     } finally {
       fetchingRef.current = false;
     }
-  }, [account, marketId, hookAddr, collateralAddr, positionAddr, marketInfo, blockTimestamp]);
+  }, [account, marketId, hookAddr, collateralAddr, positionAddr, marketInfo, blockTimestamp, pauseRef]);
 
   // ── Block-driven: refresh when new block arrives ──────────────
   useEffect(() => {
