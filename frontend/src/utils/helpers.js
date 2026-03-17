@@ -8,6 +8,8 @@ export const API_URL = API_BASE;
 // API auth is handled server-side by Nginx proxy — no client-side key needed
 export const authHeaders = {};
 
+export const RATES_GQL_URL = import.meta.env.PROD ? `${API_BASE}/graphql` : "/rates-graphql";
+
 // Earliest date the indexer has data for (protocol deployment date)
 export const DEPLOYMENT_DATE = "2026-03-03";
 

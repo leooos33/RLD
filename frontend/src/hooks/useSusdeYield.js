@@ -1,6 +1,6 @@
 import useSWR from "swr";
 
-const RATES_GQL_URL = "/rates-graphql";
+import { RATES_GQL_URL } from "../utils/helpers";
 
 const SUSDE_QUERY = `{ latestRates { susde } }`;
 

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
-// utils/helpers no longer needed — all data via GraphQL
+import { RATES_GQL_URL } from "../../utils/helpers";
 import { useChartControls } from "../../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
@@ -300,7 +300,7 @@ export default function Markets() {
         await Promise.all(
           ASSETS.map(async (asset) => {
             try {
-              const gqlRes = await fetch("/rates-graphql", {
+              const gqlRes = await fetch(RATES_GQL_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -359,7 +359,7 @@ export default function Markets() {
       // Fetch each symbol's rates in parallel + ethPrices
       const [ratesResults, ethRes] = await Promise.all([
         Promise.all(symbols.map(async (sym) => {
-          const res = await fetch("/rates-graphql", {
+          const res = await fetch(RATES_GQL_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -369,7 +369,7 @@ export default function Markets() {
           const json = await res.json();
           return { symbol: sym, data: json?.data?.rates || [] };
         })),
-        fetch("/rates-graphql", {
+        fetch(RATES_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
